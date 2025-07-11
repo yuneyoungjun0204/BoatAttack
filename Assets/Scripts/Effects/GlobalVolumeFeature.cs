@@ -18,10 +18,12 @@ public class GlobalVolumeFeature : ScriptableRendererFeature
         private Volume qualityVol;
         public static GameObject volumeHolder;
 
+#if URP_COMPATIBILITY_MODE
         [Obsolete] public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
         {
             Setup();
         }
+#endif
         
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
@@ -54,9 +56,11 @@ public class GlobalVolumeFeature : ScriptableRendererFeature
             }
         }
 
+#if URP_COMPATIBILITY_MODE
         [Obsolete] public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
         }
+#endif
     }
 
     GlobalVolumePass m_ScriptablePass;

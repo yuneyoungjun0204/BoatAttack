@@ -83,6 +83,7 @@ namespace WaterSystem
                 cameraTextureDescriptor.colorFormat = RenderTextureFormat.Default;
             }
 
+#if URP_COMPATIBILITY_MODE
             // Calling Configure since we are wanting to render into a RenderTexture and control cleat
             [Obsolete]
             public override void Configure(CommandBuffer cmd, RenderTextureDescriptor cameraTextureDescriptor)
@@ -94,6 +95,7 @@ namespace WaterSystem
                 // clear the screen with a specific color for the packed data
                 ConfigureClear(ClearFlag.Color, m_ClearColor);
             }
+#endif
 
             // This static method is used to execute the pass and passed as the RenderFunc delegate to the RenderGraph render pass
             static void ExecutePass(WaterFxPassData data, RasterGraphContext context)
@@ -129,6 +131,7 @@ namespace WaterSystem
                 }
             }
 
+#if URP_COMPATIBILITY_MODE
             [Obsolete]
             public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
             {
@@ -152,6 +155,7 @@ namespace WaterSystem
                 context.ExecuteCommandBuffer(cmd);
                 CommandBufferPool.Release(cmd);
             }
+#endif
 
             public override void OnCameraCleanup(CommandBuffer cmd)
             {
@@ -171,6 +175,7 @@ namespace WaterSystem
             public Material WaterCausticMaterial;
             private Mesh m_mesh;
 
+#if URP_COMPATIBILITY_MODE
             [Obsolete]
             public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
             {
@@ -203,6 +208,7 @@ namespace WaterSystem
                 context.ExecuteCommandBuffer(cmd);
                 CommandBufferPool.Release(cmd);
             }
+#endif
 
             private class CausticsPassData
             {
