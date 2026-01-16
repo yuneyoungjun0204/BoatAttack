@@ -74,6 +74,12 @@ namespace BoatAttack
 
         void FixedUpdate()
         {
+            // 학습 모드일 때는 플레이어 입력 무시
+            if (GameModeManager.IsTrainingMode)
+            {
+                return;
+            }
+
             engine.Accelerate(_throttle);
             // 감도 조절 적용 (결과값을 -1~1 범위로 제한)
             var adjustedSteering = Mathf.Clamp(_steering * steeringSensitivity, -1f, 1f);
