@@ -74,6 +74,13 @@ namespace BoatAttack
         [Header("Collision Detection")]
         [Tooltip("충돌 감지 방식: true=Trigger 사용 (보트 Collider의 Is Trigger 활성화 필요), false=물리 Collision 사용")]
         public bool useTriggerCollision = false;
+        
+        [Header("Waypoint Following")]
+        [Tooltip("Waypoint를 따라갈지 여부 (true면 waypoint 경로를 따라가고, false면 모선을 직접 추적)")]
+        public bool followWaypoints = true;
+        
+        [Tooltip("Waypoint 추적 모드일 때 모선 접근 거리 (이 거리 이내면 모선을 직접 추적)")]
+        public float directChaseDistance = 50f;
 
         private float _lastDistance;
         private Vector3 _lastPosition;
@@ -85,6 +92,11 @@ namespace BoatAttack
         
         // 폭발 관련 변수
         private bool _hasExploded = false;
+        
+        // Waypoint 추적 관련 변수 (AiController 참고)
+        private int _currentWaypointIndex = 0;
+        private Vector3 _currentWaypointPosition;
+        private bool _waypointInitialized = false;
 
         private void Awake()
         {
@@ -116,6 +128,40 @@ namespace BoatAttack
                     Debug.LogWarning($"[AttackAgent] 모선을 찾을 수 없습니다. 태그: {motherShipTag}");
                 }
             }
+            
+            // Waypoint 초기화
+            if (followWaypoints)
+            {
+                InitializeWaypoint();
+            }
+        }
+        
+        /// <summary>
+        /// Waypoint 초기화 (첫 waypoint 할당)
+        /// </summary>
+        private void InitializeWaypoint()
+        {
+            if (WaypointGroup.Instance == null)
+            {
+                Debug.LogWarning("[AttackAgent] WaypointGroup.Instance가 null입니다. Waypoint를 따라갈 수 없습니다.");
+                _waypointInitialized = false;
+                return;
+            }
+            
+            if (WaypointGroup.Instance.WPs == null || WaypointGroup.Instance.WPs.Count == 0)
+            {
+                Debug.LogWarning("[AttackAgent] Waypoint가 없습니다. Waypoint를 따라갈 수 없습니다.");
+                _waypointInitialized = false;
+                return;
+            }
+            
+            // 첫 waypoint 할당
+            _currentWaypointIndex = 0;
+            var firstWaypoint = WaypointGroup.Instance.WPs[0];
+            _currentWaypointPosition = firstWaypoint.point;
+            _waypointInitialized = true;
+            
+            Debug.Log($"[AttackAgent] Waypoint 초기화 완료: 첫 waypoint = {_currentWaypointPosition}");
         }
 
         public override void OnEpisodeBegin()
@@ -127,26 +173,28 @@ namespace BoatAttack
             _smoothSteering = 0f;
             _hasExploded = false; // 폭발 상태 초기화
             
-            // 배 위치 리셋 (0, 0.8, 0)
-            Vector3 resetPosition = new Vector3(0f, 0.8f, 0f);
-            transform.position = resetPosition;
-            transform.rotation = Quaternion.identity;
+            // Waypoint 초기화 (에피소드 재시작 시)
+            if (followWaypoints)
+            {
+                InitializeWaypoint();
+            }
             
-            // Rigidbody 속도 및 각속도 리셋
+            // 배 위치는 AttackBoatManager에서 재생성 시 설정되므로 여기서는 리셋하지 않음
+            // 단, Rigidbody 속도 및 각속도만 리셋
             if (_engine != null && _engine.RB != null)
             {
                 _engine.RB.velocity = Vector3.zero;
                 _engine.RB.angularVelocity = Vector3.zero;
             }
             
-            _lastPosition = resetPosition;
+            _lastPosition = transform.position;
             
             if (targetMotherShip != null)
             {
                 _lastDistance = Vector3.Distance(transform.position, targetMotherShip.transform.position);
             }
             
-            Debug.Log($"[AttackAgent] OnEpisodeBegin: 배 위치 리셋 완료 ({resetPosition})");
+            Debug.Log($"[AttackAgent] OnEpisodeBegin: 배 위치 = {transform.position}");
         }
 
         public override void CollectObservations(VectorSensor sensor)
@@ -213,9 +261,35 @@ namespace BoatAttack
                 return;
             }
 
+            // Waypoint 추적 모드일 때 waypoint를 따라가도록 조정
+            Vector3 targetDirection = GetTargetDirection();
+            
             // Action 처리 (원본 입력)
             float rawThrottle = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
             float rawSteering = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
+            
+            // Waypoint 추적 모드일 때 방향 조정
+            if (followWaypoints && _waypointInitialized)
+            {
+                // Waypoint 방향 계산
+                Vector3 toWaypoint = (_currentWaypointPosition - transform.position).normalized;
+                Vector3 forward = transform.forward;
+                
+                // Waypoint 방향과 현재 방향의 각도 차이 계산
+                float angleToWaypoint = Vector3.SignedAngle(forward, toWaypoint, Vector3.up);
+                
+                // Waypoint 방향으로 조정 (하지만 ML-Agents의 학습을 방해하지 않도록 약간만 조정)
+                // rawSteering에 waypoint 방향 힌트 추가
+                float waypointSteeringHint = Mathf.Clamp(angleToWaypoint / 45f, -1f, 1f) * 0.3f; // 30% 힌트
+                rawSteering = Mathf.Clamp(rawSteering + waypointSteeringHint, -1f, 1f);
+                
+                // Waypoint에 도달했는지 확인
+                float distanceToWaypoint = Vector3.Distance(transform.position, _currentWaypointPosition);
+                if (distanceToWaypoint < 10f) // 10미터 이내면 다음 waypoint로
+                {
+                    AdvanceToNextWaypoint();
+                }
+            }
 
             // 스무스 처리 (현실적인 반응)
             _smoothThrottle = Mathf.Lerp(_smoothThrottle, rawThrottle, inputSmoothing);
@@ -230,6 +304,61 @@ namespace BoatAttack
 
             // 보상 계산
             CalculateReward();
+        }
+        
+        /// <summary>
+        /// 현재 목표 방향 가져오기 (waypoint 또는 모선)
+        /// </summary>
+        private Vector3 GetTargetDirection()
+        {
+            if (followWaypoints && _waypointInitialized)
+            {
+                // 모선과의 거리가 가까우면 모선을 직접 추적
+                if (targetMotherShip != null)
+                {
+                    float distanceToMotherShip = Vector3.Distance(transform.position, targetMotherShip.transform.position);
+                    if (distanceToMotherShip < directChaseDistance)
+                    {
+                        return (targetMotherShip.transform.position - transform.position).normalized;
+                    }
+                }
+                
+                // 그 외에는 waypoint를 따라감
+                return (_currentWaypointPosition - transform.position).normalized;
+            }
+            else
+            {
+                // Waypoint 추적 모드가 아니면 모선을 직접 추적
+                if (targetMotherShip != null)
+                {
+                    return (targetMotherShip.transform.position - transform.position).normalized;
+                }
+            }
+            
+            return transform.forward;
+        }
+        
+        /// <summary>
+        /// 다음 waypoint로 진행
+        /// </summary>
+        private void AdvanceToNextWaypoint()
+        {
+            if (WaypointGroup.Instance == null || WaypointGroup.Instance.WPs == null || WaypointGroup.Instance.WPs.Count == 0)
+            {
+                return;
+            }
+            
+            _currentWaypointIndex++;
+            if (_currentWaypointIndex >= WaypointGroup.Instance.WPs.Count)
+            {
+                // 마지막 waypoint에 도달하면 첫 번째로 돌아감 (루프)
+                _currentWaypointIndex = 0;
+            }
+            
+            var waypoint = WaypointGroup.Instance.WPs[_currentWaypointIndex];
+            _currentWaypointPosition = waypoint.point;
+            
+            Debug.Log($"[AttackAgent] 다음 waypoint로 진행: {_currentWaypointIndex} = {_currentWaypointPosition}");
         }
 
         private void CalculateReward()
