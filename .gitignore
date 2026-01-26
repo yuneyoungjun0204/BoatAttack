@@ -96,3 +96,6 @@ Assets/**/스크린샷*.mat.meta
 *.psd
 *.fbx
 *.FBX
+
+# 유령 파일 무시
+nul
