@@ -792,9 +792,21 @@ private float _lastTargetLinearVelocity = 0f;
 private float _lastTargetAngularVelocity = 0f;
 
 // 휴리스틱 메서드 예시 (HumanController 방식)
+// ⚠️ Unity의 새로운 Input System 사용 (UnityEngine.InputSystem)
+using UnityEngine.InputSystem;
+
 public override void Heuristic(in ActionBuffers actionsOut)
 {
     var continuousActions = actionsOut.ContinuousActions;
+    
+    // Unity Input System 사용 (Legacy Input 대신)
+    Keyboard keyboard = Keyboard.current;
+    if (keyboard == null)
+    {
+        continuousActions[0] = 0f;
+        continuousActions[1] = 0f;
+        return;
+    }
     
     // 키보드 입력을 목표 속도로 변환
     float targetLinearVel = 0f;
@@ -804,33 +816,40 @@ public override void Heuristic(in ActionBuffers actionsOut)
     if (gameObject.name.Contains("1"))
     {
         // WASD
-        if (Input.GetKey(KeyCode.W))
+        if (keyboard.wKey.isPressed)
             targetLinearVel = maxLinearVelocity;  // 전진
-        else if (Input.GetKey(KeyCode.S))
+        else if (keyboard.sKey.isPressed)
             targetLinearVel = -maxLinearVelocity * 0.5f;  // 후진 (느리게)
         
-        if (Input.GetKey(KeyCode.D))
+        if (keyboard.dKey.isPressed)
             targetAngularVel = maxAngularVelocity;  // 우회전
-        else if (Input.GetKey(KeyCode.A))
+        else if (keyboard.aKey.isPressed)
             targetAngularVel = -maxAngularVelocity;  // 좌회전
     }
     else if (gameObject.name.Contains("2"))
     {
         // Arrow Keys
-        if (Input.GetKey(KeyCode.UpArrow))
+        if (keyboard.upArrowKey.isPressed)
             targetLinearVel = maxLinearVelocity;
-        else if (Input.GetKey(KeyCode.DownArrow))
+        else if (keyboard.downArrowKey.isPressed)
             targetLinearVel = -maxLinearVelocity * 0.5f;
         
-        if (Input.GetKey(KeyCode.RightArrow))
+        if (keyboard.rightArrowKey.isPressed)
             targetAngularVel = maxAngularVelocity;
-        else if (Input.GetKey(KeyCode.LeftArrow))
+        else if (keyboard.leftArrowKey.isPressed)
             targetAngularVel = -maxAngularVelocity;
     }
     
     // 정규화 (-1~1)
-    continuousActions[0] = targetLinearVel / maxLinearVelocity;
-    continuousActions[1] = targetAngularVel / maxAngularVelocity;
+    if (maxLinearVelocity > 0.01f)
+        continuousActions[0] = Mathf.Clamp(targetLinearVel / maxLinearVelocity, -1f, 1f);
+    else
+        continuousActions[0] = 0f;
+        
+    if (maxAngularVelocity > 0.01f)
+        continuousActions[1] = Mathf.Clamp(targetAngularVel / maxAngularVelocity, -1f, 1f);
+    else
+        continuousActions[1] = 0f;
 }
 ```
 

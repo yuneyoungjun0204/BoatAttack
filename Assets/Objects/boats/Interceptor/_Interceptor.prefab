@@ -537,7 +537,11 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 1553288845585282, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       insertIndex: -1
-      addedObject: {fileID: 6192938632801627626}
+      addedObject: {fileID: 2560287575307401612}
+    - targetCorrespondingSourceObject: {fileID: 1553288845585282, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 7411346295538081491}
   m_SourcePrefab: {fileID: 100100000, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
 --- !u!4 &9080735299852188497 stripped
 Transform:
@@ -582,7 +586,7 @@ MonoBehaviour:
   m_UseChildActuators: 1
   m_DeterministicInference: 0
   m_ObservableAttributeHandling: 0
---- !u!114 &6192938632801627626
+--- !u!114 &2560287575307401612
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -591,15 +595,17 @@ MonoBehaviour:
   m_GameObject: {fileID: 9083998436884223129}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 88901d5d9d774dc4781f6c4def6d15bc, type: 3}
+  m_Script: {fileID: 11500000, guid: 92a15c9c448152e4eb10928b63837ccb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   agentParameters:
     maxStep: 0
   hasUpgradedFromAgentParameters: 1
-  MaxStep: 5000
+  MaxStep: 200
   _engine: {fileID: 0}
   enemyShips:
+  - {fileID: 0}
+  - {fileID: 0}
   - {fileID: 0}
   - {fileID: 0}
   - {fileID: 0}
@@ -617,6 +623,20 @@ MonoBehaviour:
   steeringSensitivity: 0.3
   inputSmoothing: 0.2
   showRaycasts: 1
-  enableDebugLog: 0
+  enableDebugLog: 1
   _totalReward: 0
   _lastStepReward: 0
+--- !u!114 &7411346295538081491
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9083998436884223129}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3a5c9d521e5ef4759a8246a07d52221e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  DecisionPeriod: 5
+  TakeActionsBetweenDecisions: 1

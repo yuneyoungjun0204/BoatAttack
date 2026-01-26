@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace BoatAttack
 {
@@ -71,14 +72,18 @@ namespace BoatAttack
         /// <summary>
         /// 키보드 단축키로 씬 전환 (디버그용)
         /// F1: 플레이 씬, F2: 학습 씬
+        /// Unity의 새로운 Input System 사용
         /// </summary>
         private void Update()
         {
-            if (Input.GetKeyDown(KeyCode.F1))
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard == null) return;
+            
+            if (keyboard.f1Key.wasPressedThisFrame)
             {
                 LoadPlayScene();
             }
-            else if (Input.GetKeyDown(KeyCode.F2))
+            else if (keyboard.f2Key.wasPressedThisFrame)
             {
                 LoadTrainingScene();
             }

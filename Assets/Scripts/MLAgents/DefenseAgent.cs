@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 using Unity.MLAgents;
 using Unity.MLAgents.Sensors;
 using Unity.MLAgents.Actuators;
@@ -43,19 +44,19 @@ namespace BoatAttack
 
         [Header("Action Settings")]
         [Tooltip("최대 선속도 (m/s)")]
-        public float maxLinearVelocity = 20f;
+        public float maxLinearVelocity = 200f;
 
         [Tooltip("최대 각속도 (deg/s)")]
         public float maxAngularVelocity = 90f;
 
-        [Tooltip("속도 제어 게인 (PID 또는 비례 제어)")]
-        public float velocityControlGain = 1.0f;
+        [Tooltip("속도 제어 게인 (PID 또는 비례 제어) - 높을수록 빠른 가속")]
+        public float velocityControlGain = 2.5f;  // 1.0 → 2.5로 증가 (더 빠른 가속)
 
         [Tooltip("각속도 제어 게인")]
         public float angularVelocityControlGain = 1.0f;
 
-        [Tooltip("최대 선가속도 (m/s²) - 물리적 한계")]
-        public float maxLinearAcceleration = 5f;
+        [Tooltip("최대 선가속도 (m/s²) - 물리적 한계 - 높을수록 빠른 가속")]
+        public float maxLinearAcceleration = 12f;  // 5 → 12로 증가 (더 빠른 가속)
 
         [Tooltip("최대 각가속도 (deg/s²) - 물리적 한계")]
         public float maxAngularAcceleration = 45f;
@@ -66,15 +67,15 @@ namespace BoatAttack
         public float steeringSensitivity = 0.3f;
 
         [Range(0.01f, 1.0f)]
-        [Tooltip("입력 스무스 처리 속도")]
-        public float inputSmoothing = 0.2f;
+        [Tooltip("입력 스무스 처리 속도 - 높을수록 빠른 반응 (0.2 = 부드러움, 0.5 = 빠른 반응)")]
+        public float inputSmoothing = 0.4f;  // 0.2 → 0.4로 증가 (더 빠른 반응)
 
         [Header("Debug")]
         [Tooltip("에디터에서 Raycast 시각화")]
         public bool showRaycasts = true;
 
         [Tooltip("디버그 로그 활성화")]
-        public bool enableDebugLog = false;
+        public bool enableDebugLog = true;  // 기본값을 true로 변경하여 디버깅 용이하게
 
         [Header("Reward Display")]
         [Tooltip("현재 에피소드의 총 보상")]
@@ -83,13 +84,7 @@ namespace BoatAttack
         [SerializeField] private float _lastStepReward = 0f;
 
         // 내부 변수
-        private float _smoothThrottle = 0f;
-        private float _smoothSteering = 0f;
         private bool _episodeEnded = false;
-        
-        // 목표 속도 추적 (가속도 제한용)
-        private float _lastTargetLinearVelocity = 0f;
-        private float _lastTargetAngularVelocity = 0f;
 
         private new void Awake()
         {
@@ -122,16 +117,63 @@ namespace BoatAttack
                 }
             }
         }
+        
+        private void Start()
+        {
+            // DecisionRequester 확인
+            var decisionRequester = GetComponent<Unity.MLAgents.DecisionRequester>();
+            if (decisionRequester == null)
+            {
+                Debug.LogError($"[DefenseAgent] ⚠️ DecisionRequester 컴포넌트가 없습니다! {gameObject.name}\n" +
+                              "Add Component → Decision Requester를 추가하세요.");
+            }
+            else
+            {
+                if (enableDebugLog)
+                {
+                    Debug.Log($"[DefenseAgent] DecisionRequester 확인됨: {gameObject.name}, " +
+                             $"Decision Period: {decisionRequester.DecisionPeriod}, " +
+                             $"Take Actions Between Decisions: {decisionRequester.TakeActionsBetweenDecisions}");
+                }
+            }
+            
+            // Behavior Parameters 확인
+            var behaviorParams = GetComponent<Unity.MLAgents.Policies.BehaviorParameters>();
+            if (behaviorParams != null)
+            {
+                if (enableDebugLog)
+                {
+                    Debug.Log($"[DefenseAgent] Behavior Parameters 확인됨: {gameObject.name}, " +
+                             $"Behavior Name: {behaviorParams.BehaviorName}, " +
+                             $"Behavior Type: {behaviorParams.BehaviorType}");
+                }
+            }
+            
+            // Engine 확인
+            if (_engine == null)
+            {
+                Debug.LogError($"[DefenseAgent] ⚠️ Engine이 null입니다! {gameObject.name}\n" +
+                             "Boat 컴포넌트와 Engine이 제대로 설정되어 있는지 확인하세요.");
+            }
+            else if (_engine.RB == null)
+            {
+                Debug.LogError($"[DefenseAgent] ⚠️ Engine.RB (Rigidbody)가 null입니다! {gameObject.name}");
+            }
+            else
+            {
+                if (enableDebugLog)
+                {
+                    Debug.Log($"[DefenseAgent] Engine 확인됨: {gameObject.name}, " +
+                             $"maxLinearVelocity: {maxLinearVelocity}, maxAngularVelocity: {maxAngularVelocity}");
+                }
+            }
+        }
 
         public override void OnEpisodeBegin()
         {
             _episodeEnded = false;
             _totalReward = 0f;
             _lastStepReward = 0f;
-            _smoothThrottle = 0f;
-            _smoothSteering = 0f;
-            _lastTargetLinearVelocity = 0f;
-            _lastTargetAngularVelocity = 0f;
 
             if (enableDebugLog)
             {
@@ -266,56 +308,51 @@ namespace BoatAttack
             {
                 if (enableDebugLog && (_engine == null || _engine.RB == null))
                 {
-                    Debug.LogWarning($"[DefenseAgent] _engine 또는 RB가 null입니다! {gameObject.name}");
+                    Debug.LogWarning($"[DefenseAgent] _engine 또는 RB가 null입니다! {gameObject.name}, " +
+                                   $"_engine={_engine != null}, RB={(_engine != null && _engine.RB != null)}");
                 }
                 return;
             }
 
-            // 목표 속도 수신 (정규화된 값 -1~1)
-            float targetLinearVelNormalized = actions.ContinuousActions[0];
-            float targetAngularVelNormalized = actions.ContinuousActions[1];
-
-            // 정규화 해제
-            float targetLinearVelocity = targetLinearVelNormalized * maxLinearVelocity;
-            float targetAngularVelocity = targetAngularVelNormalized * maxAngularVelocity;
-
-            // 현재 속도 측정
-            float currentLinearVelocity = Vector3.Dot(_engine.RB.velocity, transform.forward);
-            float currentAngularVelocity = _engine.RB.angularVelocity.y * Mathf.Rad2Deg;
-
-            // ⚠️ 가속도 제한 적용 (물리적 한계 고려)
-            float deltaTime = Time.fixedDeltaTime;
-            if (deltaTime <= 0f) deltaTime = 0.02f;  // 기본값 설정
+            // 액션 값 직접 사용 (정규화된 값 -1~1)
+            float throttleInput = actions.ContinuousActions[0];  // 전진/후진: -1(후진) ~ 1(전진)
+            float steeringInput = actions.ContinuousActions[1];   // 좌회전/우회전: -1(좌) ~ 1(우)
             
-            float maxLinearVelChange = maxLinearAcceleration * deltaTime;
-            float maxAngularVelChange = maxAngularAcceleration * deltaTime;
-
-            // 목표 속도 변화량 제한
-            targetLinearVelocity = Mathf.Clamp(targetLinearVelocity,
-                _lastTargetLinearVelocity - maxLinearVelChange,
-                _lastTargetLinearVelocity + maxLinearVelChange);
-            targetAngularVelocity = Mathf.Clamp(targetAngularVelocity,
-                _lastTargetAngularVelocity - maxAngularVelChange,
-                _lastTargetAngularVelocity + maxAngularVelChange);
-
-            _lastTargetLinearVelocity = targetLinearVelocity;
-            _lastTargetAngularVelocity = targetAngularVelocity;
-
-            // 속도 차이 계산 및 throttle/steering 변환
-            float velocityError = targetLinearVelocity - currentLinearVelocity;
-            float throttle = Mathf.Clamp(velocityError * velocityControlGain / maxLinearVelocity, -1f, 1f);
-
-            float angularVelocityError = targetAngularVelocity - currentAngularVelocity;
-            float steering = Mathf.Clamp(angularVelocityError * angularVelocityControlGain / maxAngularVelocity, -1f, 1f);
-
-            // ⚠️ 스무스 처리 강화 (더 보수적으로)
-            float smoothFactor = Mathf.Clamp(inputSmoothing, 0.01f, 1f);  // inputSmoothing 사용 (기본값 0.2)
-            _smoothThrottle = Mathf.Lerp(_smoothThrottle, throttle, smoothFactor);
-            _smoothSteering = Mathf.Lerp(_smoothSteering, steering, smoothFactor);
-
-            // Engine 제어
-            _engine.Accelerate(Mathf.Clamp01(_smoothThrottle));  // throttle은 0~1 범위
-            _engine.Turn(_smoothSteering * steeringSensitivity);
+            // ⚠️ NaN 방지
+            if (float.IsNaN(throttleInput) || float.IsInfinity(throttleInput))
+            {
+                throttleInput = 0f;
+            }
+            if (float.IsNaN(steeringInput) || float.IsInfinity(steeringInput))
+            {
+                steeringInput = 0f;
+            }
+            
+            // 범위 제한
+            throttleInput = Mathf.Clamp(throttleInput, -1f, 1f);
+            steeringInput = Mathf.Clamp(steeringInput, -1f, 1f);
+            
+            // 전진만 허용 (후진은 0으로 처리) 또는 후진도 허용하려면 주석 해제
+            float throttle = Mathf.Clamp01(throttleInput);  // 0~1 범위 (전진만)
+            // float throttle = (throttleInput + 1f) * 0.5f;  // 후진도 허용하려면 이 줄 사용
+            
+            // Steering에 감도 적용
+            float steering = steeringInput * steeringSensitivity;
+            steering = Mathf.Clamp(steering, -1f, 1f);
+            
+            // Engine에 직접 전달 (즉각 반응)
+            _engine.Accelerate(throttle);
+            _engine.Turn(steering);
+            
+            // 디버그: Engine 제어 값 출력
+            if (enableDebugLog && (Mathf.Abs(throttle) > 0.01f || Mathf.Abs(steering) > 0.01f))
+            {
+                if (Time.frameCount % 30 == 0)  // 0.5초마다 로그
+                {
+                    Debug.Log($"[DefenseAgent] Engine 제어: {gameObject.name}, " +
+                             $"Throttle={throttle:F2}, Steering={steering:F2}");
+                }
+            }
 
             // ⚠️ 개별 보상 제거 - DefenseEnvController에서 그룹 보상으로 처리
         }
@@ -347,81 +384,129 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 수동 조종 (키보드 테스트용) - 목표 속도 기반
+        /// 수동 조종 (키보드 테스트용) - 직접 throttle/steering 출력
         /// Agent1: WASD
         /// Agent2: Arrow Keys
+        /// Unity의 새로운 Input System (UnityEngine.InputSystem)을 사용합니다.
         /// ⚠️ 주의: ML-Agents에서 Heuristic을 사용하려면 DecisionRequester 컴포넌트가 필요합니다
         /// </summary>
         public override void Heuristic(in ActionBuffers actionsOut)
         {
             var continuousActions = actionsOut.ContinuousActions;
 
-            // 키보드 입력을 목표 속도로 변환
-            float targetLinearVel = 0f;
-            float targetAngularVel = 0f;
-            
-            if (enableDebugLog && Time.frameCount % 60 == 0)  // 1초마다 로그
+            // Unity Input System 사용 (Legacy Input 대신)
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard == null)
             {
-                Debug.Log($"[DefenseAgent] Heuristic 호출됨: {gameObject.name}, maxLinearVel: {maxLinearVelocity}, maxAngularVel: {maxAngularVelocity}");
+                // 키보드가 없으면 0으로 설정
+                continuousActions[0] = 0f;
+                continuousActions[1] = 0f;
+                if (enableDebugLog && Time.frameCount % 60 == 0)
+                {
+                    Debug.LogWarning($"[DefenseAgent] 키보드를 찾을 수 없습니다! {gameObject.name}");
+                }
+                return;
             }
 
+            // 키보드 입력을 throttle/steering으로 직접 변환 (-1~1)
+            float throttle = 0f;
+            float steering = 0f;
+            
             // Agent 이름으로 구분 (더 유연한 매칭)
             string agentName = gameObject.name.ToLower();
             bool isAgent1 = agentName.Contains("1") || agentName.Contains("agent1") || agentName.Contains("defense1");
             bool isAgent2 = agentName.Contains("2") || agentName.Contains("agent2") || agentName.Contains("defense2");
 
+            // 디버그: 키 입력 확인
+            bool hasInput = false;
+
             if (isAgent1)
             {
                 // WASD
-                if (Input.GetKey(KeyCode.W))
-                    targetLinearVel = maxLinearVelocity;  // 전진
-                else if (Input.GetKey(KeyCode.S))
-                    targetLinearVel = -maxLinearVelocity * 0.5f;  // 후진 (느리게)
+                if (keyboard.wKey.isPressed)
+                {
+                    throttle = 1f;  // 전진
+                    hasInput = true;
+                }
+                else if (keyboard.sKey.isPressed)
+                {
+                    throttle = -0.5f;  // 후진 (느리게)
+                    hasInput = true;
+                }
 
-                if (Input.GetKey(KeyCode.D))
-                    targetAngularVel = maxAngularVelocity;  // 우회전
-                else if (Input.GetKey(KeyCode.A))
-                    targetAngularVel = -maxAngularVelocity;  // 좌회전
+                if (keyboard.dKey.isPressed)
+                {
+                    steering = 1f;  // 우회전
+                    hasInput = true;
+                }
+                else if (keyboard.aKey.isPressed)
+                {
+                    steering = -1f;  // 좌회전
+                    hasInput = true;
+                }
             }
             else if (isAgent2)
             {
                 // Arrow Keys
-                if (Input.GetKey(KeyCode.UpArrow))
-                    targetLinearVel = maxLinearVelocity;
-                else if (Input.GetKey(KeyCode.DownArrow))
-                    targetLinearVel = -maxLinearVelocity * 0.5f;
+                if (keyboard.upArrowKey.isPressed)
+                {
+                    throttle = 1f;
+                    hasInput = true;
+                }
+                else if (keyboard.downArrowKey.isPressed)
+                {
+                    throttle = -0.5f;
+                    hasInput = true;
+                }
 
-                if (Input.GetKey(KeyCode.RightArrow))
-                    targetAngularVel = maxAngularVelocity;
-                else if (Input.GetKey(KeyCode.LeftArrow))
-                    targetAngularVel = -maxAngularVelocity;
+                if (keyboard.rightArrowKey.isPressed)
+                {
+                    steering = 1f;
+                    hasInput = true;
+                }
+                else if (keyboard.leftArrowKey.isPressed)
+                {
+                    steering = -1f;
+                    hasInput = true;
+                }
             }
             else
             {
                 // 기본값: 첫 번째 에이전트는 WASD, 나머지는 Arrow Keys
                 // 또는 둘 다 같은 키 사용
-                if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow))
-                    targetLinearVel = maxLinearVelocity;
-                else if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow))
-                    targetLinearVel = -maxLinearVelocity * 0.5f;
+                if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed)
+                {
+                    throttle = 1f;
+                    hasInput = true;
+                }
+                else if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed)
+                {
+                    throttle = -0.5f;
+                    hasInput = true;
+                }
 
-                if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow))
-                    targetAngularVel = maxAngularVelocity;
-                else if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow))
-                    targetAngularVel = -maxAngularVelocity;
+                if (keyboard.dKey.isPressed || keyboard.rightArrowKey.isPressed)
+                {
+                    steering = 1f;
+                    hasInput = true;
+                }
+                else if (keyboard.aKey.isPressed || keyboard.leftArrowKey.isPressed)
+                {
+                    steering = -1f;
+                    hasInput = true;
+                }
             }
 
-            // 정규화 (-1~1)
-            // maxLinearVelocity가 0이면 나눗셈 오류 방지
-            if (maxLinearVelocity > 0.01f)
-                continuousActions[0] = Mathf.Clamp(targetLinearVel / maxLinearVelocity, -1f, 1f);
-            else
-                continuousActions[0] = 0f;
-
-            if (maxAngularVelocity > 0.01f)
-                continuousActions[1] = Mathf.Clamp(targetAngularVel / maxAngularVelocity, -1f, 1f);
-            else
-                continuousActions[1] = 0f;
+            // 액션 값 직접 출력 (-1~1)
+            continuousActions[0] = Mathf.Clamp(throttle, -1f, 1f);
+            continuousActions[1] = Mathf.Clamp(steering, -1f, 1f);
+            
+            // 디버그: 액션 값 출력
+            if (enableDebugLog && hasInput && Time.frameCount % 30 == 0)
+            {
+                Debug.Log($"[DefenseAgent] Heuristic 호출됨 - 키 입력 감지: {gameObject.name}, " +
+                         $"Throttle={continuousActions[0]:F2}, Steering={continuousActions[1]:F2}");
+            }
         }
 
         /// <summary>
