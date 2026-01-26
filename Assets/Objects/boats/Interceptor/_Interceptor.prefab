@@ -533,15 +533,15 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 1553288845585282, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       insertIndex: -1
-      addedObject: {fileID: 38375215458064404}
+      addedObject: {fileID: 1187568022988528297}
     - targetCorrespondingSourceObject: {fileID: 1553288845585282, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       insertIndex: -1
-      addedObject: {fileID: 2560287575307401612}
+      addedObject: {fileID: 6027910979876714719}
     - targetCorrespondingSourceObject: {fileID: 1553288845585282, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       insertIndex: -1
-      addedObject: {fileID: 7411346295538081491}
+      addedObject: {fileID: 2143485986684693865}
   m_SourcePrefab: {fileID: 100100000, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
 --- !u!4 &9080735299852188497 stripped
 Transform:
@@ -555,7 +555,7 @@ GameObject:
     type: 3}
   m_PrefabInstance: {fileID: 9085269829827428123}
   m_PrefabAsset: {fileID: 0}
---- !u!114 &38375215458064404
+--- !u!114 &1187568022988528297
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -568,14 +568,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 16
+    VectorObservationSize: 1
     NumStackedVectorObservations: 1
     m_ActionSpec:
-      m_NumContinuousActions: 2
-      BranchSizes: 
-    VectorActionSize: 02000000
+      m_NumContinuousActions: 0
+      BranchSizes: 01000000
+    VectorActionSize: 01000000
     VectorActionDescriptions: []
-    VectorActionSpaceType: 1
+    VectorActionSpaceType: 0
     hasUpgradedBrainParametersWithActionSpec: 1
   m_Model: {fileID: 0}
   m_InferenceDevice: 0
@@ -586,7 +586,7 @@ MonoBehaviour:
   m_UseChildActuators: 1
   m_DeterministicInference: 0
   m_ObservableAttributeHandling: 0
---- !u!114 &2560287575307401612
+--- !u!114 &6027910979876714719
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -595,38 +595,17 @@ MonoBehaviour:
   m_GameObject: {fileID: 9083998436884223129}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 92a15c9c448152e4eb10928b63837ccb, type: 3}
+  m_Script: {fileID: 11500000, guid: fa47f0de37d5abf458f810171bffd745, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   agentParameters:
     maxStep: 0
   hasUpgradedFromAgentParameters: 1
-  MaxStep: 200
-  _engine: {fileID: 0}
-  enemyShips:
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  maxEnemyCount: 5
-  partnerAgent: {fileID: 0}
-  motherShip: {fileID: 0}
-  motherShipTag: MotherShip
-  webObject: {fileID: 0}
-  maxLinearVelocity: 20
-  maxAngularVelocity: 90
-  velocityControlGain: 1
-  angularVelocityControlGain: 1
-  maxLinearAcceleration: 5
-  maxAngularAcceleration: 45
-  steeringSensitivity: 0.3
-  inputSmoothing: 0.2
-  showRaycasts: 1
-  enableDebugLog: 1
-  _totalReward: 0
-  _lastStepReward: 0
---- !u!114 &7411346295538081491
+  MaxStep: 0
+  agentRunSpeed: 10
+  rotationSpeed: 200
+  steeringSensitivity: 1
+--- !u!114 &2143485986684693865
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
