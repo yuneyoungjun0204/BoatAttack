@@ -34769,8 +34769,6 @@ GameObject:
   - component: {fileID: 4635383092979925273}
   - component: {fileID: 6827343430107846827}
   - component: {fileID: 1880583791985537024}
-  - component: {fileID: 508016648407087821}
-  - component: {fileID: -369454345623728163}
   m_Layer: 11
   m_Name: "\uBE68\uAC31\uC774"
   m_TagString: attack_boat
@@ -34919,70 +34917,6 @@ MonoBehaviour:
   destroyAfterExplosion: 1
   destroyDelay: 1.5
   useTriggerCollision: 0
---- !u!114 &508016648407087821
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7205157340779662337}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5d1c4e0b1822b495aa52bc52839ecb30, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  m_BrainParameters:
-    VectorObservationSize: 1
-    NumStackedVectorObservations: 1
-    m_ActionSpec:
-      m_NumContinuousActions: 0
-      BranchSizes: 01000000
-    VectorActionSize: 01000000
-    VectorActionDescriptions: []
-    VectorActionSpaceType: 0
-    hasUpgradedBrainParametersWithActionSpec: 1
-  m_Model: {fileID: 0}
-  m_InferenceDevice: 0
-  m_BehaviorType: 0
-  m_BehaviorName: My Behavior
-  TeamId: 0
-  m_UseChildSensors: 1
-  m_UseChildActuators: 1
-  m_DeterministicInference: 0
-  m_ObservableAttributeHandling: 0
---- !u!114 &-369454345623728163
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7205157340779662337}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0cb4d54e49c123c409b91ab0b82657a6, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  agentParameters:
-    maxStep: 0
-  hasUpgradedFromAgentParameters: 1
-  MaxStep: 0
-  targetMotherShip: {fileID: 0}
-  motherShipTag: MotherShip
-  raycastDistance: 50
-  raycastCount: 8
-  distanceRewardMultiplier: 0.01
-  maxRewardDistance: 100
-  timePenalty: -0.001
-  steeringSensitivity: 0.3
-  inputSmoothing: 0.2
-  showRaycasts: 1
-  _totalReward: 0
-  explosionPrefab: {fileID: 0}
-  explosionReward: 50
-  explosionScale: 23
-  useTriggerCollision: 0
-  followWaypoints: 1
-  directChaseDistance: 50
 --- !u!1 &8305774083215281229
 GameObject:
   m_ObjectHideFlags: 0

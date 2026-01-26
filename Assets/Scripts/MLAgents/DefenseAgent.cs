@@ -175,9 +175,14 @@ namespace BoatAttack
             _totalReward = 0f;
             _lastStepReward = 0f;
 
+            // PushBlockEnvController 패턴: 
+            // ML-Agents가 자동으로 OnEpisodeBegin을 호출하므로,
+            // 환경 리셋은 DefenseEnvController.ResetScene()에서 처리됨
+            // 여기서는 에이전트 자체의 상태만 초기화
+
             if (enableDebugLog)
             {
-                Debug.Log($"[DefenseAgent] 에피소드 시작: {gameObject.name}");
+                Debug.Log($"[DefenseAgent] 에피소드 시작: {gameObject.name} (ML-Agents 자동 호출)");
             }
         }
 
@@ -518,7 +523,8 @@ namespace BoatAttack
                 return;
 
             // 아군 또는 모선과 충돌 체크
-            if (collision.gameObject.CompareTag("DefenseAgent") || 
+            // DefenseAgent는 컴포넌트이므로 태그 대신 컴포넌트로 확인
+            if (collision.gameObject.GetComponent<DefenseAgent>() != null || 
                 collision.gameObject.CompareTag("MotherShip"))
             {
                 DefenseEnvController envController = FindObjectOfType<DefenseEnvController>();

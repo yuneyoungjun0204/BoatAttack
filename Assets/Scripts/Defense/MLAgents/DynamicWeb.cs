@@ -46,6 +46,10 @@ namespace BoatAttack
         [Range(5f, 50f)]
         public float explosionScale = 15f;
 
+        [Header("Managers")]
+        [Tooltip("환경 컨트롤러 (수동 할당 가능, 비어있으면 자동으로 찾음)")]
+        public DefenseEnvController envController;
+
         private BoxCollider _collider;
         private MeshRenderer _renderer;
         private GameObject _visualObject;
@@ -94,6 +98,25 @@ namespace BoatAttack
 
             // 초기 색상 저장
             _lastWebColor = webColor;
+            
+            // DefenseEnvController 찾기 및 캐싱
+            // Inspector에서 할당되지 않았으면 자동으로 찾기
+            if (envController == null)
+            {
+                envController = FindObjectOfType<DefenseEnvController>();
+                if (envController == null)
+                {
+                    Debug.LogWarning("[DynamicWeb] DefenseEnvController를 찾을 수 없습니다. 적군 선박 파괴 추적이 작동하지 않을 수 있습니다.");
+                }
+                else
+                {
+                    Debug.Log("[DynamicWeb] DefenseEnvController 자동 발견 및 할당 완료");
+                }
+            }
+            else
+            {
+                Debug.Log("[DynamicWeb] DefenseEnvController Inspector에서 할당됨");
+            }
 
             Debug.Log("[DynamicWeb] Start 완료 - 충돌 감지 준비됨");
         }
@@ -475,7 +498,7 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// attack_boat 초기화 (비활성화하고 AttackBoatManager가 재생성하도록)
+        /// attack_boat 초기화 (파괴) - 중앙 허브로 리다이렉트
         /// </summary>
         private void ResetAttackBoat(GameObject attackBoat)
         {
@@ -487,41 +510,23 @@ namespace BoatAttack
                 return;
             }
 
-            // 물리 콜백 중에는 즉시 비활성화할 수 없으므로 Coroutine 사용
-            StartCoroutine(DeactivateBoatNextFrame(attackBoat));
-        }
-
-        /// <summary>
-        /// 다음 프레임에 attack_boat 비활성화 (물리 콜백 제약 회피)
-        /// </summary>
-        private System.Collections.IEnumerator DeactivateBoatNextFrame(GameObject attackBoat)
-        {
-            // 다음 프레임까지 대기 (물리 콜백이 끝난 후)
-            yield return null;
-
-            if (attackBoat == null)
+            // DefenseEnvController에 파괴 요청 (중앙 허브에서 처리)
+            if (envController == null)
             {
-                Debug.LogError("[DynamicWeb] attackBoat가 파괴되었습니다!");
-                yield break;
+                envController = FindObjectOfType<DefenseEnvController>();
+                Debug.LogError($"[DynamicWeb] DefenseEnvController 재검색: {(envController != null ? "발견됨" : "찾을 수 없음")}");
             }
-
-            // attack_boat 비활성화 (AttackBoatManager가 감지하여 재생성함)
-            Debug.LogError($"[DynamicWeb] ★★★ {attackBoat.name} 비활성화 ★★★");
-            attackBoat.SetActive(false);
-
-            // AttackBoatManager에게 비활성화 알림
-            AttackBoatManager manager = FindObjectOfType<AttackBoatManager>();
-            if (manager != null)
+            
+            if (envController != null)
             {
-                Debug.LogError($"[DynamicWeb] AttackBoatManager에게 비활성화 알림 전송");
-                manager.OnAttackBoatDisabled(attackBoat);
+                Debug.LogError($"[DynamicWeb] DefenseEnvController.RequestAttackBoatDestruction() 호출: {attackBoat.name}");
+                envController.RequestAttackBoatDestruction(attackBoat);
+                Debug.LogError($"[DynamicWeb] DefenseEnvController.RequestAttackBoatDestruction() 호출 완료");
             }
             else
             {
-                Debug.LogWarning("[DynamicWeb] AttackBoatManager를 찾을 수 없습니다. 자동 재생성이 작동하지 않을 수 있습니다.");
+                Debug.LogError("[DynamicWeb] ❌ DefenseEnvController를 찾을 수 없습니다! 적군 선박 파괴 추적이 작동하지 않습니다.");
             }
-
-            Debug.LogError($"[DynamicWeb] ★★★ {attackBoat.name} 비활성화 완료 (AttackBoatManager가 재생성 예정) ★★★");
         }
 
         /// <summary>

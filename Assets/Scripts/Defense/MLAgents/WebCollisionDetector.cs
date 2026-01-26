@@ -25,6 +25,7 @@ namespace BoatAttack
         [Tooltip("디버그 로그 활성화")]
         public bool enableDebugLog = true;
 
+
         private bool _hasTriggered = false;
 
         private void Start()
@@ -70,6 +71,23 @@ namespace BoatAttack
                         {
                             agent.OnEnemyCaptured(enemyPosition);
                         }
+                    }
+                }
+
+                // 적군 선박 파괴 (폭발처럼 처리)
+                GameObject enemyBoat = other.gameObject;
+                
+                // DefenseEnvController에 적군 선박 파괴 요청 (중앙 허브에서 처리)
+                // envController는 이미 Start()에서 찾았으므로 그대로 사용
+                if (envController != null)
+                {
+                    envController.RequestAttackBoatDestruction(enemyBoat);
+                }
+                else
+                {
+                    if (enableDebugLog)
+                    {
+                        Debug.LogWarning("[WebCollisionDetector] DefenseEnvController를 찾을 수 없습니다! 적군 선박 파괴 추적이 작동하지 않습니다.");
                     }
                 }
 

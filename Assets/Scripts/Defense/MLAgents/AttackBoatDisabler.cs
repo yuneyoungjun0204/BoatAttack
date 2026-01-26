@@ -14,28 +14,16 @@ namespace BoatAttack
         [Tooltip("폭발 후 비활성화 딜레이 (초)")]
         public float disableDelay = 0.5f;
         
-        [Tooltip("비활성화 시 AttackBoatManager에 알림")]
-        public bool notifyManager = true;
-        
         [Header("Debug")]
         [Tooltip("디버그 로그 출력")]
         public bool debugLog = true;
 
         private AttackAgent _attackAgent;
-        private AttackBoatManager _manager;
         private bool _hasExploded = false;
 
         private void Awake()
         {
             _attackAgent = GetComponent<AttackAgent>();
-            
-            // AttackBoatManager 찾기 (씬에 하나만 있어야 함)
-            _manager = FindObjectOfType<AttackBoatManager>();
-            
-            if (_manager == null && debugLog)
-            {
-                Debug.LogWarning("[AttackBoatDisabler] AttackBoatManager를 찾을 수 없습니다. 씬에 AttackBoatManager를 추가하세요.");
-            }
         }
 
         private void OnEnable()
@@ -125,13 +113,7 @@ namespace BoatAttack
                 Debug.Log($"[AttackBoatDisabler] {gameObject.name}: 공격 선박 파괴");
             }
             
-            // AttackBoatManager에 알림 (파괴 전에)
-            if (notifyManager && _manager != null)
-            {
-                _manager.OnAttackBoatDisabled(gameObject);
-            }
-            
-            // GameObject 파괴 (비활성화 대신)
+            // GameObject 파괴 (방어 선박만 학습하므로 적군 선박은 단순히 파괴)
             Destroy(gameObject);
         }
 
