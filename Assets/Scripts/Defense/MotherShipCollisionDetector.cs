@@ -41,16 +41,18 @@ namespace BoatAttack
             {
                 if (enableDebugLog)
                 {
-                    Debug.Log($"[MotherShipCollisionDetector] 모선 충돌 감지: {collision.gameObject.name}");
+                    Vector3 contactPoint = collision.contacts.Length > 0 ? collision.contacts[0].point : collision.gameObject.transform.position;
+                    Debug.LogWarning($"[MotherShipCollisionDetector] 모선 충돌! 적군: {collision.gameObject.name}, " +
+                                   $"충돌 위치: {contactPoint}, 상대 속도: {collision.relativeVelocity.magnitude:F1}m/s");
                 }
-                
+
                 if (envController != null)
                 {
                     envController.OnMotherShipCollision(collision.gameObject);
                 }
             }
         }
-        
+
         /// <summary>
         /// 충돌 감지 (Trigger)
         /// </summary>
@@ -60,9 +62,10 @@ namespace BoatAttack
             {
                 if (enableDebugLog)
                 {
-                    Debug.Log($"[MotherShipCollisionDetector] 모선 충돌 감지 (Trigger): {other.gameObject.name}");
+                    Debug.LogWarning($"[MotherShipCollisionDetector] 모선 트리거 충돌! 적군: {other.gameObject.name}, " +
+                                   $"위치: {other.gameObject.transform.position}");
                 }
-                
+
                 if (envController != null)
                 {
                     envController.OnMotherShipCollision(other.gameObject);

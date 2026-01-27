@@ -86,6 +86,10 @@ namespace BoatAttack
         // 내부 변수
         private bool _episodeEnded = false;
 
+        // 저주파 필터 (Low-Pass Filter) - 이전 명령과의 연속성 부여
+        private float _prevThrottle = 0f;
+        private float _prevSteering = 0f;
+
         private new void Awake()
         {
             // Boat와 Engine 컴포넌트 찾기
@@ -174,6 +178,8 @@ namespace BoatAttack
             _episodeEnded = false;
             _totalReward = 0f;
             _lastStepReward = 0f;
+            _prevThrottle = 0f;
+            _prevSteering = 0f;
 
             // PushBlockEnvController 패턴: 
             // ML-Agents가 자동으로 OnEpisodeBegin을 호출하므로,
@@ -339,13 +345,21 @@ namespace BoatAttack
             
             // 전진만 허용 (후진은 0으로 처리) 또는 후진도 허용하려면 주석 해제
             float throttle = Mathf.Clamp01(throttleInput);  // 0~1 범위 (전진만)
+            // float throttle = 1f;  // 항상 전진
             // float throttle = (throttleInput + 1f) * 0.5f;  // 후진도 허용하려면 이 줄 사용
-            
+
             // Steering에 감도 적용
             float steering = steeringInput * steeringSensitivity;
             steering = Mathf.Clamp(steering, -1f, 1f);
-            
-            // Engine에 직접 전달 (즉각 반응)
+
+            // 저주파 필터 (Low-Pass Filter) 적용: 이전 명령과의 연속성 부여
+            // inputSmoothing이 낮을수록 부드러운 전환, 높을수록 빠른 반응
+            throttle = Mathf.Lerp(_prevThrottle, throttle, inputSmoothing);
+            steering = Mathf.Lerp(_prevSteering, steering, inputSmoothing);
+            _prevThrottle = throttle;
+            _prevSteering = steering;
+
+            // Engine에 전달 (필터링된 값)
             _engine.Accelerate(throttle);
             _engine.Turn(steering);
             

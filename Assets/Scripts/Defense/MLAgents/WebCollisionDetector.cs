@@ -53,41 +53,19 @@ namespace BoatAttack
                     Debug.Log($"[WebCollisionDetector] 적군 포획! {other.gameObject.name}");
                 }
 
-                // 적의 위치 저장
-                Vector3 enemyPosition = other.transform.position;
-
-                // DefenseEnvController를 통해 그룹 보상으로 처리
-                if (envController != null)
-                {
-                    envController.OnEnemyCaptured(enemyPosition);
-                }
-                else
-                {
-                    // Fallback: DefenseAgent들에게 직접 알림 (호환성)
-                    DefenseAgent[] agents = FindObjectsOfType<DefenseAgent>();
-                    foreach (var agent in agents)
-                    {
-                        if (agent != null)
-                        {
-                            agent.OnEnemyCaptured(enemyPosition);
-                        }
-                    }
-                }
-
-                // 적군 선박 파괴 (폭발처럼 처리)
+                // 적군 선박 참조
                 GameObject enemyBoat = other.gameObject;
-                
-                // DefenseEnvController에 적군 선박 파괴 요청 (중앙 허브에서 처리)
-                // envController는 이미 Start()에서 찾았으므로 그대로 사용
+
+                // DefenseEnvController를 통해 적군과 아군 모두 원점으로 리셋 처리 (에피소드 종료 없음)
                 if (envController != null)
                 {
-                    envController.RequestAttackBoatDestruction(enemyBoat);
+                    envController.OnEnemyHitWeb(enemyBoat);
                 }
                 else
                 {
                     if (enableDebugLog)
                     {
-                        Debug.LogWarning("[WebCollisionDetector] DefenseEnvController를 찾을 수 없습니다! 적군 선박 파괴 추적이 작동하지 않습니다.");
+                        Debug.LogWarning("[WebCollisionDetector] DefenseEnvController를 찾을 수 없습니다!");
                     }
                 }
 

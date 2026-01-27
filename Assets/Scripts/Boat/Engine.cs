@@ -16,7 +16,7 @@ namespace BoatAttack
 
         //engine stats
         public float steeringTorque = 5f;
-        public float horsePower = 18f;
+        public float horsePower = 5800f;
         private NativeArray<float3> _point; // engine submerged check
         private float3[] _heights = new float3[1]; // engine submerged check
         private float3[] _normals = new float3[1]; // engine submerged check
@@ -88,6 +88,12 @@ namespace BoatAttack
             }
 
             // Get the water level from the engines position and store it
+            // ⚠️ NativeArray가 생성되어 있는지 확인 (메모리 에러 방지)
+            if (!_point.IsCreated)
+            {
+                return;
+            }
+            
             _point[0] = transform.TransformPoint(enginePosition);
             GerstnerWavesJobs.UpdateSamplePoints(ref _point, _guid);
             GerstnerWavesJobs.GetData(_guid, ref _heights, ref _normals);
@@ -102,7 +108,20 @@ namespace BoatAttack
 
         private void OnDisable()
         {
-            _point.Dispose();
+            // ⚠️ NativeArray가 생성되어 있는지 확인 후 Dispose (중복 해제 방지)
+            if (_point.IsCreated)
+            {
+                _point.Dispose();
+            }
+        }
+        
+        private void OnDestroy()
+        {
+            // ⚠️ OnDestroy에서도 안전하게 Dispose (이중 안전장치)
+            if (_point.IsCreated)
+            {
+                _point.Dispose();
+            }
         }
         
         /// <summary>
@@ -131,7 +150,7 @@ namespace BoatAttack
                     forward = Vector3.forward;
                 }
                 
-                RB.AddForce(horsePower * modifier * forward, ForceMode.Acceleration); // add force forward based on input and horsepower
+                RB.AddForce(horsePower * forward, ForceMode.Acceleration); // add force forward based on input and horsepower
                 RB.AddRelativeTorque(-Vector3.right * modifier, ForceMode.Acceleration);
             }
         }

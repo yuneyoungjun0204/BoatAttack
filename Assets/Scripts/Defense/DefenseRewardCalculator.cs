@@ -57,6 +57,13 @@ namespace BoatAttack
         [Tooltip("추적 이득 보상")]
         public float trackingGainReward = 0.0002f;
         
+        [Header("Speed Reward")]
+        [Tooltip("속도 보상 (빠를수록 높은 보상)")]
+        public float speedReward = 0.0003f;
+
+        [Tooltip("속도 보상 기준 속도 (m/s) - 이 속도 이상이면 최대 보상")]
+        public float speedRewardThreshold = 10f;
+
         [Header("Safety Penalties")]
         [Tooltip("충돌 패널티 (아군-아군, 아군-모선)")]
         public float collisionPenalty = -1.0f;
@@ -118,7 +125,15 @@ namespace BoatAttack
                 totalReward += distanceMaintainReward;
             }
             
-            // 4. 그물 장력 (Net Tension)
+            // 4. 속도 보상 (빠를수록 높은 보상, 두 에이전트 평균)
+            if (speedRewardThreshold > 0f)
+            {
+                float avgSpeed = (agent1.speed + agent2.speed) / 2f;
+                float speedFactor = Mathf.Clamp01(avgSpeed / speedRewardThreshold);
+                totalReward += speedReward * speedFactor;
+            }
+
+            // 5. 그물 장력 (Net Tension)
             float optimalMin = netMaxLength * netOptimalMinRatio;
             float optimalMax = netMaxLength * netOptimalMaxRatio;
             if (distance >= optimalMin && distance <= optimalMax)

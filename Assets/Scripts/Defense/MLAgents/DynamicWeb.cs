@@ -349,32 +349,22 @@ namespace BoatAttack
         /// </summary>
         private void HandleAttackBoatCollision(GameObject attackBoat)
         {
-            Debug.LogError($"[DynamicWeb] ===== HandleAttackBoatCollision 시작 =====");
-
             if (attackBoat == null)
             {
-                Debug.LogError("[DynamicWeb] HandleAttackBoatCollision: attackBoat가 null입니다!");
                 return;
             }
 
-            Debug.LogError($"[DynamicWeb] attack_boat 충돌 처리 시작: {attackBoat.name}");
-
-            // 1. 폭발 효과 생성
-            Debug.LogError("[DynamicWeb] 1단계: 폭발 효과 생성 시작");
-            CreateExplosion(attackBoat.transform.position);
-            Debug.LogError("[DynamicWeb] 1단계: 폭발 효과 생성 완료");
-
-            // 2. 방어선에게 보상 부여
-            Debug.LogError("[DynamicWeb] 2단계: 방어선 보상 부여 시작");
-            RewardDefenseShips();
-            Debug.LogError("[DynamicWeb] 2단계: 방어선 보상 부여 완료");
-
-            // 3. attack_boat 초기화 (Agent.EndEpisode() 호출)
-            Debug.LogError("[DynamicWeb] 3단계: attack_boat 초기화 시작");
-            ResetAttackBoat(attackBoat);
-            Debug.LogError("[DynamicWeb] 3단계: attack_boat 초기화 완료");
-
-            Debug.LogError($"[DynamicWeb] ===== HandleAttackBoatCollision 완료 =====");
+            // DefenseEnvController에 직접 전달 (중복 처리 방지)
+            // 폭발 효과, 보상 부여, 리셋 등 모든 처리는 OnEnemyHitWeb에서 일괄 처리
+            if (envController == null)
+            {
+                envController = FindObjectOfType<DefenseEnvController>();
+            }
+            
+            if (envController != null)
+            {
+                envController.OnEnemyHitWeb(attackBoat);
+            }
         }
 
         /// <summary>
@@ -498,7 +488,7 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// attack_boat 초기화 (파괴) - 중앙 허브로 리다이렉트
+        /// attack_boat 초기화 - 원점으로 리셋 (파괴하지 않음)
         /// </summary>
         private void ResetAttackBoat(GameObject attackBoat)
         {
@@ -510,7 +500,7 @@ namespace BoatAttack
                 return;
             }
 
-            // DefenseEnvController에 파괴 요청 (중앙 허브에서 처리)
+            // DefenseEnvController에 원점 리셋 요청 (파괴하지 않음)
             if (envController == null)
             {
                 envController = FindObjectOfType<DefenseEnvController>();
@@ -519,13 +509,13 @@ namespace BoatAttack
             
             if (envController != null)
             {
-                Debug.LogError($"[DynamicWeb] DefenseEnvController.RequestAttackBoatDestruction() 호출: {attackBoat.name}");
-                envController.RequestAttackBoatDestruction(attackBoat);
-                Debug.LogError($"[DynamicWeb] DefenseEnvController.RequestAttackBoatDestruction() 호출 완료");
+                Debug.LogError($"[DynamicWeb] DefenseEnvController.OnEnemyHitWeb() 호출: {attackBoat.name}");
+                envController.OnEnemyHitWeb(attackBoat);
+                Debug.LogError($"[DynamicWeb] DefenseEnvController.OnEnemyHitWeb() 호출 완료");
             }
             else
             {
-                Debug.LogError("[DynamicWeb] ❌ DefenseEnvController를 찾을 수 없습니다! 적군 선박 파괴 추적이 작동하지 않습니다.");
+                Debug.LogError("[DynamicWeb] ❌ DefenseEnvController를 찾을 수 없습니다!");
             }
         }
 
