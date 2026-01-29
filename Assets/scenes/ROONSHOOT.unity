@@ -5807,6 +5807,11 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 31.354002
       objectReference: {fileID: 0}
+    - target: {fileID: 876207893786675726, guid: 0c7985f2d9089445f8defe14345f3439,
+        type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 2060707210587953264, guid: 0c7985f2d9089445f8defe14345f3439,
         type: 3}
       propertyPath: m_LocalPosition.x
@@ -5855,7 +5860,7 @@ PrefabInstance:
     - target: {fileID: 4874933704009890329, guid: 0c7985f2d9089445f8defe14345f3439,
         type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7368125319581762261, guid: 0c7985f2d9089445f8defe14345f3439,
         type: 3}
@@ -5997,7 +6002,12 @@ PrefabInstance:
     - target: {fileID: 38375215458064404, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: m_BrainParameters.VectorObservationSize
-      value: 23
+      value: 15
+      objectReference: {fileID: 0}
+    - target: {fileID: 38375215458064404, guid: 405c4bc591de844a3a100e1538790229,
+        type: 3}
+      propertyPath: m_BrainParameters.NumStackedVectorObservations
+      value: 3
       objectReference: {fileID: 0}
     - target: {fileID: 481488137263271977, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -6037,7 +6047,7 @@ PrefabInstance:
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: maxEnemyCount
-      value: 4
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -6057,7 +6067,7 @@ PrefabInstance:
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: enemyShips.Array.size
-      value: 3
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -6198,6 +6208,11 @@ PrefabInstance:
         type: 3}
       propertyPath: m_Name
       value: "\uAD6D\uAD70"
+      objectReference: {fileID: 0}
+    - target: {fileID: 9139778213846827507, guid: 405c4bc591de844a3a100e1538790229,
+        type: 3}
+      propertyPath: m_Drag
+      value: 0.4
       objectReference: {fileID: 0}
     - target: {fileID: 9139778213846827507, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -6458,44 +6473,6 @@ NavMeshObstacle:
   m_CarveOnlyStationary: 0
   m_Center: {x: 0, y: -0.5, z: -0.4}
   m_TimeToStationary: 0.5
---- !u!84 &480035804
-RenderTexture:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: WaterDepthMap
-  m_ImageContentsHash:
-    serializedVersion: 2
-    Hash: 00000000000000000000000000000000
-  m_ForcedFallbackFormat: 4
-  m_DownscaleFallback: 0
-  m_IsAlphaChannelOptional: 0
-  serializedVersion: 5
-  m_Width: 1024
-  m_Height: 1024
-  m_AntiAliasing: 1
-  m_MipCount: -1
-  m_DepthStencilFormat: 94
-  m_ColorFormat: 0
-  m_MipMap: 0
-  m_GenerateMips: 1
-  m_SRGB: 0
-  m_UseDynamicScale: 0
-  m_BindMS: 0
-  m_EnableCompatibleFormat: 1
-  m_EnableRandomWrite: 0
-  m_TextureSettings:
-    serializedVersion: 2
-    m_FilterMode: 1
-    m_Aniso: 1
-    m_MipBias: 0
-    m_WrapU: 1
-    m_WrapV: 1
-    m_WrapW: 1
-  m_Dimension: 2
-  m_VolumeDepth: 1
-  m_ShadowSamplingMode: 2
 --- !u!1 &483303318
 GameObject:
   m_ObjectHideFlags: 0
@@ -22776,7 +22753,12 @@ PrefabInstance:
     - target: {fileID: 38375215458064404, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: m_BrainParameters.VectorObservationSize
-      value: 23
+      value: 15
+      objectReference: {fileID: 0}
+    - target: {fileID: 38375215458064404, guid: 405c4bc591de844a3a100e1538790229,
+        type: 3}
+      propertyPath: m_BrainParameters.NumStackedVectorObservations
+      value: 3
       objectReference: {fileID: 0}
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -22806,7 +22788,7 @@ PrefabInstance:
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: maxEnemyCount
-      value: 4
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -22826,7 +22808,7 @@ PrefabInstance:
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: enemyShips.Array.size
-      value: 3
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -23058,6 +23040,11 @@ PrefabInstance:
       propertyPath: m_Materials.Array.data[0]
       value: 
       objectReference: {fileID: 2100000, guid: ae7ec86af35b37e4f9ffb7049ea209fe, type: 2}
+    - target: {fileID: 9139778213846827507, guid: 405c4bc591de844a3a100e1538790229,
+        type: 3}
+      propertyPath: m_Drag
+      value: 0.4
+      objectReference: {fileID: 0}
     - target: {fileID: 9139778213846827507, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: m_Mass
@@ -23920,6 +23907,44 @@ Transform:
     type: 3}
   m_PrefabInstance: {fileID: 499849046}
   m_PrefabAsset: {fileID: 0}
+--- !u!84 &1217276290
+RenderTexture:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: WaterDepthMap
+  m_ImageContentsHash:
+    serializedVersion: 2
+    Hash: 00000000000000000000000000000000
+  m_ForcedFallbackFormat: 4
+  m_DownscaleFallback: 0
+  m_IsAlphaChannelOptional: 0
+  serializedVersion: 5
+  m_Width: 1024
+  m_Height: 1024
+  m_AntiAliasing: 1
+  m_MipCount: -1
+  m_DepthStencilFormat: 94
+  m_ColorFormat: 0
+  m_MipMap: 0
+  m_GenerateMips: 1
+  m_SRGB: 0
+  m_UseDynamicScale: 0
+  m_BindMS: 0
+  m_EnableCompatibleFormat: 1
+  m_EnableRandomWrite: 0
+  m_TextureSettings:
+    serializedVersion: 2
+    m_FilterMode: 1
+    m_Aniso: 1
+    m_MipBias: 0
+    m_WrapU: 1
+    m_WrapV: 1
+    m_WrapW: 1
+  m_Dimension: 2
+  m_VolumeDepth: 1
+  m_ShadowSamplingMode: 2
 --- !u!1001 &1237258191
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -34613,7 +34638,7 @@ MonoBehaviour:
   speedRewardThreshold: 10
   collisionPenalty: -1
   formationBreakPenalty: -0.05
-  maxFormationDistance: 100
+  maxFormationDistance: 150
   maxFormationAngleDiff: 90
   timePenalty: -0.001
 --- !u!114 &1396138363
@@ -34636,15 +34661,13 @@ MonoBehaviour:
   motherShip: {fileID: 341979842}
   enemyShips:
   - {fileID: 1946985652}
-  - {fileID: 1068471929}
-  - {fileID: 753175274}
   webObject: {fileID: 1693386311}
   defense1SpawnPos: {x: -18, y: 0.8, z: 71}
   defense1SpawnRot: {x: 0, y: 180, z: 0}
   defense2SpawnPos: {x: 0, y: 0.8, z: 71}
   defense2SpawnRot: {x: 0, y: 180, z: 0}
   webSpawnPos: {x: 0, y: 0.8, z: 0}
-  maxCollisionCount: 3
+  maxCollisionCount: 1
   spawnRange: 0
   enableRandomSpawn: 1
   captureReward: 1
@@ -40731,7 +40754,7 @@ PrefabInstance:
     - target: {fileID: 6183048159549592093, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 6463798980381112181, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
@@ -41296,7 +41319,7 @@ PrefabInstance:
     - target: {fileID: 8953313696383846305, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8953313696383846311, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
@@ -41467,7 +41490,7 @@ PrefabInstance:
     - target: {fileID: 7205157340779662337, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7476410006791837859, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
@@ -42349,42 +42372,42 @@ PrefabInstance:
     - target: {fileID: 7205157340779662337, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7476410006791837859, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalPosition.x
-      value: -0.2846509
+      value: -0.35491627
       objectReference: {fileID: 0}
     - target: {fileID: 7476410006791837859, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalPosition.y
-      value: 0.412963
+      value: 0.5149032
       objectReference: {fileID: 0}
     - target: {fileID: 7476410006791837859, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalPosition.z
-      value: -3.167181
+      value: -2.999989
       objectReference: {fileID: 0}
     - target: {fileID: 7476410006791837859, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalRotation.w
-      value: 0.97485435
+      value: 0.9684988
       objectReference: {fileID: 0}
     - target: {fileID: 7476410006791837859, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalRotation.x
-      value: 0.05432358
+      value: 0.109541744
       objectReference: {fileID: 0}
     - target: {fileID: 7476410006791837859, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0.07928675
+      value: 0.09411425
       objectReference: {fileID: 0}
     - target: {fileID: 7476410006791837859, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0.20105152
+      value: 0.20286264
       objectReference: {fileID: 0}
     m_RemovedComponents:
     - {fileID: 0}

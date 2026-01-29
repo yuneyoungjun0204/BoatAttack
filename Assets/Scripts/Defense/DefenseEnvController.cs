@@ -62,7 +62,7 @@ namespace BoatAttack
         
         [Header("Episode End Conditions")]
         [Tooltip("Web/MotherShip 충돌 최대 허용 횟수 (이 횟수 이상 충돌 시 에피소드 종료)")]
-        public int maxCollisionCount = 3;
+        public int maxCollisionCount = 1;
         
         [Header("Random Spawn Settings")]
         [Tooltip("랜덤 스폰 범위 (기존 위치에서 ±range 범위로 랜덤 생성)")]
