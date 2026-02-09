@@ -561,23 +561,7 @@ namespace BoatAttack
                 }
             }
             
-            // 3단계: 모선 방어 성공 체크 (적이 방어 존에 진입하지 않았을 때)
-            if (!_enemyEnteredDefenseZone && motherShip != null && reason != "MotherShipDefense")
-            {
-                if (m_AgentGroup != null)
-                {
-                    m_AgentGroup.AddGroupReward(rewardCalculator.motherShipDefenseReward);
-                }
-                else
-                {
-                    if (defenseAgent1 != null)
-                        defenseAgent1.AddReward(rewardCalculator.motherShipDefenseReward);
-                    if (defenseAgent2 != null)
-                        defenseAgent2.AddReward(rewardCalculator.motherShipDefenseReward);
-                }
-            }
-            
-            // 4단계: 에이전트 에피소드 종료
+            // 3단계: 에이전트 에피소드 종료
             if (m_AgentGroup != null)
             {
                 m_AgentGroup.EndGroupEpisode();
