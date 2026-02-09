@@ -28,6 +28,8 @@ namespace BoatAttack
 
         private void OnEnable()
         {
+            // 에피소드 리셋 시 pending Invoke 취소 (DisableBoat이 리셋 후에 실행되는 버그 방지)
+            CancelInvoke();
             _hasExploded = false;
         }
 
@@ -110,11 +112,13 @@ namespace BoatAttack
         {
             if (debugLog)
             {
-                Debug.Log($"[AttackBoatDisabler] {gameObject.name}: 공격 선박 파괴");
+                Debug.Log($"[AttackBoatDisabler] {gameObject.name}: 공격 선박 비활성화");
             }
-            
-            // GameObject 파괴 (방어 선박만 학습하므로 적군 선박은 단순히 파괴)
-            Destroy(gameObject);
+
+            // Destroy 대신 SetActive(false) 사용
+            // → ResetAttackBoatsToOrigin에서 재활성화하여 재사용
+            // Destroy를 사용하면 에피소드 리셋 타이밍과 충돌하여 다음 에피소드에서 배가 사라지는 버그 발생
+            gameObject.SetActive(false);
         }
 
         /// <summary>
@@ -125,6 +129,7 @@ namespace BoatAttack
             if (!_hasExploded)
             {
                 _hasExploded = true;
+                CancelInvoke();
                 DisableBoat();
             }
         }

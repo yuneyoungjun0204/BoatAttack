@@ -34768,7 +34768,6 @@ GameObject:
   - component: {fileID: 3230128843014972858}
   - component: {fileID: 4635383092979925273}
   - component: {fileID: 6827343430107846827}
-  - component: {fileID: 1880583791985537024}
   m_Layer: 11
   m_Name: "\uBE68\uAC31\uC774 1"
   m_TagString: attack_boat
@@ -34899,24 +34898,6 @@ MonoBehaviour:
   m_PositionUnits: 2
   m_Speed: 0.1
   m_Position: 0
---- !u!114 &1880583791985537024
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7205157340779662337}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5151718a2d3be6b4f94d00f05b1efc1d, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  motherShipTag: MotherShip
-  explosionPrefab: {fileID: 100010, guid: e0609132424a24844b1d53ad3d704fd9, type: 3}
-  explosionScale: 23
-  destroyAfterExplosion: 1
-  destroyDelay: 1.5
-  useTriggerCollision: 0
 --- !u!1 &8305774083215281229
 GameObject:
   m_ObjectHideFlags: 0
