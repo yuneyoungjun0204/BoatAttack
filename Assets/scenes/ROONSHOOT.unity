@@ -21208,7 +21208,7 @@ PrefabInstance:
     - target: {fileID: 9139778213846827507, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: m_Mass
-      value: 2200
+      value: 2500
       objectReference: {fileID: 0}
     - target: {fileID: 9139778213846827507, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -48220,9 +48220,9 @@ MonoBehaviour:
     roll: -34.37
   - position: {x: -165.0939, y: 0, z: -926.7481}
     roll: 36.5
-  - position: {x: -118.20099, y: 0, z: 131.17668}
+  - position: {x: -128.25417, y: 0, z: 187.18703}
     roll: -34.26
-  - position: {x: -55.481102, y: 0, z: 823.19}
+  - position: {x: -78.54963, y: 0, z: 573.27374}
     roll: 56.5
   - position: {x: -1.614708, y: 0, z: 167.80391}
     roll: -27.32
@@ -48479,9 +48479,9 @@ MonoBehaviour:
     roll: -34.37
   - position: {x: 222.84691, y: 0, z: -2489.185}
     roll: 36.5
-  - position: {x: 109.49727, y: 0, z: -1465.0713}
+  - position: {x: -31.293537, y: 0, z: -31.559052}
     roll: -34.26
-  - position: {x: -78.045135, y: 0, z: 209.74533}
+  - position: {x: -85.17983, y: 0, z: 484.02032}
     roll: 56.5
   - position: {x: -286.00006, y: 0, z: -16.813446}
     roll: -27.32
@@ -48494,7 +48494,7 @@ Transform:
   m_GameObject: {fileID: 663103928}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 48.3, y: 0, z: 103.5}
+  m_LocalPosition: {x: 44, y: 0, z: 103.5}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -97953,7 +97953,7 @@ PrefabInstance:
     - target: {fileID: 9139778213846827507, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: m_Mass
-      value: 2200
+      value: 2500
       objectReference: {fileID: 0}
     - target: {fileID: 9139778213846827507, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -99232,13 +99232,13 @@ MonoBehaviour:
   m_Waypoints:
   - position: {x: 16.098663, y: 0, z: -4004.87}
     roll: -24.68
-  - position: {x: 2.7722206, y: 0, z: -300}
+  - position: {x: 2.7722206, y: 0, z: -1035.9354}
     roll: 29.7
-  - position: {x: 24.141615, y: 0, z: 90.36048}
+  - position: {x: 29.914583, y: 0, z: -62.137016}
     roll: -20.55
-  - position: {x: 6.7675724, y: 0, z: 180.76984}
+  - position: {x: 11.357466, y: 0, z: 458.65598}
     roll: 25.69
-  - position: {x: 46.374016, y: 0, z: 64.54373}
+  - position: {x: 46.374016, y: 0, z: 247.10278}
     roll: -36
 --- !u!4 &1068471931
 Transform:
@@ -135353,7 +135353,7 @@ MonoBehaviour:
   formationReward: 0.001
   optimalDistance: 50
   distanceTolerance: 25
-  approachRewardPerMeter: 0.0012
+  approachRewardPerMeter: 0.001
   timePenalty: -0.0012
   captureReward: 1
   motherShipHitPenalty: -1
@@ -193222,7 +193222,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 88788752}
   webAnchor1: {fileID: 371172282}
   webAnchor2: {fileID: 781742181}
-  webHeight: 5
+  webHeight: 9
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -213633,22 +213633,22 @@ PrefabInstance:
     - target: {fileID: 4099050320986568149, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalRotation.w
-      value: -0.025611697
+      value: -0.02556754
       objectReference: {fileID: 0}
     - target: {fileID: 4099050320986568149, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalRotation.x
-      value: -0.21363899
+      value: -0.21363924
       objectReference: {fileID: 0}
     - target: {fileID: 4099050320986568149, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0.97656083
+      value: 0.976562
       objectReference: {fileID: 0}
     - target: {fileID: 4099050320986568149, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0.0056029866
+      value: 0.0055933264
       objectReference: {fileID: 0}
     - target: {fileID: 4099050320986568149, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
         type: 3}
