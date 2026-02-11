@@ -28,6 +28,7 @@ namespace BoatAttack
 
         private void OnEnable()
         {
+            CancelInvoke();
             _hasExploded = false;
         }
 
@@ -104,17 +105,16 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 공격 선박 파괴 (비활성화 대신 파괴)
+        /// 공격 선박 비활성화 (Destroy 대신 SetActive(false) - 에피소드 리셋 시 재활성화 가능)
         /// </summary>
         private void DisableBoat()
         {
             if (debugLog)
             {
-                Debug.Log($"[AttackBoatDisabler] {gameObject.name}: 공격 선박 파괴");
+                Debug.Log($"[AttackBoatDisabler] {gameObject.name}: 공격 선박 비활성화");
             }
-            
-            // GameObject 파괴 (방어 선박만 학습하므로 적군 선박은 단순히 파괴)
-            Destroy(gameObject);
+
+            gameObject.SetActive(false);
         }
 
         /// <summary>
@@ -125,6 +125,7 @@ namespace BoatAttack
             if (!_hasExploded)
             {
                 _hasExploded = true;
+                CancelInvoke();
                 DisableBoat();
             }
         }

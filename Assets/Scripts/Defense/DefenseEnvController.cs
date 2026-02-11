@@ -570,6 +570,9 @@ namespace BoatAttack
             // 충돌 횟수 리셋
             _totalCollisionCount = 0;
             
+            // 공격선 Invoke 취소 + 비활성화된 배 재활성화
+            CancelAttackBoatPendingActions();
+
             // 기존 리셋 코루틴 중지 및 플래그 초기화
             StopAllCoroutines();
             _isResettingPositions = false;
@@ -603,8 +606,31 @@ namespace BoatAttack
             
         }
         
+        /// <summary>
+        /// 공격선의 대기 중인 Invoke 취소 + 비활성화된 배 재활성화
+        /// ResetScene()에서 StopAllCoroutines() 전에 호출
+        /// </summary>
+        private void CancelAttackBoatPendingActions()
+        {
+            foreach (var boat in _attackBoats)
+            {
+                if (boat == null) continue;
+
+                var disabler = boat.GetComponent<AttackBoatDisabler>();
+                if (disabler != null)
+                    disabler.CancelInvoke();
+
+                var attackAgent = boat.GetComponent<AttackAgent>();
+                if (attackAgent != null)
+                    attackAgent.StopAllCoroutines();
+
+                if (!boat.activeSelf)
+                    boat.SetActive(true);
+            }
+        }
+
         #endregion
-        
+
         /// <summary>
         /// 에피소드 시작 (ML-Agents가 자동으로 호출, 환경 리셋은 ResetScene에서 처리)
         /// </summary>
