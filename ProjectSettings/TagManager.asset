@@ -4,6 +4,7 @@
 TagManager:
   serializedVersion: 2
   tags:
+  - attacked_boat
   - boat
   - ground
   - target
@@ -17,6 +18,7 @@ TagManager:
   - attack_boat
   - Web
   - attack_track
+  - Friendly
   layers:
   - Default
   - TransparentFX
