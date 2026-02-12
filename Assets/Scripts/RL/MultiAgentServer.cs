@@ -131,13 +131,22 @@ public class MultiAgentServer : MonoBehaviour
 
             while (isRunning)
             {
-                if (listener.Pending())
+                // 클라이언트가 없거나 끊어졌으면 새 연결 대기
+                if ((client == null || !client.Connected) && listener.Pending())
                 {
+                    // 이전 연결 정리
+                    CleanupClient();
+                    
+                    // 새 클라이언트 수락
                     client = listener.AcceptTcpClient();
                     stream = client.GetStream();
                     Debug.Log("[MultiAgentServer] Client connected!");
 
                     // 수신 스레드 시작
+                    if (receiveThread != null && receiveThread.IsAlive)
+                    {
+                        receiveThread.Join(500);  // 기존 스레드 종료 대기
+                    }
                     receiveThread = new Thread(ReceiveLoop);
                     receiveThread.IsBackground = true;
                     receiveThread.Start();
@@ -160,6 +169,13 @@ public class MultiAgentServer : MonoBehaviour
             while (isRunning && client != null && client.Connected)
             {
                 int bytesRead = stream.Read(buffer, 0, buffer.Length);
+                if (bytesRead == 0)
+                {
+                    // 연결 종료
+                    Debug.LogWarning("[MultiAgentServer] Client disconnected (0 bytes)");
+                    break;
+                }
+                
                 if (bytesRead > 0)
                 {
                     string json = Encoding.UTF8.GetString(buffer, 0, bytesRead);
@@ -185,12 +201,25 @@ public class MultiAgentServer : MonoBehaviour
         {
             Debug.LogWarning($"[MultiAgentServer] Receive error: {e.Message}");
         }
+        finally
+        {
+            Debug.Log("[MultiAgentServer] Receive loop ended - cleaning up client");
+            CleanupClient();
+        }
     }
 
     private void SendAllShipsData()
     {
         if (stream == null || !stream.CanWrite)
             return;
+
+        // 연결 상태 확인
+        if (client == null || !client.Connected)
+        {
+            Debug.LogWarning("[MultiAgentServer] Client disconnected - waiting for reconnection...");
+            CleanupClient();
+            return;
+        }
 
         try
         {
@@ -235,6 +264,29 @@ public class MultiAgentServer : MonoBehaviour
         catch (Exception e)
         {
             Debug.LogWarning($"[MultiAgentServer] Send error: {e.Message}");
+            CleanupClient();  // 연결 끊김 시 정리
+        }
+    }
+    
+    private void CleanupClient()
+    {
+        // 클라이언트 정리 (재연결 대기)
+        try
+        {
+            if (stream != null)
+            {
+                stream.Close();
+                stream = null;
+            }
+            if (client != null)
+            {
+                client.Close();
+                client = null;
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[MultiAgentServer] Cleanup error: {e.Message}");
         }
     }
 
