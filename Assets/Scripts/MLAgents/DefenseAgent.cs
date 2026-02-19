@@ -54,6 +54,10 @@ namespace BoatAttack
         [Tooltip("입력 스무스 처리 (1.0 = 즉각 반응)")]
         public float inputSmoothing = 1.0f;
 
+        [Header("Observation Normalization")]
+        [Tooltip("위치 정규화 감도 (k=출력 0.5 지점 거리, 기본 50m)")]
+        public float positionNormK = 250f;
+
         [Header("Debug")]
         public bool showRaycasts = true;
         public bool enableDebugLog = true;
@@ -122,14 +126,33 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 관측 수집 (상대 좌표 기반)
-        /// 자신(4) + 팀원(4) + 적군(4×maxEnemyCount) + 모선(3) = 31개
+        /// 위치 정규화: x>0 → 1-k/(|x|+k), x≤0 → -1+k/(|x|+k) → (-1, 1)
+        /// k = 감도 스케일 (출력 0.5 지점의 거리)
+        /// </summary>
+        private float NormalizePosition(float x)
+        {
+            float k = positionNormK;
+            return x / (Mathf.Abs(x) + k);
+        }
+
+        /// <summary>
+        /// 각도 정규화: DeltaAngle / 180 → [-1, 1]
+        /// </summary>
+        private float NormalizeAngle(float fromAngle, float toAngle)
+        {
+            return Mathf.DeltaAngle(fromAngle, toAngle) / 180f;
+        }
+
+        /// <summary>
+        /// 관측 수집 (자기중심 상대 좌표, 속도 제거 - 프레임 스태킹으로 대체)
+        /// 자신(2) + 팀원(3) + 적군(3×maxEnemyCount) + 모선(2) = 22개
+        /// 위치: x/(|x|+1), 각도: DeltaAngle/180
         /// </summary>
         public override void CollectObservations(VectorSensor sensor)
         {
             if (_engine == null || _engine.RB == null)
             {
-                int totalObservations = 4 + 4 + (4 * maxEnemyCount) + 3;
+                int totalObservations = 2 + 3 + (3 * maxEnemyCount) + 2;
                 for (int i = 0; i < totalObservations; i++)
                     sensor.AddObservation(0f);
                 return;
@@ -140,27 +163,24 @@ namespace BoatAttack
             Vector3 myRight = transform.right;
             float myAngle = transform.eulerAngles.y;
 
-            // 1. 자신 (4개: 헤딩, 속도, 이전추력, 이전조향)
-            sensor.AddObservation(myAngle / 360f);
-            sensor.AddObservation(_engine.RB.velocity.magnitude / 20f);
+            // 1. 자신 (2개: 이전추력, 이전조향)
             sensor.AddObservation(_prevThrottle);
             sensor.AddObservation(_prevSteering);
 
-            // 2. 팀원 (4개)
+            // 2. 팀원 (3개: 상대위치 right/forward, 헤딩차이)
             if (partnerAgent != null && partnerAgent._engine != null && partnerAgent._engine.RB != null)
             {
                 Vector3 relativeToPartner = partnerAgent.transform.position - myPos;
-                sensor.AddObservation(Vector3.Dot(relativeToPartner, myRight) / 100f);
-                sensor.AddObservation(Vector3.Dot(relativeToPartner, myForward) / 100f);
-                sensor.AddObservation(Mathf.DeltaAngle(myAngle, partnerAgent.transform.eulerAngles.y) / 180f);
-                sensor.AddObservation(partnerAgent._engine.RB.velocity.magnitude / 20f);
+                sensor.AddObservation(NormalizePosition(Vector3.Dot(relativeToPartner, myRight)));
+                sensor.AddObservation(NormalizePosition(Vector3.Dot(relativeToPartner, myForward)));
+                sensor.AddObservation(NormalizeAngle(myAngle, partnerAgent.transform.eulerAngles.y));
             }
             else
             {
-                for (int i = 0; i < 4; i++) sensor.AddObservation(0f);
+                for (int i = 0; i < 3; i++) sensor.AddObservation(0f);
             }
 
-            // 3. 적군 (4 × maxEnemyCount) - 거리순 정렬
+            // 3. 적군 (3 × maxEnemyCount) - 거리순 정렬
             var sortedEnemies = new List<(GameObject enemy, float distance)>();
             for (int i = 0; i < enemyShips.Length && i < maxEnemyCount; i++)
             {
@@ -178,30 +198,26 @@ namespace BoatAttack
                 {
                     GameObject enemy = sortedEnemies[i].enemy;
                     Vector3 relativeToEnemy = enemy.transform.position - myPos;
-                    sensor.AddObservation(Vector3.Dot(relativeToEnemy, myRight) / 100f);
-                    sensor.AddObservation(Vector3.Dot(relativeToEnemy, myForward) / 100f);
-                    sensor.AddObservation(Mathf.DeltaAngle(myAngle, enemy.transform.eulerAngles.y) / 180f);
-
-                    Rigidbody enemyRb = enemy.GetComponent<Rigidbody>();
-                    sensor.AddObservation(enemyRb != null ? enemyRb.velocity.magnitude / 20f : 0f);
+                    sensor.AddObservation(NormalizePosition(Vector3.Dot(relativeToEnemy, myRight)));
+                    sensor.AddObservation(NormalizePosition(Vector3.Dot(relativeToEnemy, myForward)));
+                    sensor.AddObservation(NormalizeAngle(myAngle, enemy.transform.eulerAngles.y));
                 }
                 else
                 {
-                    for (int j = 0; j < 4; j++) sensor.AddObservation(0f);
+                    for (int j = 0; j < 3; j++) sensor.AddObservation(0f);
                 }
             }
 
-            // 4. 모선 (3개)
+            // 4. 모선 (2개: right/forward 상대위치)
             if (motherShip != null)
             {
                 Vector3 relativePos = motherShip.transform.position - myPos;
-                sensor.AddObservation(Vector3.Dot(relativePos, myRight) / 1000f);
-                sensor.AddObservation(Vector3.Dot(relativePos, myForward) / 1000f);
-                sensor.AddObservation(relativePos.magnitude / 1000f);
+                sensor.AddObservation(NormalizePosition(Vector3.Dot(relativePos, myRight)));
+                sensor.AddObservation(NormalizePosition(Vector3.Dot(relativePos, myForward)));
             }
             else
             {
-                for (int i = 0; i < 3; i++) sensor.AddObservation(0f);
+                for (int i = 0; i < 2; i++) sensor.AddObservation(0f);
             }
         }
 
