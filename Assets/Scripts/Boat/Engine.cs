@@ -17,6 +17,12 @@ namespace BoatAttack
         //engine stats
         public float steeringTorque = 5f;
         public float horsePower = 5800f;
+
+        [Header("Stabilization")]
+        [Tooltip("자세 안정화 토크 강도 (0이면 비활성)")]
+        public float stabilizationTorque = 5f;
+        [Tooltip("안정화 감쇠력 (흔들림 방지)")]
+        public float stabilizationDamping = 2f;
         private NativeArray<float3> _point; // engine submerged check
         private float3[] _heights = new float3[1]; // engine submerged check
         private float3[] _normals = new float3[1]; // engine submerged check
@@ -87,6 +93,13 @@ namespace BoatAttack
                 }
             }
             
+            // 자세 안정화: 뒤집힘 방지 (roll/pitch 복원 토크)
+            if (stabilizationTorque > 0f)
+            {
+                Vector3 correctionAxis = Vector3.Cross(RB.transform.up, Vector3.up);
+                RB.AddTorque(correctionAxis * stabilizationTorque - RB.angularVelocity * stabilizationDamping, ForceMode.Acceleration);
+            }
+
             VelocityMag = RB != null ? RB.velocity.sqrMagnitude : 0f; // get the sqr mag
             if (engineSound != null)
             {
