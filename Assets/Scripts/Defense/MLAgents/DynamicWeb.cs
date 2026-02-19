@@ -47,8 +47,7 @@ namespace BoatAttack
         [Tooltip("공격 보트를 막았을 때 방어선에게 주는 보상")]
         public float defenseReward = 10f;
 
-        [Tooltip("아군 선박이 Web과 충돌했을 때 페널티")]
-        public float allyWebCollisionPenalty = -2.0f;
+        // allyWebCollisionPenalty는 DefenseEnvController에서 관리
 
         [Header("Explosion Effect")]
         [Tooltip("공격 보트 폭발 효과 Prefab (War FX)")]
@@ -271,7 +270,7 @@ namespace BoatAttack
 
             if (envController != null)
             {
-                envController.OnAllyHitWeb(allyShip, allyWebCollisionPenalty);
+                envController.OnAllyHitWeb(allyShip);
             }
         }
 

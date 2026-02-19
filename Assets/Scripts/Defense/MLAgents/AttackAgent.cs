@@ -82,6 +82,24 @@ namespace BoatAttack
         [Tooltip("Waypoint 추적 모드일 때 모선 접근 거리 (이 거리 이내면 모선을 직접 추적)")]
         public float directChaseDistance = 50f;
 
+        [Header("Rush Movement (모선 돌진)")]
+        [Tooltip("돌진 모드 활성화 (followWaypoints=false 시 사용)")]
+        public bool enableRush = true;
+
+        [Tooltip("돌진 스로틀")]
+        [Range(0.3f, 1.5f)]
+        public float rushThrottle = 1.0f;
+
+        [Tooltip("조향 노이즈 크기 (0~1, 클수록 불규칙)")]
+        [Range(0f, 0.5f)]
+        public float steeringNoise = 0.1f;
+
+        [Tooltip("노이즈 변화 속도 (초당)")]
+        public float noiseSpeed = 2f;
+
+        // 각 적군마다 다른 노이즈 시드
+        private float _noiseSeed;
+
         private float _lastDistance;
         private Vector3 _lastPosition;
         private float _episodeStartTime;
@@ -114,7 +132,13 @@ namespace BoatAttack
         protected override void OnEnable()
         {
             base.OnEnable();
-            
+
+            // Engine 재확인 (비활성→활성 전환 시 Awake에서 못 잡은 경우)
+            if (_engine == null && TryGetComponent(out _boat))
+            {
+                _engine = _boat.engine;
+            }
+
             // 모선 찾기
             if (targetMotherShip == null)
             {
@@ -172,6 +196,7 @@ namespace BoatAttack
             _smoothThrottle = 0f; // 스무스 입력 초기화
             _smoothSteering = 0f;
             _hasExploded = false; // 폭발 상태 초기화
+            _noiseSeed = Random.Range(0f, 1000f); // 각 적군마다 다른 노이즈 패턴
             
             // Waypoint 초기화 (에피소드 재시작 시)
             if (followWaypoints)
@@ -261,41 +286,43 @@ namespace BoatAttack
                 return;
             }
 
-            // Waypoint 추적 모드일 때 waypoint를 따라가도록 조정
-            Vector3 targetDirection = GetTargetDirection();
-            
-            // Action 처리 (원본 입력)
-            float rawThrottle = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
-            float rawSteering = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
-            
-            // Waypoint 추적 모드일 때 방향 조정
-            if (followWaypoints && _waypointInitialized)
+            float rawThrottle;
+            float rawSteering;
+
+            // 돌진 모드 → FixedUpdate에서 처리, 여기서는 스킵
+            if (!followWaypoints && enableRush && targetMotherShip != null)
             {
-                // Waypoint 방향 계산
+                return;
+            }
+            // 기존 Waypoint 추적 모드
+            else if (followWaypoints && _waypointInitialized)
+            {
+                rawThrottle = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
+                rawSteering = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
+
                 Vector3 toWaypoint = (_currentWaypointPosition - transform.position).normalized;
-                Vector3 forward = transform.forward;
-                
-                // Waypoint 방향과 현재 방향의 각도 차이 계산
-                float angleToWaypoint = Vector3.SignedAngle(forward, toWaypoint, Vector3.up);
-                
-                // Waypoint 방향으로 조정 (하지만 ML-Agents의 학습을 방해하지 않도록 약간만 조정)
-                // rawSteering에 waypoint 방향 힌트 추가
-                float waypointSteeringHint = Mathf.Clamp(angleToWaypoint / 45f, -1f, 1f) * 0.3f; // 30% 힌트
+                float angleToWaypoint = Vector3.SignedAngle(transform.forward, toWaypoint, Vector3.up);
+                float waypointSteeringHint = Mathf.Clamp(angleToWaypoint / 45f, -1f, 1f) * 0.3f;
                 rawSteering = Mathf.Clamp(rawSteering + waypointSteeringHint, -1f, 1f);
-                
-                // Waypoint에 도달했는지 확인
+
                 float distanceToWaypoint = Vector3.Distance(transform.position, _currentWaypointPosition);
-                if (distanceToWaypoint < 10f) // 10미터 이내면 다음 waypoint로
+                if (distanceToWaypoint < 10f)
                 {
                     AdvanceToNextWaypoint();
                 }
             }
+            // 기본 모드 (ML-Agents 액션 그대로)
+            else
+            {
+                rawThrottle = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
+                rawSteering = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
+            }
 
-            // 스무스 처리 (현실적인 반응)
+            // 스무스 처리
             _smoothThrottle = Mathf.Lerp(_smoothThrottle, rawThrottle, inputSmoothing);
             _smoothSteering = Mathf.Lerp(_smoothSteering, rawSteering, inputSmoothing);
-            
-            // 감도 조절 적용 (HumanController와 동일)
+
+            // 감도 조절 적용
             float adjustedSteering = Mathf.Clamp(_smoothSteering * steeringSensitivity, -1f, 1f);
 
             // Engine에 전달
@@ -737,6 +764,34 @@ namespace BoatAttack
             else
             {
                 Debug.LogError("[AttackAgent] 폭발 효과 생성 실패! Instantiate가 null을 반환했습니다.");
+            }
+        }
+
+        private void FixedUpdate()
+        {
+            // 진단 로그 (첫 5프레임만)
+            if (Time.frameCount % 300 == 1)
+            {
+                Debug.LogWarning($"[AttackAgent] {gameObject.name}: followWP={followWaypoints}, rush={enableRush}, " +
+                    $"mother={targetMotherShip != null}, engine={_engine != null}, exploded={_hasExploded}");
+            }
+
+            // 돌진 모드: 모선 향해 풀스로틀 + Perlin 노이즈로 약간의 불규칙성
+            if (!followWaypoints && enableRush && targetMotherShip != null && _engine != null && !_hasExploded)
+            {
+                Vector3 toMother = targetMotherShip.transform.position - transform.position;
+                toMother.y = 0f;
+
+                float angleToMother = Vector3.SignedAngle(transform.forward, toMother.normalized, Vector3.up);
+                float baseSteering = Mathf.Clamp(angleToMother / 45f, -1f, 1f);
+
+                // Perlin 노이즈로 부드러운 랜덤 조향 (각 적군마다 다른 패턴)
+                float noise = (Mathf.PerlinNoise(_noiseSeed, Time.time * noiseSpeed) - 0.5f) * 2f * steeringNoise;
+
+                float steering = Mathf.Clamp(baseSteering + noise, -1f, 1f);
+
+                _engine.Accelerate(rushThrottle);
+                _engine.Turn(steering * steeringSensitivity);
             }
         }
 

@@ -43,6 +43,18 @@ namespace BoatAttack
 
         public bool IsGameMode => _gameMode;
 
+        private void Awake()
+        {
+            // 중복 EventSystem 자동 제거
+            var allES = FindObjectsOfType<UnityEngine.EventSystems.EventSystem>();
+            if (allES.Length > 1)
+            {
+                for (int i = 1; i < allES.Length; i++)
+                    Destroy(allES[i].gameObject);
+                Debug.Log($"[TacticalPageManager] 중복 EventSystem {allES.Length - 1}개 제거");
+            }
+        }
+
         private void Start()
         {
             if (pages == null || pages.Length == 0)

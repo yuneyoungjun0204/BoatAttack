@@ -110,11 +110,11 @@ namespace BoatAttack
         {
             if (debugLog)
             {
-                Debug.Log($"[AttackBoatDisabler] {gameObject.name}: 공격 선박 파괴");
+                Debug.Log($"[AttackBoatDisabler] {gameObject.name}: 공격 선박 비활성화");
             }
-            
-            // GameObject 파괴 (방어 선박만 학습하므로 적군 선박은 단순히 파괴)
-            Destroy(gameObject);
+
+            // Destroy 대신 SetActive(false) 사용 (Invoke 타이밍 문제 및 재활용 위해)
+            gameObject.SetActive(false);
         }
 
         /// <summary>

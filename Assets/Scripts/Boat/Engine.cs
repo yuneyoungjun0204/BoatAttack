@@ -112,6 +112,20 @@ namespace BoatAttack
             }
         }
 
+        private void OnEnable()
+        {
+            // 비활성→활성 전환 시 _point 재생성 (OnDisable에서 Dispose됨)
+            if (!_point.IsCreated)
+            {
+                _point = new NativeArray<float3>(1, Allocator.Persistent);
+            }
+            // RB 재확인
+            if (RB == null)
+            {
+                RB = GetComponentInParent<Rigidbody>();
+            }
+        }
+
         private void OnDisable()
         {
             // ⚠️ NativeArray가 생성되어 있는지 확인 후 Dispose (중복 해제 방지)
