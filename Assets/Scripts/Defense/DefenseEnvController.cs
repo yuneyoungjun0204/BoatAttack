@@ -118,7 +118,7 @@ namespace BoatAttack
         public float defenseSpawnDistance = 100f;
 
         [Tooltip("아군 2대 좌우 펼침 각도 (±도)")]
-        public float defenseSpawnSpread = 15f;
+        public float defenseSpawnSpread = 1.7f;
 
         [Header("Enemy Path Randomization")]
         [Tooltip("적군 경로 랜덤화 활성화")]
