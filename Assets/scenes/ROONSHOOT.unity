@@ -34195,7 +34195,7 @@ PrefabInstance:
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: inputSmoothing
-      value: 0.22
+      value: 0.3
       objectReference: {fileID: 0}
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -34210,7 +34210,7 @@ PrefabInstance:
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: steeringSensitivity
-      value: 0.63
+      value: 0.65
       objectReference: {fileID: 0}
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -52374,44 +52374,6 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 9759800d67ac18d48bcf9a10ce6aa287, type: 3}
---- !u!84 &431182613
-RenderTexture:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: WaterDepthMap
-  m_ImageContentsHash:
-    serializedVersion: 2
-    Hash: 00000000000000000000000000000000
-  m_ForcedFallbackFormat: 4
-  m_DownscaleFallback: 0
-  m_IsAlphaChannelOptional: 0
-  serializedVersion: 5
-  m_Width: 1024
-  m_Height: 1024
-  m_AntiAliasing: 1
-  m_MipCount: -1
-  m_DepthStencilFormat: 94
-  m_ColorFormat: 0
-  m_MipMap: 0
-  m_GenerateMips: 1
-  m_SRGB: 0
-  m_UseDynamicScale: 0
-  m_BindMS: 0
-  m_EnableCompatibleFormat: 1
-  m_EnableRandomWrite: 0
-  m_TextureSettings:
-    serializedVersion: 2
-    m_FilterMode: 1
-    m_Aniso: 1
-    m_MipBias: 0
-    m_WrapU: 1
-    m_WrapV: 1
-    m_WrapW: 1
-  m_Dimension: 2
-  m_VolumeDepth: 1
-  m_ShadowSamplingMode: 2
 --- !u!1 &431759386 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 7205157340779662337, guid: 36e80bbcdd58ea745a1a785c8d5ad28b,
@@ -63092,6 +63054,7 @@ MonoBehaviour:
   maxAllyDistance: 40
   minAllyDistance: 4
   allyWebCollisionPenalty: -1
+  enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
   randomizeWeatherOnEpisode: 0
   environmentController: {fileID: 0}
@@ -64059,6 +64022,7 @@ MonoBehaviour:
   maxAllyDistance: 40
   minAllyDistance: 4
   allyWebCollisionPenalty: -1
+  enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
   randomizeWeatherOnEpisode: 0
   environmentController: {fileID: 0}
@@ -125245,7 +125209,7 @@ PrefabInstance:
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: inputSmoothing
-      value: 0.22
+      value: 0.3
       objectReference: {fileID: 0}
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -125260,7 +125224,7 @@ PrefabInstance:
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: steeringSensitivity
-      value: 0.63
+      value: 0.65
       objectReference: {fileID: 0}
     - target: {fileID: 2560287575307401612, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -142329,6 +142293,11 @@ PrefabInstance:
         type: 3}
       propertyPath: m_Name
       value: Mountains
+      objectReference: {fileID: 0}
+    - target: {fileID: 5202497142060831608, guid: 4457074e239504fbda3dd16077315a7d,
+        type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -181994,7 +181963,7 @@ MonoBehaviour:
   currentStage: 2
   disableEnemiesInStage1: 0
   stage1EnemyCount: 0
-  stage2EnemyCount: 1
+  stage2EnemyCount: 4
   stage3EnemyCount: 1
   defenseAgent1: {fileID: 1559443403}
   defenseAgent2: {fileID: 88788763}
@@ -182028,11 +181997,12 @@ MonoBehaviour:
   maxAllyDistance: 50
   minAllyDistance: 4
   allyWebCollisionPenalty: -1.1
+  enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
   randomizeWeatherOnEpisode: 1
   environmentController: {fileID: 2030129399}
   enableEnemyRush: 1
-  enemyRushThrottle: 4.5
+  enemyRushThrottle: 7.2
   enemySteeringNoise: 0.217
   enemyNoiseSpeed: 2
   enemySteeringSensitivity: 0.956
@@ -192476,6 +192446,7 @@ MonoBehaviour:
   maxAllyDistance: 40
   minAllyDistance: 4
   allyWebCollisionPenalty: -1
+  enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
   randomizeWeatherOnEpisode: 0
   environmentController: {fileID: 0}
@@ -204901,6 +204872,7 @@ MonoBehaviour:
   maxAllyDistance: 40
   minAllyDistance: 4
   allyWebCollisionPenalty: -1
+  enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
   randomizeWeatherOnEpisode: 0
   environmentController: {fileID: 0}
@@ -237152,6 +237124,44 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1677686823}
   m_Mesh: {fileID: -354317562778174967, guid: d845172158406cf4f8d03bad0361c87a, type: 3}
+--- !u!84 &1678625854
+RenderTexture:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: WaterDepthMap
+  m_ImageContentsHash:
+    serializedVersion: 2
+    Hash: 00000000000000000000000000000000
+  m_ForcedFallbackFormat: 4
+  m_DownscaleFallback: 0
+  m_IsAlphaChannelOptional: 0
+  serializedVersion: 5
+  m_Width: 1024
+  m_Height: 1024
+  m_AntiAliasing: 1
+  m_MipCount: -1
+  m_DepthStencilFormat: 94
+  m_ColorFormat: 0
+  m_MipMap: 0
+  m_GenerateMips: 1
+  m_SRGB: 0
+  m_UseDynamicScale: 0
+  m_BindMS: 0
+  m_EnableCompatibleFormat: 1
+  m_EnableRandomWrite: 0
+  m_TextureSettings:
+    serializedVersion: 2
+    m_FilterMode: 1
+    m_Aniso: 1
+    m_MipBias: 0
+    m_WrapU: 1
+    m_WrapV: 1
+    m_WrapW: 1
+  m_Dimension: 2
+  m_VolumeDepth: 1
+  m_ShadowSamplingMode: 2
 --- !u!1 &1679067393
 GameObject:
   m_ObjectHideFlags: 0
@@ -270725,6 +270735,7 @@ MonoBehaviour:
   maxAllyDistance: 40
   minAllyDistance: 4
   allyWebCollisionPenalty: -1
+  enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
   randomizeWeatherOnEpisode: 0
   environmentController: {fileID: 0}
