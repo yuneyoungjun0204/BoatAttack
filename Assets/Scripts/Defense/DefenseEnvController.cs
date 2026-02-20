@@ -151,6 +151,12 @@ namespace BoatAttack
         [Tooltip("아군 선박이 Web과 충돌했을 때 페널티")]
         public float allyWebCollisionPenalty = -1.0f;
 
+        [Tooltip("적이 그물보다 모선에 이 거리 이상 더 가까우면 방어선 돌파 (m)")]
+        public float enemyBreachThreshold = 20f;
+
+        [Tooltip("방어선 돌파 시 페널티")]
+        public float enemyBreachPenalty = -1.1f;
+
         [Header("Weather Randomization")]
         [Tooltip("에피소드 시작 시 날씨(파도/바람) 랜덤화 활성화")]
         public bool randomizeWeatherOnEpisode = false;
@@ -524,6 +530,25 @@ namespace BoatAttack
                 {
                     RestartEpisode($"PositionSwapped(startLeft={_agent1StartsOnLeft},nowLeft={agent1CurrentlyOnLeft})", rewardCalculator.collisionPenalty);
                     return;
+                }
+            }
+
+            // 방어선 돌파 체크: 적이 그물보다 모선에 임계값 이상 더 가까우면 에피소드 종료
+            if (!inGracePeriod && motherShip != null && webObject != null && enemyBreachThreshold > 0f)
+            {
+                Vector3 motherPos = motherShip.transform.position;
+                float webToMother = Vector3.Distance(webObject.transform.position, motherPos);
+
+                foreach (var enemy in enemyShips)
+                {
+                    if (enemy == null || !enemy.activeInHierarchy) continue;
+                    float enemyToMother = Vector3.Distance(enemy.transform.position, motherPos);
+
+                    if (enemyToMother < webToMother - enemyBreachThreshold)
+                    {
+                        RestartEpisode($"EnemyBreach(enemy={enemy.name},enemyDist={enemyToMother:F0},webDist={webToMother:F0},gap={webToMother - enemyToMother:F0})", enemyBreachPenalty);
+                        return;
+                    }
                 }
             }
 
