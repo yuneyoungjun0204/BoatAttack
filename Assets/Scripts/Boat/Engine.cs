@@ -23,6 +23,11 @@ namespace BoatAttack
         public float stabilizationTorque = 5f;
         [Tooltip("안정화 감쇠력 (흔들림 방지)")]
         public float stabilizationDamping = 2f;
+        [Tooltip("최대 허용 기울기 (도) - 이 각도 초과 시 강제 복원")]
+        [Range(10f, 80f)]
+        public float maxTiltAngle = 100f;
+        [Tooltip("무게중심 오프셋 (로컬 좌표, Y를 낮추면 안정적)")]
+        public Vector3 centerOfMassOffset = new Vector3(0f, -1f, 0f);
         private NativeArray<float3> _point; // engine submerged check
         private float3[] _heights = new float3[1]; // engine submerged check
         private float3[] _normals = new float3[1]; // engine submerged check
@@ -50,6 +55,15 @@ namespace BoatAttack
 
             _guid = GetInstanceID(); // Get the engines GUID for the buoyancy system
             _point = new NativeArray<float3>(1, Allocator.Persistent);
+
+            // 무게중심 설정 (RB는 Boat.Awake에서 할당되므로 1프레임 지연 적용)
+            Invoke(nameof(ApplyCenterOfMass), 0f);
+        }
+
+        private void ApplyCenterOfMass()
+        {
+            if (RB != null)
+                RB.centerOfMass = centerOfMassOffset;
         }
 
         private void FixedUpdate()
@@ -93,11 +107,33 @@ namespace BoatAttack
                 }
             }
             
-            // 자세 안정화: 뒤집힘 방지 (roll/pitch 복원 토크)
+            // 자세 안정화: 뒤집힘 방지 (timeScale에 비례해 강화)
             if (stabilizationTorque > 0f)
             {
+                float timeScaleMul = Mathf.Max(1f, Time.timeScale);
                 Vector3 correctionAxis = Vector3.Cross(RB.transform.up, Vector3.up);
-                RB.AddTorque(correctionAxis * stabilizationTorque - RB.angularVelocity * stabilizationDamping, ForceMode.Acceleration);
+                float tiltAngle = Vector3.Angle(RB.transform.up, Vector3.up);
+
+                // 기울기가 maxTiltAngle 초과 시 강제 복원 (비례적으로 더 강한 힘)
+                float urgency = (tiltAngle > maxTiltAngle)
+                    ? 1f + (tiltAngle - maxTiltAngle) / 15f
+                    : 1f;
+
+                float torque = stabilizationTorque * urgency * timeScaleMul;
+                float damping = stabilizationDamping * timeScaleMul;
+                RB.AddTorque(correctionAxis * torque - RB.angularVelocity * damping, ForceMode.Acceleration);
+
+                // 극단적 기울기(거의 뒤집힘) 시 회전 직접 보정
+                if (tiltAngle > maxTiltAngle + 20f)
+                {
+                    Vector3 euler = RB.rotation.eulerAngles;
+                    float roll = euler.z > 180f ? euler.z - 360f : euler.z;
+                    float pitch = euler.x > 180f ? euler.x - 360f : euler.x;
+                    roll = Mathf.Clamp(roll, -maxTiltAngle, maxTiltAngle);
+                    pitch = Mathf.Clamp(pitch, -maxTiltAngle, maxTiltAngle);
+                    RB.MoveRotation(Quaternion.Euler(pitch, euler.y, roll));
+                    RB.angularVelocity = Vector3.Scale(RB.angularVelocity, new Vector3(0.3f, 1f, 0.3f));
+                }
             }
 
             VelocityMag = RB != null ? RB.velocity.sqrMagnitude : 0f; // get the sqr mag

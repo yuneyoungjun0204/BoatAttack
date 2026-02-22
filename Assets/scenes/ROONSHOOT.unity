@@ -12827,6 +12827,44 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!84 &114692472
+RenderTexture:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: WaterDepthMap
+  m_ImageContentsHash:
+    serializedVersion: 2
+    Hash: 00000000000000000000000000000000
+  m_ForcedFallbackFormat: 4
+  m_DownscaleFallback: 0
+  m_IsAlphaChannelOptional: 0
+  serializedVersion: 5
+  m_Width: 1024
+  m_Height: 1024
+  m_AntiAliasing: 1
+  m_MipCount: -1
+  m_DepthStencilFormat: 94
+  m_ColorFormat: 0
+  m_MipMap: 0
+  m_GenerateMips: 1
+  m_SRGB: 0
+  m_UseDynamicScale: 0
+  m_BindMS: 0
+  m_EnableCompatibleFormat: 1
+  m_EnableRandomWrite: 0
+  m_TextureSettings:
+    serializedVersion: 2
+    m_FilterMode: 1
+    m_Aniso: 1
+    m_MipBias: 0
+    m_WrapU: 1
+    m_WrapV: 1
+    m_WrapW: 1
+  m_Dimension: 2
+  m_VolumeDepth: 1
+  m_ShadowSamplingMode: 2
 --- !u!1 &120014583
 GameObject:
   m_ObjectHideFlags: 0
@@ -60563,6 +60601,8 @@ MonoBehaviour:
   horsePower: 28
   stabilizationTorque: 5
   stabilizationDamping: 2
+  maxTiltAngle: 40
+  centerOfMassOffset: {x: 0, y: -1, z: 0}
   enginePosition: {x: 0, y: -0.44, z: -0.7}
 --- !u!23 &504711362
 MeshRenderer:
@@ -63887,6 +63927,8 @@ MonoBehaviour:
   horsePower: 28
   stabilizationTorque: 5
   stabilizationDamping: 2
+  maxTiltAngle: 40
+  centerOfMassOffset: {x: 0, y: -1, z: 0}
   enginePosition: {x: 0, y: -0.44, z: -0.7}
 --- !u!23 &605334433
 MeshRenderer:
@@ -72288,6 +72330,8 @@ MonoBehaviour:
   horsePower: 28
   stabilizationTorque: 5
   stabilizationDamping: 2
+  maxTiltAngle: 40
+  centerOfMassOffset: {x: 0, y: -1, z: 0}
   enginePosition: {x: 0, y: -0.44, z: -0.7}
 --- !u!23 &707421129
 MeshRenderer:
@@ -122685,6 +122729,8 @@ MonoBehaviour:
   horsePower: 28
   stabilizationTorque: 5
   stabilizationDamping: 2
+  maxTiltAngle: 40
+  centerOfMassOffset: {x: 0, y: -1, z: 0}
   enginePosition: {x: 0, y: -0.44, z: -0.7}
 --- !u!23 &945905482
 MeshRenderer:
@@ -125264,7 +125310,7 @@ PrefabInstance:
     - target: {fileID: 6168738319009046502, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 6192938632801627626, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -125355,6 +125401,16 @@ PrefabInstance:
         type: 3}
       propertyPath: DecisionPeriod
       value: 5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8111560231539158884, guid: 405c4bc591de844a3a100e1538790229,
+        type: 3}
+      propertyPath: m_FollowOffset.y
+      value: 45
+      objectReference: {fileID: 0}
+    - target: {fileID: 8111560231539158884, guid: 405c4bc591de844a3a100e1538790229,
+        type: 3}
+      propertyPath: m_FollowOffset.z
+      value: -45
       objectReference: {fileID: 0}
     - target: {fileID: 8994587504260833689, guid: 405c4bc591de844a3a100e1538790229,
         type: 3}
@@ -140280,6 +140336,8 @@ MonoBehaviour:
   horsePower: 28
   stabilizationTorque: 5
   stabilizationDamping: 2
+  maxTiltAngle: 40
+  centerOfMassOffset: {x: 0, y: -1, z: 0}
   enginePosition: {x: 0, y: -0.44, z: -0.7}
 --- !u!33 &1178739879
 MeshFilter:
@@ -181945,9 +182003,9 @@ MonoBehaviour:
   approachRewardPerMeter: 0.0011
   headingAlignmentReward: 0.000001
   timePenalty: -0.001
-  captureReward: 1.1
-  motherShipHitPenalty: -1.1
-  collisionPenalty: -1.1
+  captureReward: 2
+  motherShipHitPenalty: -2
+  collisionPenalty: -2
 --- !u!114 &1396138363
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -181982,7 +182040,7 @@ MonoBehaviour:
   maxCollisionCount: 1
   spawnRange: 30
   enableRandomSpawn: 1
-  defenseRandomAngleRange: 40
+  defenseRandomAngleRange: 20
   useDynamicSpawn: 1
   enemySpawnDistance: 1000
   enemySpawnSpread: 50
@@ -181996,16 +182054,16 @@ MonoBehaviour:
   endEpisodeOnAllEnemiesDestroyed: 1
   maxAllyDistance: 50
   minAllyDistance: 4
-  allyWebCollisionPenalty: -1.1
+  allyWebCollisionPenalty: -2
   enemyBreachThreshold: 20
-  enemyBreachPenalty: -1.1
+  enemyBreachPenalty: -2
   randomizeWeatherOnEpisode: 1
   environmentController: {fileID: 2030129399}
   enableEnemyRush: 1
-  enemyRushThrottle: 7.2
-  enemySteeringNoise: 0.217
+  enemyRushThrottle: 7.5
+  enemySteeringNoise: 0.29
   enemyNoiseSpeed: 2
-  enemySteeringSensitivity: 0.956
+  enemySteeringSensitivity: 1
   environmentRoot: {fileID: 0}
   _currentEpisodeReward: 0
   _lastStepReward: 0
@@ -237124,44 +237182,6 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1677686823}
   m_Mesh: {fileID: -354317562778174967, guid: d845172158406cf4f8d03bad0361c87a, type: 3}
---- !u!84 &1678625854
-RenderTexture:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: WaterDepthMap
-  m_ImageContentsHash:
-    serializedVersion: 2
-    Hash: 00000000000000000000000000000000
-  m_ForcedFallbackFormat: 4
-  m_DownscaleFallback: 0
-  m_IsAlphaChannelOptional: 0
-  serializedVersion: 5
-  m_Width: 1024
-  m_Height: 1024
-  m_AntiAliasing: 1
-  m_MipCount: -1
-  m_DepthStencilFormat: 94
-  m_ColorFormat: 0
-  m_MipMap: 0
-  m_GenerateMips: 1
-  m_SRGB: 0
-  m_UseDynamicScale: 0
-  m_BindMS: 0
-  m_EnableCompatibleFormat: 1
-  m_EnableRandomWrite: 0
-  m_TextureSettings:
-    serializedVersion: 2
-    m_FilterMode: 1
-    m_Aniso: 1
-    m_MipBias: 0
-    m_WrapU: 1
-    m_WrapV: 1
-    m_WrapW: 1
-  m_Dimension: 2
-  m_VolumeDepth: 1
-  m_ShadowSamplingMode: 2
 --- !u!1 &1679067393
 GameObject:
   m_ObjectHideFlags: 0
@@ -272758,6 +272778,8 @@ MonoBehaviour:
   horsePower: 28
   stabilizationTorque: 5
   stabilizationDamping: 2
+  maxTiltAngle: 40
+  centerOfMassOffset: {x: 0, y: -1, z: 0}
   enginePosition: {x: 0, y: -0.44, z: -0.7}
 --- !u!23 &2116875316
 MeshRenderer:

@@ -1299,10 +1299,14 @@ namespace BoatAttack
                 spawnPos2.y = _originalDefense2Pos.y;
                 Quaternion rot2 = rot1; // 같은 방향 바라봄
 
-                // 아군 위치/각도에 약간의 랜덤 추가
-                float angleJitter = enableRandomSpawn ? Random.Range(-defenseRandomAngleRange, defenseRandomAngleRange) : 0f;
-                rot1 *= Quaternion.Euler(0f, angleJitter, 0f);
-                rot2 *= Quaternion.Euler(0f, angleJitter, 0f);
+                // 아군 위치/각도에 각각 독립 랜덤 추가
+                if (enableRandomSpawn)
+                {
+                    float jitter1 = Random.Range(-defenseRandomAngleRange, defenseRandomAngleRange);
+                    float jitter2 = Random.Range(-defenseRandomAngleRange, defenseRandomAngleRange);
+                    rot1 *= Quaternion.Euler(0f, jitter1, 0f);
+                    rot2 *= Quaternion.Euler(0f, jitter2, 0f);
+                }
 
                 ResetDefenseAgentDirect(defenseAgent1, spawnPos1, rot1);
                 ResetDefenseAgentDirect(defenseAgent2, spawnPos2, rot2);

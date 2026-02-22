@@ -563,6 +563,11 @@ PrefabInstance:
       propertyPath: horsePower
       value: 200
       objectReference: {fileID: 0}
+    - target: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      propertyPath: centerOfMassOffset.y
+      value: -1.3
+      objectReference: {fileID: 0}
     - target: {fileID: 4399986893398198514, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_LocalScale.z
@@ -670,10 +675,11 @@ MonoBehaviour:
   angularVelocityControlGain: 1
   maxLinearAcceleration: 5
   maxAngularAcceleration: 45
-  baseThrottle: 0.5
+  maxThrottle: 1
   minThrottle: 0.5
   steeringSensitivity: 0.3
   inputSmoothing: 0.2
+  positionNormK: 250
   showRaycasts: 1
   enableDebugLog: 1
   _totalReward: 0
