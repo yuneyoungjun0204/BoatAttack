@@ -33,6 +33,11 @@ namespace BoatAttack
         // 폭발 여부 플래그
         private bool _hasExploded = false;
 
+        private void OnEnable()
+        {
+            _hasExploded = false;
+        }
+
         /// <summary>
         /// Trigger 충돌 감지
         /// </summary>
@@ -121,11 +126,11 @@ namespace BoatAttack
             // 폭발 효과 생성
             TriggerExplosion();
 
-            // 오브젝트 제거 (옵션)
+            // 오브젝트 비활성화 (옵션) - 풀 재사용을 위해 Destroy 대신 SetActive(false) 사용
             if (destroyAfterExplosion)
             {
-                Destroy(gameObject, destroyDelay);
-                Debug.Log($"[SimpleExplosion] {destroyDelay}초 후 오브젝트 제거 예약");
+                Invoke(nameof(DeactivateObject), destroyDelay);
+                Debug.Log($"[SimpleExplosion] {destroyDelay}초 후 오브젝트 비활성화 예약");
             }
         }
 
@@ -211,6 +216,11 @@ namespace BoatAttack
             {
                 Debug.LogError("[SimpleExplosion] 폭발 효과 생성 실패!");
             }
+        }
+
+        private void DeactivateObject()
+        {
+            gameObject.SetActive(false);
         }
     }
 }

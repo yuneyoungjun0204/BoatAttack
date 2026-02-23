@@ -132,6 +132,7 @@ namespace BoatAttack
         protected override void OnEnable()
         {
             base.OnEnable();
+            _hasExploded = false; // 풀 재사용 시 폭발 상태 초기화
 
             // Engine 재확인 (비활성→활성 전환 시 Awake에서 못 잡은 경우)
             if (_engine == null && TryGetComponent(out _boat))

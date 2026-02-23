@@ -183,9 +183,20 @@ namespace BoatAttack
         [Range(0.1f, 2.0f)]
         public float enemySteeringSensitivity = 0.3f;
 
-        // 적군별 노이즈 시드 (Perlin 패턴 다르게)
-        private System.Collections.Generic.Dictionary<GameObject, float> _enemyNoiseSeed =
-            new System.Collections.Generic.Dictionary<GameObject, float>();
+        [Header("Enemy Pool")]
+        [Tooltip("풀 최대 크기 (stage*EnemyCount 이상으로 설정)")]
+        public int poolSize = 5;
+
+        // 풀 배열 (Start()에서 초기화, 인덱스 기반)
+        private GameObject[] _enemyPool;
+        private AttackAgent[] _poolAttackAgents;
+        private Rigidbody[] _poolRigidbodies;
+        private Engine[] _poolEngines;
+        private AttackBoatDisabler[] _poolDisablers;
+        private SimpleExplosionOnCollision[] _poolExplosions;
+        private Cinemachine.CinemachineDollyCart[] _poolDollyCarts;
+        private float[] _poolNoiseSeed;
+        private float _poolTemplateY; // 템플릿 높이(y) 저장
 
         [Header("Multi-Environment")]
         [Tooltip("환경 루트 Transform (Island Level 등). 비어있으면 부모 또는 자기 자신 사용")]
@@ -243,15 +254,7 @@ namespace BoatAttack
         private System.Collections.Generic.Dictionary<GameObject, Quaternion> _originalBoatRotations = 
             new System.Collections.Generic.Dictionary<GameObject, Quaternion>(); // 태그가 "boat"인 모든 선박의 초기 각도
         
-        // 적군 선박 (attack_boat 태그) 관리
-        private System.Collections.Generic.List<GameObject> _attackBoats = new System.Collections.Generic.List<GameObject>();
-        private System.Collections.Generic.Dictionary<GameObject, Vector3> _attackBoatInitialPositions = new System.Collections.Generic.Dictionary<GameObject, Vector3>();
-        private System.Collections.Generic.Dictionary<GameObject, CinemachinePathBase> _attackBoatInitialPaths = new System.Collections.Generic.Dictionary<GameObject, CinemachinePathBase>();
-        private System.Collections.Generic.Dictionary<string, GameObject> _attackBoatPrefabs = new System.Collections.Generic.Dictionary<string, GameObject>(); // 원본 attack_boat 프리팹 저장 (재생성용, 이름을 키로 사용)
-        private System.Collections.Generic.Dictionary<string, Vector3> _attackBoatInitialPositionsByName = new System.Collections.Generic.Dictionary<string, Vector3>(); // 이름 기반 초기 위치 저장 (재생성용)
-        private System.Collections.Generic.Dictionary<string, CinemachinePathBase> _attackBoatInitialPathsByName = new System.Collections.Generic.Dictionary<string, CinemachinePathBase>(); // 이름 기반 초기 경로 저장 (재생성용)
-        private System.Collections.Generic.HashSet<string> _destroyedAttackBoatNames = new System.Collections.Generic.HashSet<string>(); // 파괴된 attack_boat 이름 추적
-        private int _initialAttackBoatCount = 0;
+        // 적군 선박 관리 → _enemyPool 배열로 통합 (위 Enemy Pool 섹션 참조)
         
         // Inspector에서 Stage 변경 시 자동 적용 (에디터 전용)
         private TrainingStage _lastStage;
@@ -448,8 +451,8 @@ namespace BoatAttack
                 }
             }
             
-            // attack_boat 태그를 가진 모든 적군 선박 찾기 및 초기 위치 저장
-            FindAndSaveAttackBoats();
+            // 적군 오브젝트 풀 초기화 (프리팹 기반 고정 크기 풀)
+            InitializeEnemyPool();
 
             // 씬의 모든 attack_track 경로 수집 및 원본 웨이포인트 저장
             FindAllAttackTrackPaths();
@@ -702,9 +705,12 @@ namespace BoatAttack
 
             _resetTimer = 0;
 
-            // 파괴된 적군 선박 목록 및 노이즈 시드 초기화 (에피소드 재시작 시)
-            _destroyedAttackBoatNames.Clear();
-            _enemyNoiseSeed.Clear();
+            // 풀 노이즈 시드 초기화 (에피소드 재시작 시)
+            if (_poolNoiseSeed != null)
+            {
+                for (int i = 0; i < _poolNoiseSeed.Length; i++)
+                    _poolNoiseSeed[i] = Random.Range(0f, 1000f);
+            }
 
             // RewardCalculator 리셋
             if (rewardCalculator != null)
@@ -925,67 +931,42 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 단일 공격선을 원점으로 리셋 (비활성화 없이 위치만 리셋 - Water System 호환)
+        /// 단일 공격선을 새 위치로 리셋 (풀 인덱스 검색 → ResetPoolObject 호출)
         /// </summary>
         private void ResetSingleAttackBoat(GameObject attackBoat)
         {
-            if (attackBoat == null)
+            if (attackBoat == null || _enemyPool == null)
                 return;
 
-            string boatName = attackBoat.name.Replace("(Clone)", "");
-
-            // 1. Rigidbody 속도 초기화 + Sleep (비활성화 없이)
-            Rigidbody rb = attackBoat.GetComponent<Rigidbody>();
-            if (rb != null)
+            for (int i = 0; i < _enemyPool.Length; i++)
             {
-                rb.velocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
-                rb.Sleep();  // 물리 시뮬레이션 일시 정지
-            }
-
-            // 2. 원점 위치로 이동
-            Vector3 initialPos = Vector3.zero;
-            if (_attackBoatInitialPositionsByName.ContainsKey(boatName))
-            {
-                initialPos = _attackBoatInitialPositionsByName[boatName];
-            }
-            else if (_attackBoatInitialPositions.ContainsKey(attackBoat))
-            {
-                initialPos = _attackBoatInitialPositions[attackBoat];
-            }
-
-            attackBoat.transform.position = initialPos;
-            attackBoat.transform.rotation = Quaternion.identity;
-
-            // Engine 리셋 (Gerstner 파도 안정화 전까지 _yHeight 조건 무시)
-            var boat = attackBoat.GetComponent<Boat>();
-            if (boat != null && boat.engine != null)
-            {
-                boat.engine.OnEpisodeReset();
-            }
-
-            // 3. Cinemachine Dolly Cart 리셋 (랜덤 경로 할당 또는 원래 경로 복원)
-            Cinemachine.CinemachineDollyCart dollyCart = attackBoat.GetComponent<Cinemachine.CinemachineDollyCart>();
-            if (dollyCart != null)
-            {
-                CinemachinePathBase assignedPath = null;
-
-                if (enableRandomPathAssignment)
+                if (_enemyPool[i] == attackBoat)
                 {
-                    assignedPath = GetRandomAttackPath();
-                }
+                    // 동적 스폰이면 모선 기준 새 랜덤 위치, 아니면 원래 위치 유지
+                    if (useDynamicSpawn && motherShip != null)
+                    {
+                        Vector3 motherPos = motherShip.transform.position;
+                        float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
+                        Vector3 dir = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
+                        Vector3 spawnPos = motherPos + dir * enemySpawnDistance;
+                        spawnPos.y = _poolTemplateY;
 
-                // 랜덤 경로가 없으면 원래 경로 fallback
-                if (assignedPath == null && _attackBoatInitialPathsByName.ContainsKey(boatName))
-                {
-                    assignedPath = _attackBoatInitialPathsByName[boatName];
-                }
+                        Vector3 lookDir = motherPos - spawnPos;
+                        lookDir.y = 0f;
+                        Quaternion spawnRot = lookDir.sqrMagnitude > 0.01f
+                            ? Quaternion.LookRotation(lookDir, Vector3.up)
+                            : Quaternion.identity;
 
-                if (assignedPath != null)
-                {
-                    dollyCart.m_Path = assignedPath;
+                        ResetPoolObject(i, spawnPos, spawnRot);
+                    }
+                    else
+                    {
+                        ResetPoolObject(i, attackBoat.transform.position, Quaternion.identity);
+                    }
+
+                    UpdateEnemyShipsArray();
+                    break;
                 }
-                dollyCart.m_Position = 0f;
             }
         }
         
@@ -1012,183 +993,235 @@ namespace BoatAttack
         
         /// <summary>
         /// 적군 선박 파괴 요청 (DynamicWeb, WebCollisionDetector에서 호출)
-        /// 중앙 허브: 모든 파괴 로직을 중앙에서 관리
+        /// 풀 기반: 다음 프레임에 SetActive(false) + enemyShips 갱신
         /// </summary>
         public void RequestAttackBoatDestruction(GameObject attackBoat)
         {
-            if (attackBoat == null)
+            if (attackBoat == null || !attackBoat.activeSelf)
                 return;
-            
-            // 이미 파괴 요청이 처리되었는지 확인
-            string boatName = attackBoat.name.Replace("(Clone)", "");
-            if (_destroyedAttackBoatNames.Contains(boatName))
-            {
-                return;
-            }
-            
-            // 다음 프레임에 파괴 처리 (물리 콜백 제약 회피)
-            StartCoroutine(DestroyAttackBoatNextFrame(attackBoat));
-        }
-        
-        /// <summary>
-        /// 다음 프레임에 attack_boat 파괴 처리 (물리 콜백 제약 회피)
-        /// </summary>
-        private System.Collections.IEnumerator DestroyAttackBoatNextFrame(GameObject attackBoat)
-        {
-            // 다음 프레임까지 대기 (물리 콜백이 끝난 후)
-            yield return null;
-            
-            if (attackBoat == null)
-            {
-                yield break;
-            }
-            
-            // 파괴 처리
-            OnAttackBoatDestroyed(attackBoat);
 
-            // Destroy 대신 SetActive(false) 사용 (재활용 및 Water System 호환)
-            attackBoat.SetActive(false);
+            // 다음 프레임에 비활성화 처리 (물리 콜백 제약 회피)
+            StartCoroutine(DeactivateAttackBoatNextFrame(attackBoat));
         }
-        
-        /// <summary>
-        /// 적군 선박이 파괴되었을 때 호출 (내부에서만 호출)
-        /// 중앙 허브: 모든 파괴 정보를 중앙에서 관리
-        /// </summary>
-        private void OnAttackBoatDestroyed(GameObject destroyedBoat)
+
+        private System.Collections.IEnumerator DeactivateAttackBoatNextFrame(GameObject attackBoat)
         {
-            if (destroyedBoat == null)
-                return;
+            yield return null;
+
+            if (attackBoat == null)
+                yield break;
 
             // 스폰 직후 유예기간에는 파괴 이벤트 무시
             if (_resetTimer <= 10)
             {
-                Debug.Log($"[DefenseEnv] OnAttackBoatDestroyed 유예기간 무시: {destroyedBoat.name}, step={_resetTimer}");
-                return;
+                Debug.Log($"[DefenseEnv] DeactivateAttackBoat 유예기간 무시: {attackBoat.name}, step={_resetTimer}");
+                yield break;
             }
 
-            Debug.Log($"[DefenseEnv] OnAttackBoatDestroyed: {destroyedBoat.name}, step={_resetTimer}");
-            
-            // 파괴된 선박의 이름 저장 (파괴 후에도 추적 가능하도록)
-            string boatName = destroyedBoat.name.Replace("(Clone)", "");
-            _destroyedAttackBoatNames.Add(boatName);
-            
-            // 초기 적군 선박 수가 0이면 다시 찾기 (Start()에서 찾지 못했을 수 있음)
-            if (_initialAttackBoatCount == 0)
+            Debug.Log($"[DefenseEnv] DeactivateAttackBoat: {attackBoat.name}, step={_resetTimer}");
+
+            // 비활성화 (풀에서 재사용 가능)
+            attackBoat.SetActive(false);
+            UpdateEnemyShipsArray();
+
+            // 모든 활성 적군이 0이면 에피소드 종료
+            if (endEpisodeOnAllEnemiesDestroyed && !_episodeEnding)
             {
-                FindAndSaveAttackBoats();
-            }
-            
-            // 파괴된 선박을 리스트에서 제거
-            _attackBoats.Remove(destroyedBoat);
-            
-            // null이거나 파괴된 객체 제거
-            _attackBoats.RemoveAll(boat => boat == null);
-            
-            // 현재 활성화된 적군 선박 수 확인 (환경 내에서 직접 찾기, 파괴된 선박 제외)
-            GameObject[] allAttackBoatsInScene = FindGameObjectsWithTagInEnvironment("attack_boat");
-            // 파괴된 선박 이름을 기준으로 제외
-            int activeCount = allAttackBoatsInScene.Count(boat => 
-                boat != null && 
-                !_destroyedAttackBoatNames.Contains(boat.name.Replace("(Clone)", ""))
-            );
-            
-            // _attackBoats 리스트에서 활성화된 선박 수 확인
-            int activeInList = _attackBoats.Count(boat => 
-                boat != null && 
-                boat.activeSelf && 
-                !_destroyedAttackBoatNames.Contains(boat.name.Replace("(Clone)", ""))
-            );
-            
-            // 모든 적군 선박이 파괴되었는지 확인
-            // 조건: 초기 적군 수가 0보다 크고, 씬에 활성화된 적군이 0개이고, 리스트에도 활성화된 선박이 0개
-            if (endEpisodeOnAllEnemiesDestroyed && _initialAttackBoatCount > 0 && activeCount == 0 && activeInList == 0)
-            {
-                // 에피소드가 이미 종료 중인 경우 중복 호출 방지
-                if (_episodeEnding)
+                int activeCount = 0;
+                if (_enemyPool != null)
                 {
-                    return;
+                    for (int i = 0; i < _enemyPool.Length; i++)
+                    {
+                        if (_enemyPool[i] != null && _enemyPool[i].activeSelf)
+                            activeCount++;
+                    }
                 }
-                
-                // 통합 에피소드 재시작 메서드 호출
-                RestartEpisode("AllEnemiesDestroyed");
+
+                if (activeCount == 0 && GetActiveEnemyCountForStage() > 0)
+                {
+                    RestartEpisode("AllEnemiesDestroyed");
+                }
             }
         }
         
         /// <summary>
-        /// attack_boat 태그를 가진 모든 적군 선박 찾기 및 초기 위치 저장
-        /// 중앙 허브: 모든 적군 선박 정보를 중앙에서 관리
+        /// 적군 오브젝트 풀 초기화 (Start()에서 1회 호출)
+        /// 씬에 배치된 첫 attack_boat를 템플릿으로 사용, poolSize만큼 복제
         /// </summary>
-        private void FindAndSaveAttackBoats()
+        private void InitializeEnemyPool()
         {
-            _attackBoats.Clear();
-            _attackBoatInitialPositions.Clear();
-            _attackBoatInitialPaths.Clear();
-            // 프리팹 딕셔너리와 이름 기반 딕셔너리는 초기화하지 않음 (에피소드 재시작 시 재사용)
-            
-            // 현재 환경 내의 attack_boat 태그를 가진 객체 찾기 (멀티 환경 호환)
-            GameObject[] foundBoats = FindGameObjectsWithTagInEnvironment("attack_boat");
-            
-            // enemyShips 배열 자동 동기화 (인스펙터에 할당된 것과 씬의 실제 객체를 동기화)
-            if (enemyShips == null || enemyShips.Length == 0 || enemyShips.All(e => e == null))
-            {
-                enemyShips = new GameObject[foundBoats.Length];
-                for (int i = 0; i < foundBoats.Length; i++)
-                {
-                    enemyShips[i] = foundBoats[i];
-                }
-            }
-            
-            foreach (var boat in foundBoats)
-            {
-                if (boat != null && !_attackBoats.Contains(boat))
-                {
-                    _attackBoats.Add(boat);
-                    Vector3 initialPos = boat.transform.position;
-                    _attackBoatInitialPositions[boat] = initialPos;
+            // 배열 할당
+            _enemyPool = new GameObject[poolSize];
+            _poolAttackAgents = new AttackAgent[poolSize];
+            _poolRigidbodies = new Rigidbody[poolSize];
+            _poolEngines = new Engine[poolSize];
+            _poolDisablers = new AttackBoatDisabler[poolSize];
+            _poolExplosions = new SimpleExplosionOnCollision[poolSize];
+            _poolDollyCarts = new Cinemachine.CinemachineDollyCart[poolSize];
+            _poolNoiseSeed = new float[poolSize];
 
-                    // 원본 객체를 프리팹으로 저장 (파괴 후 재생성용)
-                    // 이름을 키로 사용하여 같은 이름의 객체를 재생성할 수 있도록 함
-                    string boatName = boat.name.Replace("(Clone)", ""); // Clone 접미사 제거
-                    
-                    // 이름 기반 초기 위치 저장 (재생성용)
-                    if (!_attackBoatInitialPositionsByName.ContainsKey(boatName))
+            // 씬에서 템플릿 찾기 (3단계 fallback)
+            // 1순위: 환경 루트 하위 태그 검색
+            // 2순위: Inspector enemyShips 배열
+            // 3순위: 글로벌 태그 검색 (환경 루트 무시)
+            GameObject template = null;
+            string templateSource = "";
+
+            // 1순위: 환경 루트 하위에서 attack_boat 태그 검색
+            GameObject[] foundBoats = FindGameObjectsWithTagInEnvironment("attack_boat");
+            if (foundBoats.Length > 0)
+            {
+                template = foundBoats[0];
+                templateSource = $"환경 내 태그 검색 ({foundBoats.Length}개 발견)";
+            }
+
+            // 2순위: Inspector의 enemyShips 배열
+            if (template == null && enemyShips != null)
+            {
+                foreach (var ship in enemyShips)
+                {
+                    if (ship != null)
                     {
-                        _attackBoatInitialPositionsByName[boatName] = initialPos;
-                    }
-                    
-                    if (!_attackBoatPrefabs.ContainsKey(boatName))
-                    {
-                        // 원본 객체를 복제하여 프리팹으로 저장 (씬에 숨김)
-                        GameObject prefabCopy = Instantiate(boat);
-                        prefabCopy.name = boatName; // Clone 접미사 제거
-                        prefabCopy.SetActive(false); // 비활성화하여 숨김
-                        prefabCopy.hideFlags = HideFlags.HideInHierarchy | HideFlags.DontSave; // Hierarchy에서 숨기고 저장하지 않음
-                        _attackBoatPrefabs[boatName] = prefabCopy;
-                    }
-                    
-                    // Cinemachine Dolly Cart의 Path 저장
-                    CinemachineDollyCart dollyCart = boat.GetComponent<CinemachineDollyCart>();
-                    if (dollyCart != null)
-                    {
-                        _attackBoatInitialPaths[boat] = dollyCart.m_Path;
-                        // 이름 기반 경로 저장 (재생성용)
-                        if (!_attackBoatInitialPathsByName.ContainsKey(boatName))
-                        {
-                            _attackBoatInitialPathsByName[boatName] = dollyCart.m_Path;
-                        }
-                    }
-                    else
-                    {
-                        _attackBoatInitialPaths[boat] = null;
-                        if (!_attackBoatInitialPathsByName.ContainsKey(boatName))
-                        {
-                            _attackBoatInitialPathsByName[boatName] = null;
-                        }
+                        template = ship;
+                        templateSource = "Inspector enemyShips 배열";
+                        break;
                     }
                 }
             }
-            
-            _initialAttackBoatCount = _attackBoats.Count;
+
+            // 3순위: 글로벌 태그 검색 (환경 루트 제한 없이)
+            if (template == null)
+            {
+                GameObject[] globalBoats = GameObject.FindGameObjectsWithTag("attack_boat");
+                if (globalBoats.Length > 0)
+                {
+                    template = globalBoats[0];
+                    templateSource = $"글로벌 태그 검색 ({globalBoats.Length}개 발견)";
+                }
+            }
+
+            if (template == null)
+            {
+                Debug.LogError("[DefenseEnv] InitializeEnemyPool: attack_boat 템플릿을 찾을 수 없습니다! " +
+                    "씬에 attack_boat 태그 오브젝트가 있거나, Inspector의 enemyShips에 참조를 넣어주세요.");
+                return;
+            }
+
+            Debug.Log($"[DefenseEnv] InitializeEnemyPool: 템플릿 발견 - {template.name} (소스: {templateSource})");
+            _poolTemplateY = template.transform.position.y;
+
+            // pool[0] = 템플릿 자체 재활용
+            _enemyPool[0] = template;
+            CachePoolComponents(0);
+
+            // pool[1..poolSize-1] = 복제 (템플릿의 부모 하위에 생성)
+            Transform poolParent = template.transform.parent != null ? template.transform.parent : GetEnvironmentRoot();
+            for (int i = 1; i < poolSize; i++)
+            {
+                GameObject clone = Instantiate(template, poolParent);
+                clone.name = $"attack_boat_pool_{i}";
+                clone.tag = "attack_boat";
+                clone.SetActive(false);
+                _enemyPool[i] = clone;
+                CachePoolComponents(i);
+            }
+
+            // 모든 풀 객체 비활성화 (ResetScene에서 활성화)
+            for (int i = 0; i < poolSize; i++)
+            {
+                // SimpleExplosionOnCollision의 Destroy 방지
+                if (_poolExplosions[i] != null)
+                {
+                    _poolExplosions[i].destroyAfterExplosion = false;
+                }
+
+                _enemyPool[i].SetActive(false);
+                _poolNoiseSeed[i] = Random.Range(0f, 1000f);
+            }
+
+            // 풀 객체 간 충돌 무시
+            IgnoreCollisionBetweenEnemies();
+
+            // enemyShips 초기화
+            UpdateEnemyShipsArray();
+
+            Debug.Log($"[DefenseEnv] InitializeEnemyPool: poolSize={poolSize}, template={template.name}, foundInScene={foundBoats.Length}, stage={currentStage}, stageCount={GetActiveEnemyCountForStage()}");
+        }
+
+        /// <summary>
+        /// 풀 인덱스의 컴포넌트를 캐시
+        /// </summary>
+        private void CachePoolComponents(int index)
+        {
+            GameObject obj = _enemyPool[index];
+            _poolAttackAgents[index] = obj.GetComponent<AttackAgent>();
+            _poolRigidbodies[index] = obj.GetComponent<Rigidbody>();
+            _poolDisablers[index] = obj.GetComponent<AttackBoatDisabler>();
+            _poolExplosions[index] = obj.GetComponent<SimpleExplosionOnCollision>();
+            _poolDollyCarts[index] = obj.GetComponent<Cinemachine.CinemachineDollyCart>();
+
+            var boat = obj.GetComponent<Boat>();
+            _poolEngines[index] = (boat != null) ? boat.engine : null;
+        }
+
+        /// <summary>
+        /// 풀 오브젝트를 지정 위치/회전으로 리셋 및 활성화
+        /// </summary>
+        private void ResetPoolObject(int index, Vector3 position, Quaternion rotation)
+        {
+            GameObject obj = _enemyPool[index];
+            if (obj == null) return;
+
+            // 1. 이전 에피소드 잔여 Invoke 취소
+            var behaviours = obj.GetComponents<MonoBehaviour>();
+            foreach (var mb in behaviours)
+            {
+                if (mb != null) mb.CancelInvoke();
+            }
+
+            // 2. 위치/회전 설정 (SetActive 전에!)
+            obj.transform.position = position;
+            obj.transform.rotation = rotation;
+
+            // 3. Rigidbody 속도 초기화
+            Rigidbody rb = _poolRigidbodies[index];
+            if (rb != null)
+            {
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+
+            // 4. 활성화 → OnEnable 트리거 → _hasExploded=false 자동 리셋
+            obj.SetActive(true);
+
+            // 5. rb.Sleep() (활성 상태에서만 유효)
+            if (rb != null)
+            {
+                rb.Sleep();
+            }
+
+            // 6. DollyCart 비활성화 (동적 스폰에서는 경로 추적 안 함)
+            if (_poolDollyCarts[index] != null)
+            {
+                _poolDollyCarts[index].enabled = false;
+            }
+
+            // 7. AttackAgent 설정
+            AttackAgent attackAgent = _poolAttackAgents[index];
+            if (attackAgent != null)
+            {
+                attackAgent.followWaypoints = false;
+                attackAgent.targetMotherShip = motherShip;
+            }
+
+            // 8. Engine 리셋 (Gerstner 파도 안정화)
+            if (_poolEngines[index] != null)
+            {
+                _poolEngines[index].OnEpisodeReset();
+            }
+
+            // 9. 노이즈 시드 갱신
+            _poolNoiseSeed[index] = Random.Range(0f, 1000f);
         }
         
         /// <summary>
@@ -1440,177 +1473,69 @@ namespace BoatAttack
         /// </summary>
         private void ResetAttackBoatsDynamic(Vector3 motherPos, Vector3 enemyDir)
         {
-            // null/파괴된 객체 제거
-            _attackBoats.RemoveAll(boat => boat == null);
-
-            // 파괴 기록 초기화 (새 에피소드이므로)
-            _destroyedAttackBoatNames.Clear();
+            if (_enemyPool == null) return;
 
             int stageTargetCount = GetActiveEnemyCountForStage();
-            if (stageTargetCount == 0)
+
+            for (int i = 0; i < _enemyPool.Length; i++)
             {
-                // Stage1에서 적군 0대: 모든 적군 비활성화
-                foreach (var boat in _attackBoats)
+                if (_enemyPool[i] == null) continue;
+
+                if (i < stageTargetCount)
                 {
-                    if (boat != null) boat.SetActive(false);
+                    // 각 적군마다 약간의 위치 오프셋 (퍼짐)
+                    Vector3 spreadOffset = new Vector3(
+                        Random.Range(-enemySpawnSpread, enemySpawnSpread),
+                        0f,
+                        Random.Range(-enemySpawnSpread, enemySpawnSpread)
+                    );
+
+                    Vector3 spawnPos = motherPos + enemyDir * enemySpawnDistance + spreadOffset;
+                    spawnPos.y = _poolTemplateY;
+
+                    // 모선 정중앙을 바라보는 회전
+                    Vector3 lookDir = motherPos - spawnPos;
+                    lookDir.y = 0f;
+                    Quaternion spawnRot = lookDir.sqrMagnitude > 0.01f
+                        ? Quaternion.LookRotation(lookDir, Vector3.up)
+                        : Quaternion.identity;
+
+                    ResetPoolObject(i, spawnPos, spawnRot);
                 }
-                UpdateEnemyShipsArray();
-                return;
+                else
+                {
+                    // 초과분 비활성화
+                    var behaviours = _enemyPool[i].GetComponents<MonoBehaviour>();
+                    foreach (var mb in behaviours)
+                    {
+                        if (mb != null) mb.CancelInvoke();
+                    }
+                    _enemyPool[i].SetActive(false);
+                }
             }
 
-            // 파괴된 적군 재생성 (기존 로직 재활용)
-            EnsureAttackBoatCount(stageTargetCount);
+            // 풀 객체 간 충돌 무시
+            IgnoreCollisionBetweenEnemies();
 
-            // 활성 적군을 모선 기준 위치로 배치
-            int placedCount = 0;
-            foreach (var boat in _attackBoats)
-            {
-                if (boat == null) continue;
-                if (placedCount >= stageTargetCount)
-                {
-                    boat.SetActive(false);
-                    continue;
-                }
+            Debug.Log($"[DefenseEnv] ResetAttackBoatsDynamic: target={stageTargetCount}, poolSize={_enemyPool.Length}");
 
-                // 먼저 모든 MonoBehaviour의 Invoke 취소 (이전 에피소드 잔여 Invoke 방지)
-                var behaviours = boat.GetComponents<MonoBehaviour>();
-                foreach (var mb in behaviours)
-                {
-                    if (mb != null) mb.CancelInvoke();
-                }
-
-                // 각 적군마다 약간의 위치 오프셋 (퍼짐)
-                Vector3 spreadOffset = new Vector3(
-                    Random.Range(-enemySpawnSpread, enemySpawnSpread),
-                    0f,
-                    Random.Range(-enemySpawnSpread, enemySpawnSpread)
-                );
-
-                Vector3 spawnPos = motherPos + enemyDir * enemySpawnDistance + spreadOffset;
-                spawnPos.y = boat.transform.position.y; // 기존 높이 유지
-
-                // 모선 정중앙을 바라보는 회전
-                Vector3 lookDir = motherPos - spawnPos;
-                lookDir.y = 0f;
-                Quaternion spawnRot = lookDir.sqrMagnitude > 0.01f
-                    ? Quaternion.LookRotation(lookDir, Vector3.up)
-                    : Quaternion.identity;
-
-                // 위치/회전을 먼저 설정 (SetActive 전에! 이전 위치에서 충돌 방지)
-                boat.transform.position = spawnPos;
-                boat.transform.rotation = spawnRot;
-
-                // Rigidbody 리셋
-                Rigidbody rb = boat.GetComponent<Rigidbody>();
-                if (rb != null)
-                {
-                    rb.velocity = Vector3.zero;
-                    rb.angularVelocity = Vector3.zero;
-                }
-
-                // 위치 설정 후 활성화 (이전 위치에서의 충돌 방지)
-                boat.SetActive(true);
-
-                // 활성화 후 rb.Sleep() (Sleep은 활성 상태에서만 유효)
-                if (rb != null)
-                {
-                    rb.Sleep();
-                }
-
-                // CinemachineDollyCart 비활성화 (동적 스폰에서는 경로 추적 안 함)
-                CinemachineDollyCart dollyCart = boat.GetComponent<CinemachineDollyCart>();
-                if (dollyCart != null)
-                {
-                    dollyCart.enabled = false;
-                }
-
-                // AttackAgent 모선 추적 모드 설정
-                var attackAgent = boat.GetComponent<AttackAgent>();
-                if (attackAgent != null)
-                {
-                    attackAgent.followWaypoints = false;
-                    attackAgent.targetMotherShip = motherShip;
-                }
-
-                // AttackBoatDisabler 폭발 상태 초기화 (이전 에피소드 잔여 상태 제거)
-                var disabler = boat.GetComponent<AttackBoatDisabler>();
-                if (disabler != null)
-                {
-                    disabler.CancelInvoke(); // 대기 중인 DisableBoat Invoke 취소
-                }
-
-                // Engine 리셋 (Gerstner 파도 안정화)
-                var boatComp = boat.GetComponent<Boat>();
-                if (boatComp != null && boatComp.engine != null)
-                {
-                    boatComp.engine.OnEpisodeReset();
-                }
-
-                placedCount++;
-            }
-
-            Debug.Log($"[DefenseEnv] ResetAttackBoatsDynamic: placed={placedCount}/{stageTargetCount}, total={_attackBoats.Count}");
-
-            // enemyShips 배열 업데이트 (DefenseAgent 관측용)
             UpdateEnemyShipsArray();
         }
 
-        /// <summary>
-        /// 적군 선박 수가 목표 수에 미달하면 재생성
-        /// </summary>
-        private void EnsureAttackBoatCount(int targetCount)
-        {
-            // 현재 활성 수
-            int currentCount = 0;
-            foreach (var boat in _attackBoats)
-            {
-                if (boat != null) currentCount++;
-            }
-
-            if (currentCount >= targetCount) return;
-
-            // 부족한 만큼 재생성
-            foreach (var kvp in _attackBoatPrefabs)
-            {
-                if (currentCount >= targetCount) break;
-
-                string boatName = kvp.Key;
-                GameObject prefab = kvp.Value;
-                if (prefab == null) continue;
-
-                // 이미 리스트에 있는지 확인
-                bool exists = false;
-                foreach (var boat in _attackBoats)
-                {
-                    if (boat != null && boat.name.Replace("(Clone)", "") == boatName)
-                    {
-                        exists = true;
-                        break;
-                    }
-                }
-
-                if (!exists)
-                {
-                    GameObject recreated = Instantiate(prefab, GetEnvironmentRoot());
-                    recreated.name = boatName;
-                    recreated.tag = "attack_boat";
-                    recreated.SetActive(true);
-                    _attackBoats.Add(recreated);
-                    currentCount++;
-                }
-            }
-        }
+        // EnsureAttackBoatCount 삭제됨 → 풀이 고정 크기이므로 동적 생성 불필요
 
         /// <summary>
         /// enemyShips 배열을 현재 활성 attack_boat로 업데이트
         /// </summary>
         private void UpdateEnemyShipsArray()
         {
+            if (_enemyPool == null) return;
+
             var activeEnemies = new System.Collections.Generic.List<GameObject>();
-            foreach (var boat in _attackBoats)
+            for (int i = 0; i < _enemyPool.Length; i++)
             {
-                if (boat != null && boat.activeSelf)
-                    activeEnemies.Add(boat);
+                if (_enemyPool[i] != null && _enemyPool[i].activeSelf)
+                    activeEnemies.Add(_enemyPool[i]);
             }
 
             enemyShips = activeEnemies.ToArray();
@@ -1621,367 +1546,54 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 모든 적군 선박 (attack_boat 태그)을 원점으로 리셋
-        /// 에피소드 재시작 시 호출되며, 파괴된 적군 선박도 다시 생성
-        /// Stage 설정에 따라 재생성 수 제한
+        /// 모든 적군 선박을 원점으로 리셋 (레거시 스폰, useDynamicSpawn=false)
+        /// 풀 기반: Stage에 맞는 수만 활성화, 나머지는 비활성화
         /// </summary>
         private void ResetAttackBoatsToOrigin()
         {
-            // null이거나 파괴된 객체 제거
-            _attackBoats.RemoveAll(boat => boat == null);
+            if (_enemyPool == null) return;
 
-            // Stage에 따른 목표 적군 수 결정
             int stageTargetCount = GetActiveEnemyCountForStage();
 
-            // Stage1에서 적군 0대면 재생성 스킵
-            if (stageTargetCount == 0)
+            for (int i = 0; i < _enemyPool.Length; i++)
             {
-                return;
-            }
+                if (_enemyPool[i] == null) continue;
 
-            // 현재 환경 내의 attack_boat 다시 찾기 (멀티 환경 호환)
-            GameObject[] allAttackBoatsInScene = FindGameObjectsWithTagInEnvironment("attack_boat");
-
-            // 파괴된 attack_boat 재생성
-            int recreatedCount = 0;
-
-            // Stage 설정에 맞는 적군 수만큼만 재생성
-            int targetCount = Mathf.Min(
-                stageTargetCount,
-                _initialAttackBoatCount > 0 ? _initialAttackBoatCount : _attackBoatPrefabs.Count
-            );
-            
-            foreach (var kvp in _attackBoatPrefabs)
-            {
-                string boatName = kvp.Key;
-                GameObject prefab = kvp.Value;
-                
-                if (prefab == null) continue;
-                
-                // 씬에서 같은 이름의 객체를 찾을 수 있는지 확인
-                bool foundInScene = false;
-                GameObject existingBoat = null;
-                foreach (var boat in allAttackBoatsInScene)
+                if (i < stageTargetCount)
                 {
-                    if (boat == null) continue;
-                    string sceneBoatName = boat.name.Replace("(Clone)", "");
-                    if (sceneBoatName == boatName)
-                    {
-                        foundInScene = true;
-                        existingBoat = boat;
-                        break;
-                    }
-                }
-                
-                // 씬에 없으면 재생성 필요 (단, 목표 수 초과 시 스킵)
-                if (!foundInScene && recreatedCount < targetCount)
-                {
-                    // 프리팹에서 재생성 (환경 루트 아래에 배치하여 멀티 환경 호환)
-                    GameObject recreatedBoat = Instantiate(prefab, GetEnvironmentRoot());
-                    recreatedBoat.name = boatName; // 원본 이름 유지
-                    recreatedBoat.tag = "attack_boat"; // 태그 설정
-                    recreatedBoat.SetActive(true); // 활성화
+                    // 원점 위치로 리셋 (풀 인덱스 기반, 템플릿 높이 유지)
+                    Vector3 spawnPos = _enemyPool[i].transform.position;
+                    spawnPos.y = _poolTemplateY;
+                    ResetPoolObject(i, spawnPos, Quaternion.identity);
 
-                    // 초기 위치 찾기 (이름 기반 Dictionary에서 찾기)
-                    Vector3 initialPos = Vector3.zero;
-                    if (_attackBoatInitialPositionsByName.ContainsKey(boatName))
+                    // Cinemachine Dolly Cart 활성화 (레거시 스폰에서는 경로 추적 사용)
+                    if (_poolDollyCarts[i] != null)
                     {
-                        initialPos = _attackBoatInitialPositionsByName[boatName];
-                    }
-                    
-                    recreatedBoat.transform.position = initialPos;
-                    recreatedBoat.transform.rotation = Quaternion.identity;
-                    
-                    // Cinemachine Dolly Cart 리셋 (랜덤 경로 할당)
-                    CinemachineDollyCart dollyCart = recreatedBoat.GetComponent<CinemachineDollyCart>();
-                    if (dollyCart != null)
-                    {
-                        CinemachinePathBase assignedPath = enableRandomPathAssignment ? GetRandomAttackPath() : null;
-
-                        if (assignedPath == null && _attackBoatInitialPathsByName.ContainsKey(boatName))
+                        _poolDollyCarts[i].enabled = true;
+                        if (enableRandomPathAssignment)
                         {
-                            assignedPath = _attackBoatInitialPathsByName[boatName];
-                        }
-
-                        if (assignedPath != null)
-                        {
-                            dollyCart.m_Path = assignedPath;
-                            dollyCart.m_Position = 0f;
-                        }
-                    }
-                    
-                    // Rigidbody 리셋
-                    Rigidbody rb = recreatedBoat.GetComponent<Rigidbody>();
-                    if (rb != null)
-                    {
-                        rb.velocity = Vector3.zero;
-                        rb.angularVelocity = Vector3.zero;
-                    }
-                    
-                    // 리스트에 추가
-                    _attackBoats.Add(recreatedBoat);
-                    _attackBoatInitialPositions[recreatedBoat] = initialPos;
-                    if (dollyCart != null)
-                    {
-                        _attackBoatInitialPaths[recreatedBoat] = dollyCart.m_Path;
-                    }
-                    
-                    // 이름 기반 Dictionary도 업데이트 (재생성된 객체용)
-                    if (!_attackBoatInitialPositionsByName.ContainsKey(boatName))
-                    {
-                        _attackBoatInitialPositionsByName[boatName] = initialPos;
-                    }
-                    if (dollyCart != null && !_attackBoatInitialPathsByName.ContainsKey(boatName))
-                    {
-                        _attackBoatInitialPathsByName[boatName] = dollyCart.m_Path;
-                    }
-                    
-                    recreatedCount++;
-                }
-            }
-            
-            // 씬의 모든 attack_boat를 _attackBoats 리스트에 추가 (없는 경우만)
-            foreach (var boat in allAttackBoatsInScene)
-            {
-                if (boat != null && !_attackBoats.Contains(boat))
-                {
-                    _attackBoats.Add(boat);
-                    
-                    // 초기 위치/경로 저장 (아직 저장되지 않은 경우)
-                    if (!_attackBoatInitialPositions.ContainsKey(boat))
-                    {
-                        Vector3 initialPos = boat.transform.position;
-                        _attackBoatInitialPositions[boat] = initialPos;
-                        
-                        // 원본 프리팹 저장
-                        string boatName = boat.name.Replace("(Clone)", "");
-                        
-                        // 이름 기반 초기 위치 저장
-                        if (!_attackBoatInitialPositionsByName.ContainsKey(boatName))
-                        {
-                            _attackBoatInitialPositionsByName[boatName] = initialPos;
-                        }
-                        
-                        if (!_attackBoatPrefabs.ContainsKey(boatName))
-                        {
-                            GameObject prefabCopy = Instantiate(boat);
-                            prefabCopy.name = boatName;
-                            prefabCopy.SetActive(false);
-                            prefabCopy.hideFlags = HideFlags.HideInHierarchy | HideFlags.DontSave;
-                            _attackBoatPrefabs[boatName] = prefabCopy;
-                        }
-                        
-                        // Cinemachine Dolly Cart의 Path 저장
-                        CinemachineDollyCart dollyCart = boat.GetComponent<CinemachineDollyCart>();
-                        if (dollyCart != null)
-                        {
-                            _attackBoatInitialPaths[boat] = dollyCart.m_Path;
-                            // 이름 기반 경로 저장
-                            if (!_attackBoatInitialPathsByName.ContainsKey(boatName))
+                            var randomPath = GetRandomAttackPath();
+                            if (randomPath != null)
                             {
-                                _attackBoatInitialPathsByName[boatName] = dollyCart.m_Path;
+                                _poolDollyCarts[i].m_Path = randomPath;
                             }
                         }
-                        else
-                        {
-                            _attackBoatInitialPaths[boat] = null;
-                            if (!_attackBoatInitialPathsByName.ContainsKey(boatName))
-                            {
-                                _attackBoatInitialPathsByName[boatName] = null;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // 초기 선박 수 확인 및 업데이트
-            // 재생성 후 총 선박 수가 초기 수보다 적으면 문제
-            if (_attackBoats.Count < _initialAttackBoatCount && _initialAttackBoatCount > 0)
-            {
-                // 부족한 만큼 더 재생성 시도
-                int missingCount = _initialAttackBoatCount - _attackBoats.Count;
-                int additionalRecreated = 0;
-                
-                foreach (var kvp in _attackBoatPrefabs)
-                {
-                    if (additionalRecreated >= missingCount) break;
-                    
-                    string boatName = kvp.Key;
-                    GameObject prefab = kvp.Value;
-                    
-                    if (prefab == null) continue;
-                    
-                    // 이미 리스트에 있는지 확인
-                    bool alreadyInList = false;
-                    foreach (var boat in _attackBoats)
-                    {
-                        if (boat != null)
-                        {
-                            string listBoatName = boat.name.Replace("(Clone)", "");
-                            if (listBoatName == boatName)
-                            {
-                                alreadyInList = true;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (!alreadyInList)
-                    {
-                        // 재생성 (환경 루트 아래에 배치하여 멀티 환경 호환)
-                        GameObject recreatedBoat = Instantiate(prefab, GetEnvironmentRoot());
-                        recreatedBoat.name = boatName;
-                        recreatedBoat.tag = "attack_boat";
-                        recreatedBoat.SetActive(true);
-                        
-                        Vector3 initialPos = _attackBoatInitialPositionsByName.ContainsKey(boatName) 
-                            ? _attackBoatInitialPositionsByName[boatName] 
-                            : Vector3.zero;
-                        
-                        recreatedBoat.transform.position = initialPos;
-                        recreatedBoat.transform.rotation = Quaternion.identity;
-                        
-                        CinemachineDollyCart dollyCart = recreatedBoat.GetComponent<CinemachineDollyCart>();
-                        if (dollyCart != null)
-                        {
-                            CinemachinePathBase assignedPath = enableRandomPathAssignment ? GetRandomAttackPath() : null;
-
-                            if (assignedPath == null && _attackBoatInitialPathsByName.ContainsKey(boatName))
-                            {
-                                assignedPath = _attackBoatInitialPathsByName[boatName];
-                            }
-
-                            if (assignedPath != null)
-                            {
-                                dollyCart.m_Path = assignedPath;
-                                dollyCart.m_Position = 0f;
-                            }
-                        }
-                        
-                        Rigidbody rb = recreatedBoat.GetComponent<Rigidbody>();
-                        if (rb != null)
-                        {
-                            rb.velocity = Vector3.zero;
-                            rb.angularVelocity = Vector3.zero;
-                        }
-                        
-                        _attackBoats.Add(recreatedBoat);
-                        _attackBoatInitialPositions[recreatedBoat] = initialPos;
-                        if (dollyCart != null)
-                        {
-                            _attackBoatInitialPaths[recreatedBoat] = dollyCart.m_Path;
-                        }
-                        
-                        additionalRecreated++;
-                    }
-                }
-                
-                recreatedCount += additionalRecreated;
-            }
-            
-            // 초기 선박 수 업데이트 (씬에 있는 선박 수가 더 많으면)
-            if (_attackBoats.Count > _initialAttackBoatCount)
-            {
-                _initialAttackBoatCount = _attackBoats.Count;
-            }
-            
-            // 모든 선박을 원점(초기 위치)으로 리셋 (비활성화/활성화 없이 - Water System 호환)
-            int resetCount = 0;
-            foreach (var boat in _attackBoats)
-            {
-                if (boat == null) continue;
-
-                // 비활성화된 선박은 건너뛰지 않고 위치만 리셋
-                // (SetActive 호출하지 않음 - Water System Dictionary 충돌 방지)
-
-                // Rigidbody 리셋 (활성화 상태에서만 동작)
-                if (boat.activeSelf)
-                {
-                    Rigidbody rb = boat.GetComponent<Rigidbody>();
-                    if (rb != null)
-                    {
-                        rb.velocity = Vector3.zero;
-                        rb.angularVelocity = Vector3.zero;
-                    }
-                }
-
-                // 초기 위치로 리셋 (이름 기반으로 찾기)
-                Vector3 spawnPos;
-                string boatName = boat.name.Replace("(Clone)", "");
-
-                if (_attackBoatInitialPositionsByName.ContainsKey(boatName))
-                {
-                    spawnPos = _attackBoatInitialPositionsByName[boatName];
-                    if (!_attackBoatInitialPositions.ContainsKey(boat))
-                    {
-                        _attackBoatInitialPositions[boat] = spawnPos;
-                    }
-                }
-                else if (_attackBoatInitialPositions.ContainsKey(boat))
-                {
-                    spawnPos = _attackBoatInitialPositions[boat];
-                    _attackBoatInitialPositionsByName[boatName] = spawnPos;
-                }
-                else
-                {
-                    spawnPos = boat.transform.position;
-                    _attackBoatInitialPositions[boat] = spawnPos;
-                    _attackBoatInitialPositionsByName[boatName] = spawnPos;
-                }
-
-                // Cinemachine Dolly Cart 리셋 (랜덤 경로 할당 또는 원래 경로 복원)
-                CinemachineDollyCart dollyCart = boat.GetComponent<CinemachineDollyCart>();
-                if (dollyCart != null)
-                {
-                    CinemachinePathBase assignedPath = null;
-
-                    if (enableRandomPathAssignment)
-                    {
-                        assignedPath = GetRandomAttackPath();
-                    }
-
-                    // 랜덤 경로가 없으면 원래 경로 fallback
-                    if (assignedPath == null)
-                    {
-                        if (_attackBoatInitialPathsByName.ContainsKey(boatName))
-                        {
-                            assignedPath = _attackBoatInitialPathsByName[boatName];
-                        }
-                        else if (_attackBoatInitialPaths.ContainsKey(boat) && _attackBoatInitialPaths[boat] != null)
-                        {
-                            assignedPath = _attackBoatInitialPaths[boat];
-                            _attackBoatInitialPathsByName[boatName] = assignedPath;
-                        }
-                    }
-
-                    if (assignedPath != null)
-                    {
-                        dollyCart.m_Path = assignedPath;
-                        dollyCart.m_Position = 0f;
-
-                        if (dollyCart.m_Speed < 0)
-                        {
-                            dollyCart.m_Speed = Mathf.Abs(dollyCart.m_Speed);
-                        }
-
-                        Vector3 pathStartPos = assignedPath.EvaluatePositionAtUnit(0f, CinemachinePathBase.PositionUnits.PathUnits);
-                        boat.transform.position = pathStartPos;
-                    }
-                    else
-                    {
-                        boat.transform.position = spawnPos;
+                        _poolDollyCarts[i].m_Position = 0f;
                     }
                 }
                 else
                 {
-                    // Dolly Cart가 없으면 저장된 위치 사용
-                    boat.transform.position = spawnPos;
+                    // 초과분 비활성화
+                    var behaviours = _enemyPool[i].GetComponents<MonoBehaviour>();
+                    foreach (var mb in behaviours)
+                    {
+                        if (mb != null) mb.CancelInvoke();
+                    }
+                    _enemyPool[i].SetActive(false);
                 }
-
-                boat.transform.rotation = Quaternion.identity;
-
-                resetCount++;
             }
+
+            UpdateEnemyShipsArray();
         }
         
         /// <summary>
@@ -2087,34 +1699,34 @@ namespace BoatAttack
         /// </summary>
         private void DriveEnemiesForward()
         {
+            if (_enemyPool == null) return;
+
             Vector3 motherPos = motherShip.transform.position;
 
-            foreach (var boat in _attackBoats)
+            for (int i = 0; i < _enemyPool.Length; i++)
             {
-                if (boat == null || !boat.activeSelf) continue;
+                if (_enemyPool[i] == null || !_enemyPool[i].activeSelf) continue;
 
-                var boatComp = boat.GetComponent<Boat>();
-                if (boatComp == null || boatComp.engine == null) continue;
+                Engine engine = _poolEngines[i];
+                if (engine == null || engine.RB == null) continue;
 
-                Engine engine = boatComp.engine;
-                if (engine.RB == null) continue;
-
-                // 노이즈 시드 (최초 한 번만 생성)
-                if (!_enemyNoiseSeed.ContainsKey(boat))
-                {
-                    _enemyNoiseSeed[boat] = UnityEngine.Random.Range(0f, 1000f);
-                }
+                // AttackAgent가 rush 모드로 실제 이동 처리 중일 때만 스킵 (이중 구동 방지)
+                AttackAgent attackAgent = _poolAttackAgents[i];
+                if (attackAgent != null && attackAgent.enabled &&
+                    !attackAgent.followWaypoints && attackAgent.enableRush &&
+                    attackAgent.targetMotherShip != null)
+                    continue;
 
                 // 모선 방향 계산
-                Vector3 toMother = motherPos - boat.transform.position;
+                Vector3 toMother = motherPos - _enemyPool[i].transform.position;
                 toMother.y = 0f;
                 if (toMother.sqrMagnitude < 0.01f) continue;
 
-                float angleToMother = Vector3.SignedAngle(boat.transform.forward, toMother.normalized, Vector3.up);
+                float angleToMother = Vector3.SignedAngle(_enemyPool[i].transform.forward, toMother.normalized, Vector3.up);
                 float baseSteering = Mathf.Clamp(angleToMother / 45f, -1f, 1f);
 
                 // Perlin 노이즈 (각 적군 다른 패턴)
-                float seed = _enemyNoiseSeed[boat];
+                float seed = _poolNoiseSeed[i];
                 float noise = (Mathf.PerlinNoise(seed, Time.time * enemyNoiseSpeed) - 0.5f) * 2f * enemySteeringNoise;
 
                 float steering = Mathf.Clamp(baseSteering + noise, -1f, 1f);
@@ -2136,25 +1748,54 @@ namespace BoatAttack
         /// </summary>
         private void CancelAttackBoatPendingActions()
         {
-            foreach (var boat in _attackBoats)
-            {
-                if (boat == null || !boat.activeSelf) continue;
+            if (_enemyPool == null) return;
 
-                // AttackBoatDisabler의 Invoke 취소
-                var disabler = boat.GetComponent<AttackBoatDisabler>();
-                if (disabler != null)
+            for (int i = 0; i < _enemyPool.Length; i++)
+            {
+                if (_enemyPool[i] == null) continue;
+
+                // 캐시된 Disabler CancelInvoke
+                if (_poolDisablers[i] != null)
                 {
-                    disabler.CancelInvoke();
+                    _poolDisablers[i].CancelInvoke();
                 }
 
                 // 모든 MonoBehaviour의 Invoke 취소
-                var behaviours = boat.GetComponents<MonoBehaviour>();
+                var behaviours = _enemyPool[i].GetComponents<MonoBehaviour>();
                 foreach (var mb in behaviours)
                 {
                     if (mb != null && mb.enabled)
                     {
                         mb.CancelInvoke();
                     }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 풀 내 활성 적군 간 물리 충돌 무시
+        /// </summary>
+        private void IgnoreCollisionBetweenEnemies()
+        {
+            if (_enemyPool == null) return;
+
+            var activeBoats = new System.Collections.Generic.List<GameObject>();
+            for (int i = 0; i < _enemyPool.Length; i++)
+            {
+                if (_enemyPool[i] != null && _enemyPool[i].activeSelf)
+                    activeBoats.Add(_enemyPool[i]);
+            }
+
+            for (int i = 0; i < activeBoats.Count; i++)
+            {
+                var collidersA = activeBoats[i].GetComponentsInChildren<Collider>();
+                for (int j = i + 1; j < activeBoats.Count; j++)
+                {
+                    var collidersB = activeBoats[j].GetComponentsInChildren<Collider>();
+                    foreach (var ca in collidersA)
+                        foreach (var cb in collidersB)
+                            if (ca != null && cb != null)
+                                Physics.IgnoreCollision(ca, cb, true);
                 }
             }
         }
@@ -2329,56 +1970,32 @@ namespace BoatAttack
         /// </summary>
         private void ApplyEnemyActivation(int activeCount)
         {
+            if (_enemyPool == null)
+            {
+                Debug.LogWarning("[DefenseEnv] ApplyEnemyActivation: _enemyPool이 null입니다.");
+                return;
+            }
+
             int activated = 0;
-
-            // enemyShips 배열 처리
-            if (enemyShips != null && enemyShips.Length > 0)
+            int nullCount = 0;
+            for (int i = 0; i < _enemyPool.Length; i++)
             {
-                for (int i = 0; i < enemyShips.Length; i++)
-                {
-                    if (enemyShips[i] != null)
-                    {
-                        bool shouldBeActive = activated < activeCount;
-                        enemyShips[i].SetActive(shouldBeActive);
+                if (_enemyPool[i] == null) { nullCount++; continue; }
 
-                        if (shouldBeActive)
-                        {
-                            activated++;
-                        }
-                    }
-                }
+                bool shouldBeActive = activated < activeCount;
+                _enemyPool[i].SetActive(shouldBeActive);
+
+                if (shouldBeActive)
+                    activated++;
             }
 
-            // _attackBoats 리스트도 처리 (enemyShips와 중복되지 않는 것들)
-            foreach (var boat in _attackBoats)
+            if (nullCount > 0)
             {
-                if (boat == null) continue;
-
-                // enemyShips에 이미 포함되어 있는지 확인
-                bool alreadyProcessed = false;
-                if (enemyShips != null)
-                {
-                    foreach (var enemy in enemyShips)
-                    {
-                        if (enemy == boat)
-                        {
-                            alreadyProcessed = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!alreadyProcessed)
-                {
-                    bool shouldBeActive = activated < activeCount;
-                    boat.SetActive(shouldBeActive);
-
-                    if (shouldBeActive)
-                    {
-                        activated++;
-                    }
-                }
+                Debug.LogWarning($"[DefenseEnv] ApplyEnemyActivation: 풀에 null 엔트리 {nullCount}개 (풀 초기화 실패 가능성)");
             }
+
+            UpdateEnemyShipsArray();
+            Debug.Log($"[DefenseEnv] ApplyEnemyActivation: 요청={activeCount}, 실제활성={activated}, poolSize={_enemyPool.Length}");
         }
 
         /// <summary>
