@@ -30,6 +30,17 @@ namespace BoatAttack
         public string motherShipTag = "MotherShip";
         public GameObject webObject;
 
+        [Header("Hierarchical Control")]
+        [Tooltip("배정된 타겟 인덱스 (-1=자동/가장 가까운 적, 1+=특정 적 1-indexed)")]
+        [HideInInspector] public int assignedTargetIndex = -1;
+
+        [Tooltip("환경 컨트롤러 참조 (Start에서 자동 설정)")]
+        [HideInInspector] public DefenseEnvController envController;
+
+        [Header("BufferSensor")]
+        [Tooltip("적군 가변 관측용 BufferSensor (Inspector에서 할당)")]
+        public BufferSensorComponent enemyBufferSensor;
+
         [Header("Action Settings")]
         public float maxLinearVelocity = 200f;
         public float maxAngularVelocity = 90f;
@@ -62,12 +73,15 @@ namespace BoatAttack
         [Header("Observation Scale (정규화 후 가중치)")]
         [Range(0f, 5f)] public float partnerRScale = 1f;
         [Range(0f, 5f)] public float partnerFScale = 1f;
+        [Range(0f, 5f)] public float partnerDistScale = 1f;
         [Range(0f, 5f)] public float partnerHdgScale = 1f;
         [Range(0f, 5f)] public float enemyRScale = 1f;
         [Range(0f, 5f)] public float enemyFScale = 1f;
+        [Range(0f, 5f)] public float enemyDistScale = 1f;
         [Range(0f, 5f)] public float enemyHdgScale = 1f;
         [Range(0f, 5f)] public float motherRScale = 1f;
         [Range(0f, 5f)] public float motherFScale = 1f;
+        [Range(0f, 5f)] public float motherDistScale = 1f;
 
         [Header("Debug")]
         public bool showRaycasts = true;
@@ -158,20 +172,47 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 관측 수집 (자기중심 상대 좌표, 속도 제거 - 프레임 스태킹으로 대체)
-        /// 자신(2) + 팀원(3) + 적군(3×maxEnemyCount) + 모선(2) = 22개
-        /// 위치: x/(|x|+1), 각도: DeltaAngle/180
+        /// 배정된 적군 반환 (Commander가 지정한 타겟 or 가장 가까운 적 fallback)
+        /// </summary>
+        public GameObject GetAssignedEnemy()
+        {
+            // Commander 배정: 1-indexed
+            if (assignedTargetIndex > 0 && enemyShips != null)
+            {
+                int idx = assignedTargetIndex - 1;
+                if (idx < enemyShips.Length && enemyShips[idx] != null && enemyShips[idx].activeInHierarchy)
+                    return enemyShips[idx];
+            }
+
+            // Fallback: 가장 가까운 활성 적군
+            if (enemyShips == null) return null;
+            float minDist = float.MaxValue;
+            GameObject closest = null;
+            Vector3 myPos = transform.position;
+            foreach (var enemy in enemyShips)
+            {
+                if (enemy == null || !enemy.activeInHierarchy) continue;
+                float dist = Vector3.Distance(myPos, enemy.transform.position);
+                if (dist < minDist) { minDist = dist; closest = enemy; }
+            }
+            return closest;
+        }
+
+        /// <summary>
+        /// 관측 수집 (VectorSensor 11개 + EnemyBufferSensor 가변)
+        /// VectorSensor: 파트너(4) + 배정타겟(4) + 모선(3) = 11
+        /// BufferSensor: 나머지 적군 각 4개 (R, F, Dist, Hdg)
         /// </summary>
         public override void CollectObservations(VectorSensor sensor)
         {
-            int totalObs = 3 + (3 * maxEnemyCount) + 2;  // 팀원3 + 적3×N + 모선2
-            if (lastObservations == null || lastObservations.Length != totalObs)
-                lastObservations = new float[totalObs];
+            const int VECTOR_OBS_COUNT = 11;  // 파트너4 + 타겟4 + 모선3
+            if (lastObservations == null || lastObservations.Length != VECTOR_OBS_COUNT)
+                lastObservations = new float[VECTOR_OBS_COUNT];
             int oi = 0;
 
             if (_engine == null || _engine.RB == null)
             {
-                for (int i = 0; i < totalObs; i++)
+                for (int i = 0; i < VECTOR_OBS_COUNT; i++)
                 {
                     sensor.AddObservation(0f);
                     lastObservations[i] = 0f;
@@ -184,58 +225,99 @@ namespace BoatAttack
             Vector3 myRight = transform.right;
             float myAngle = transform.eulerAngles.y;
 
-            // 1. 팀원 (3개: 상대위치 right/forward, 헤딩차이) — PrevThrottle/PrevSteering 제거 (프레임 스태킹으로 대체)
+            // 1. 파트너 (4: R, F, Dist, Hdg) — 페어 내 고정 파트너
             if (partnerAgent != null && partnerAgent._engine != null && partnerAgent._engine.RB != null)
             {
-                Vector3 relativeToPartner = partnerAgent.transform.position - myPos;
-                AddObs(sensor, NormalizePosition(Vector3.Dot(relativeToPartner, myRight), partnerNormK) * partnerRScale, ref oi);
-                AddObs(sensor, NormalizePosition(Vector3.Dot(relativeToPartner, myForward), partnerNormK) * partnerFScale, ref oi);
-                AddObs(sensor, NormalizeAngle(myAngle, partnerAgent.transform.eulerAngles.y) * partnerHdgScale, ref oi);
+                AddDirectionDistanceObs(sensor, partnerAgent.transform, myPos, myForward, myRight, myAngle,
+                    partnerRScale, partnerFScale, partnerDistScale, partnerHdgScale, partnerNormK, ref oi);
+            }
+            else
+            {
+                for (int i = 0; i < 4; i++) AddObs(sensor, 0f, ref oi);
+            }
+
+            // 2. 배정 타겟 (4: R, F, Dist, Hdg) — Commander가 지정한 적 or 가장 가까운 적
+            GameObject assignedEnemy = GetAssignedEnemy();
+            if (assignedEnemy != null)
+            {
+                AddDirectionDistanceObs(sensor, assignedEnemy.transform, myPos, myForward, myRight, myAngle,
+                    enemyRScale, enemyFScale, enemyDistScale, enemyHdgScale, enemyNormK, ref oi);
+            }
+            else
+            {
+                for (int i = 0; i < 4; i++) AddObs(sensor, 0f, ref oi);
+            }
+
+            // 3. 모선 (3: R, F, Dist)
+            if (motherShip != null)
+            {
+                Vector3 rel = motherShip.transform.position - myPos;
+                float dist = rel.magnitude;
+                float rightDot = Vector3.Dot(rel, myRight);
+                float fwdDot = Vector3.Dot(rel, myForward);
+
+                if (dist > 0.1f)
+                {
+                    AddObs(sensor, (rightDot / dist) * motherRScale, ref oi);
+                    AddObs(sensor, (fwdDot / dist) * motherFScale, ref oi);
+                }
+                else
+                {
+                    AddObs(sensor, 0f, ref oi);
+                    AddObs(sensor, 0f, ref oi);
+                }
+                AddObs(sensor, NormalizePosition(dist, motherNormK) * motherDistScale, ref oi);
             }
             else
             {
                 for (int i = 0; i < 3; i++) AddObs(sensor, 0f, ref oi);
             }
 
-            // 3. 적군 (3 × maxEnemyCount) - 거리순 정렬
-            var sortedEnemies = new List<(GameObject enemy, float distance)>();
-            for (int i = 0; i < enemyShips.Length && i < maxEnemyCount; i++)
+            // 4. BufferSensor: 나머지 적군 (배정 타겟 제외, 가변)
+            if (enemyBufferSensor != null && enemyShips != null)
             {
-                if (enemyShips[i] != null && enemyShips[i].activeInHierarchy)
+                foreach (var enemy in enemyShips)
                 {
-                    float dist = Vector3.Distance(myPos, enemyShips[i].transform.position);
-                    sortedEnemies.Add((enemyShips[i], dist));
+                    if (enemy == null || !enemy.activeInHierarchy) continue;
+                    if (enemy == assignedEnemy) continue; // 배정 타겟은 VectorSensor에서 이미 관측
+
+                    Vector3 rel = enemy.transform.position - myPos;
+                    float dist = rel.magnitude;
+                    float rightDot = Vector3.Dot(rel, myRight);
+                    float fwdDot = Vector3.Dot(rel, myForward);
+
+                    float r = (dist > 0.1f) ? (rightDot / dist) * enemyRScale : 0f;
+                    float f = (dist > 0.1f) ? (fwdDot / dist) * enemyFScale : 0f;
+                    float d = NormalizePosition(dist, enemyNormK) * enemyDistScale;
+                    float h = NormalizeAngle(myAngle, enemy.transform.eulerAngles.y) * enemyHdgScale;
+
+                    enemyBufferSensor.AppendObservation(new float[] { r, f, d, h });
                 }
             }
-            sortedEnemies.Sort((a, b) => a.distance.CompareTo(b.distance));
+        }
 
-            for (int i = 0; i < maxEnemyCount; i++)
-            {
-                if (i < sortedEnemies.Count)
-                {
-                    GameObject enemy = sortedEnemies[i].enemy;
-                    Vector3 relativeToEnemy = enemy.transform.position - myPos;
-                    AddObs(sensor, NormalizePosition(Vector3.Dot(relativeToEnemy, myRight), enemyNormK) * enemyRScale, ref oi);
-                    AddObs(sensor, NormalizePosition(Vector3.Dot(relativeToEnemy, myForward), enemyNormK) * enemyFScale, ref oi);
-                    AddObs(sensor, NormalizeAngle(myAngle, enemy.transform.eulerAngles.y) * enemyHdgScale, ref oi);
-                }
-                else
-                {
-                    for (int j = 0; j < 3; j++) AddObs(sensor, 0f, ref oi);
-                }
-            }
+        /// <summary>대상의 방향(R,F) + 거리 + 헤딩차이를 VectorSensor에 추가 (4개)</summary>
+        private void AddDirectionDistanceObs(VectorSensor sensor, Transform target,
+            Vector3 myPos, Vector3 myForward, Vector3 myRight, float myAngle,
+            float rScale, float fScale, float distScale, float hdgScale, float normK, ref int oi)
+        {
+            Vector3 rel = target.position - myPos;
+            float dist = rel.magnitude;
+            float rightDot = Vector3.Dot(rel, myRight);
+            float fwdDot = Vector3.Dot(rel, myForward);
 
-            // 4. 모선 (2개: right/forward 상대위치)
-            if (motherShip != null)
+            if (dist > 0.1f)
             {
-                Vector3 relativePos = motherShip.transform.position - myPos;
-                AddObs(sensor, NormalizePosition(Vector3.Dot(relativePos, myRight), motherNormK) * motherRScale, ref oi);
-                AddObs(sensor, NormalizePosition(Vector3.Dot(relativePos, myForward), motherNormK) * motherFScale, ref oi);
+                AddObs(sensor, (rightDot / dist) * rScale, ref oi);
+                AddObs(sensor, (fwdDot / dist) * fScale, ref oi);
             }
             else
             {
-                for (int i = 0; i < 2; i++) AddObs(sensor, 0f, ref oi);
+                AddObs(sensor, 0f, ref oi);
+                AddObs(sensor, 0f, ref oi);
             }
+            AddObs(sensor, NormalizePosition(dist, normK) * distScale, ref oi);
+            AddObs(sensor, NormalizeAngle(myAngle, target.eulerAngles.y) * hdgScale, ref oi);
         }
 
         /// <summary>관측값 기록 + 센서 추가 헬퍼</summary>
