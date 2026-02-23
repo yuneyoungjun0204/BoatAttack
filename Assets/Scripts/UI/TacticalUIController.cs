@@ -20,6 +20,9 @@ namespace BoatAttack
         [Tooltip("레이더 디스플레이")]
         public RadarDisplay radarDisplay;
 
+        [Tooltip("전술맵 디스플레이")]
+        public TacticalMapDisplay tacticalMap;
+
         [Header("=== Attack Mode Buttons ===")]
         [Tooltip("파상공격 버튼")]
         public Button btnWaveAttack;
@@ -273,6 +276,10 @@ namespace BoatAttack
             // 레이더 범위
             if (textRadarRange != null && radarDisplay != null)
                 textRadarRange.text = $"{radarDisplay.radarRange:F0}m";
+
+            // 전술맵 레이더 범위 동기화
+            if (tacticalMap != null && radarDisplay != null)
+                tacticalMap.radarRange = radarDisplay.radarRange;
         }
 
         #endregion

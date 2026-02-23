@@ -151,6 +151,7 @@ PlayerSettings:
   - {fileID: 0}
   - {fileID: 0}
   - {fileID: 0}
+  - {fileID: 0}
   metroInputSource: 0
   wsaTransparentSwapchain: 0
   m_HolographicPauseOnTrackingLoss: 1
@@ -951,7 +952,7 @@ PlayerSettings:
     Android: 3
     Nintendo Switch: 3
     PS4: 3
-    Standalone: 3
+    Standalone: 6
     WebGL: 3
     XboxOne: 3
     iPhone: 3

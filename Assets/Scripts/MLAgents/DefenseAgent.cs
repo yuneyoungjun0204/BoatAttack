@@ -54,13 +54,27 @@ namespace BoatAttack
         [Tooltip("입력 스무스 처리 (1.0 = 즉각 반응)")]
         public float inputSmoothing = 1.0f;
 
-        [Header("Observation Normalization")]
-        [Tooltip("위치 정규화 감도 (k=출력 0.5 지점 거리, 기본 50m)")]
-        public float positionNormK = 250f;
+        [Header("Observation NormK (출력 0.5 지점 거리)")]
+        [Range(1f, 1000f)] public float partnerNormK = 50f;
+        [Range(1f, 1000f)] public float enemyNormK = 250f;
+        [Range(1f, 1000f)] public float motherNormK = 500f;
+
+        [Header("Observation Scale (정규화 후 가중치)")]
+        [Range(0f, 5f)] public float partnerRScale = 1f;
+        [Range(0f, 5f)] public float partnerFScale = 1f;
+        [Range(0f, 5f)] public float partnerHdgScale = 1f;
+        [Range(0f, 5f)] public float enemyRScale = 1f;
+        [Range(0f, 5f)] public float enemyFScale = 1f;
+        [Range(0f, 5f)] public float enemyHdgScale = 1f;
+        [Range(0f, 5f)] public float motherRScale = 1f;
+        [Range(0f, 5f)] public float motherFScale = 1f;
 
         [Header("Debug")]
         public bool showRaycasts = true;
         public bool enableDebugLog = true;
+
+        /// <summary>모니터링용: 마지막 CollectObservations 결과</summary>
+        [HideInInspector] public float[] lastObservations;
 
         [Header("Reward Display")]
         #pragma warning disable CS0414
@@ -126,21 +140,21 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 위치 정규화: x>0 → 1-k/(|x|+k), x≤0 → -1+k/(|x|+k) → (-1, 1)
+        /// 위치 정규화: x/(|x|+k) → (-1, 1)
         /// k = 감도 스케일 (출력 0.5 지점의 거리)
         /// </summary>
-        private float NormalizePosition(float x)
+        private float NormalizePosition(float x, float k)
         {
-            float k = positionNormK;
             return x / (Mathf.Abs(x) + k);
         }
 
         /// <summary>
-        /// 각도 정규화: DeltaAngle / 180 → [-1, 1]
+        /// 각도 정규화: sin(DeltaAngle) → [-1, 1]
+        /// ±180° 부근 불연속 제거, ±90°에서 최대값
         /// </summary>
         private float NormalizeAngle(float fromAngle, float toAngle)
         {
-            return Mathf.DeltaAngle(fromAngle, toAngle) / 180f;
+            return Mathf.Sin(Mathf.DeltaAngle(fromAngle, toAngle) * Mathf.Deg2Rad);
         }
 
         /// <summary>
@@ -150,11 +164,18 @@ namespace BoatAttack
         /// </summary>
         public override void CollectObservations(VectorSensor sensor)
         {
+            int totalObs = 3 + (3 * maxEnemyCount) + 2;  // 팀원3 + 적3×N + 모선2
+            if (lastObservations == null || lastObservations.Length != totalObs)
+                lastObservations = new float[totalObs];
+            int oi = 0;
+
             if (_engine == null || _engine.RB == null)
             {
-                int totalObservations = 2 + 3 + (3 * maxEnemyCount) + 2;
-                for (int i = 0; i < totalObservations; i++)
+                for (int i = 0; i < totalObs; i++)
+                {
                     sensor.AddObservation(0f);
+                    lastObservations[i] = 0f;
+                }
                 return;
             }
 
@@ -163,21 +184,17 @@ namespace BoatAttack
             Vector3 myRight = transform.right;
             float myAngle = transform.eulerAngles.y;
 
-            // 1. 자신 (2개: 이전추력, 이전조향)
-            sensor.AddObservation(_prevThrottle);
-            sensor.AddObservation(_prevSteering);
-
-            // 2. 팀원 (3개: 상대위치 right/forward, 헤딩차이)
+            // 1. 팀원 (3개: 상대위치 right/forward, 헤딩차이) — PrevThrottle/PrevSteering 제거 (프레임 스태킹으로 대체)
             if (partnerAgent != null && partnerAgent._engine != null && partnerAgent._engine.RB != null)
             {
                 Vector3 relativeToPartner = partnerAgent.transform.position - myPos;
-                sensor.AddObservation(NormalizePosition(Vector3.Dot(relativeToPartner, myRight)));
-                sensor.AddObservation(NormalizePosition(Vector3.Dot(relativeToPartner, myForward)));
-                sensor.AddObservation(NormalizeAngle(myAngle, partnerAgent.transform.eulerAngles.y));
+                AddObs(sensor, NormalizePosition(Vector3.Dot(relativeToPartner, myRight), partnerNormK) * partnerRScale, ref oi);
+                AddObs(sensor, NormalizePosition(Vector3.Dot(relativeToPartner, myForward), partnerNormK) * partnerFScale, ref oi);
+                AddObs(sensor, NormalizeAngle(myAngle, partnerAgent.transform.eulerAngles.y) * partnerHdgScale, ref oi);
             }
             else
             {
-                for (int i = 0; i < 3; i++) sensor.AddObservation(0f);
+                for (int i = 0; i < 3; i++) AddObs(sensor, 0f, ref oi);
             }
 
             // 3. 적군 (3 × maxEnemyCount) - 거리순 정렬
@@ -198,13 +215,13 @@ namespace BoatAttack
                 {
                     GameObject enemy = sortedEnemies[i].enemy;
                     Vector3 relativeToEnemy = enemy.transform.position - myPos;
-                    sensor.AddObservation(NormalizePosition(Vector3.Dot(relativeToEnemy, myRight)));
-                    sensor.AddObservation(NormalizePosition(Vector3.Dot(relativeToEnemy, myForward)));
-                    sensor.AddObservation(NormalizeAngle(myAngle, enemy.transform.eulerAngles.y));
+                    AddObs(sensor, NormalizePosition(Vector3.Dot(relativeToEnemy, myRight), enemyNormK) * enemyRScale, ref oi);
+                    AddObs(sensor, NormalizePosition(Vector3.Dot(relativeToEnemy, myForward), enemyNormK) * enemyFScale, ref oi);
+                    AddObs(sensor, NormalizeAngle(myAngle, enemy.transform.eulerAngles.y) * enemyHdgScale, ref oi);
                 }
                 else
                 {
-                    for (int j = 0; j < 3; j++) sensor.AddObservation(0f);
+                    for (int j = 0; j < 3; j++) AddObs(sensor, 0f, ref oi);
                 }
             }
 
@@ -212,13 +229,21 @@ namespace BoatAttack
             if (motherShip != null)
             {
                 Vector3 relativePos = motherShip.transform.position - myPos;
-                sensor.AddObservation(NormalizePosition(Vector3.Dot(relativePos, myRight)));
-                sensor.AddObservation(NormalizePosition(Vector3.Dot(relativePos, myForward)));
+                AddObs(sensor, NormalizePosition(Vector3.Dot(relativePos, myRight), motherNormK) * motherRScale, ref oi);
+                AddObs(sensor, NormalizePosition(Vector3.Dot(relativePos, myForward), motherNormK) * motherFScale, ref oi);
             }
             else
             {
-                for (int i = 0; i < 2; i++) sensor.AddObservation(0f);
+                for (int i = 0; i < 2; i++) AddObs(sensor, 0f, ref oi);
             }
+        }
+
+        /// <summary>관측값 기록 + 센서 추가 헬퍼</summary>
+        private void AddObs(VectorSensor sensor, float value, ref int index)
+        {
+            sensor.AddObservation(value);
+            if (lastObservations != null && index < lastObservations.Length)
+                lastObservations[index++] = value;
         }
 
         /// <summary>

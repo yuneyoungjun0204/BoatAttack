@@ -18,6 +18,12 @@ public class EnvironmentController : MonoBehaviour
     public bool dynamicWeather = false;
     [Range(10f, 300f)] public float weatherChangeInterval = 60f;
 
+    [Header("=== Randomization Range (min/max) ===")]
+    public Vector2 waveStrengthRange = new Vector2(0.5f, 3.0f);
+    public Vector2 waveSpeedRange = new Vector2(0.5f, 2.0f);
+    public Vector2 windStrengthRange = new Vector2(3f, 20f);
+    public Vector2 windTurbulenceRange = new Vector2(0.1f, 0.6f);
+
     [Header("=== Presets ===")]
     public WeatherPreset currentPreset = WeatherPreset.Calm;
 
@@ -103,12 +109,12 @@ public class EnvironmentController : MonoBehaviour
 
     public void RandomizeWeather()
     {
-        waveStrength = Random.Range(0.5f, 3.0f);
-        waveSpeed = Random.Range(0.5f, 2.0f);
+        waveStrength = Random.Range(waveStrengthRange.x, waveStrengthRange.y);
+        waveSpeed = Random.Range(waveSpeedRange.x, waveSpeedRange.y);
         waveDirection = Random.Range(0f, 360f);
-        windStrength = Random.Range(3f, 20f);
+        windStrength = Random.Range(windStrengthRange.x, windStrengthRange.y);
         windDirection = Random.Range(0f, 360f);
-        windTurbulence = Random.Range(0.1f, 0.6f);
+        windTurbulence = Random.Range(windTurbulenceRange.x, windTurbulenceRange.y);
         ApplySettings();
     }
 

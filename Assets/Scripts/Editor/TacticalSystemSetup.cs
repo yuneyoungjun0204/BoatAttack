@@ -41,11 +41,13 @@ namespace BoatAttack
             SetupFullUI(env, envCtrl);
 
             EditorUtility.DisplayDialog("Setup Complete",
-                "전술 시스템 v5 세팅 완료!\n\n" +
+                "전술 시스템 v6 세팅 완료!\n\n" +
                 "- Page 0: 레이더 (풀스크린)\n" +
                 "- Page 1: 환경 (SeaState + Wind)\n" +
                 "- Page 2: 아군 선박 스펙 (3D)\n" +
-                "- Page 3: 적군 선박 스펙 (3D)\n\n" +
+                "- Page 3: 적군 선박 스펙 (3D)\n" +
+                "- Page 4: 전술맵 (사각형, 3000m)\n" +
+                "- Page 5: 관측값 그래프 (실시간)\n\n" +
                 "[Tab] 페이지 전환\n" +
                 "[Enter] 게임 모드 (UI 숨김 + 미니 레이더)\n" +
                 "[Esc] 이전 페이지 / UI 복귀\n\n" +
@@ -176,9 +178,17 @@ namespace BoatAttack
             eSpec.isEnemy = true;
             BuildShipSpecPage(page3, eSpec, env, "ENEMY SHIP PARAMETER", ACCENT_RED, true);
 
+            // Page 4: Tactical Map (사각형 전술맵)
+            var page4 = CreateFullscreenPage(canvasObj.transform, "Page_TacticalMap");
+            BuildTacticalMapPage(page4, uiCtrl, env);
+
+            // Page 5: Observation Graph (관측값 실시간 그래프)
+            var page5 = CreateFullscreenPage(canvasObj.transform, "Page_Observation");
+            BuildObservationPage(page5, env);
+
             // PageManager
-            pm.pages = new[] { page0, page1, page2, page3 };
-            pm.pageNames = new[] { "RADAR", "ENVIRONMENT", "FRIENDLY SHIP", "ENEMY SHIP" };
+            pm.pages = new[] { page0, page1, page2, page3, page4, page5 };
+            pm.pageNames = new[] { "RADAR", "ENVIRONMENT", "FRIENDLY SHIP", "ENEMY SHIP", "TACTICAL MAP", "OBSERVATION" };
             var indicatorObj = CreateIndicatorBar(canvasObj.transform, pm);
             pm.indicatorBar = indicatorObj;
 
@@ -550,6 +560,135 @@ namespace BoatAttack
         }
 
         // ================================================================
+        // Page 4: Tactical Map (사각형 전술맵)
+        // ================================================================
+
+        static void BuildTacticalMapPage(GameObject page, TacticalUIController uiCtrl, DefenseEnvController env)
+        {
+            page.AddComponent<Image>().color = BG_DARK;
+
+            CreateLabel(page.transform, "Title", "TACTICAL MAP",
+                new Vector2(0, 1), new Vector2(1, 1), new Vector2(20, -10), new Vector2(-20, 25),
+                22, FontStyle.Bold, ACCENT_GREEN);
+
+            // === 중앙: 사각형 전술맵 (정사각형, 화면 높이의 85%) ===
+            var mapBg = CreatePanel(page.transform, "MapBg",
+                new Vector2(0.15f, 0.04f), new Vector2(0.85f, 0.94f),
+                Vector2.zero, Vector2.zero, new Color(0.02f, 0.03f, 0.08f, 0.95f));
+
+            var mapObj = new GameObject("TacticalMapDisplay");
+            mapObj.transform.SetParent(mapBg.transform, false);
+            var mapRt = mapObj.AddComponent<RectTransform>();
+            // 정사각형 유지 (AspectRatioFitter 사용)
+            mapRt.anchorMin = new Vector2(0.02f, 0.02f);
+            mapRt.anchorMax = new Vector2(0.98f, 0.98f);
+            mapRt.offsetMin = Vector2.zero;
+            mapRt.offsetMax = Vector2.zero;
+            var aspectFitter = mapObj.AddComponent<AspectRatioFitter>();
+            aspectFitter.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
+            aspectFitter.aspectRatio = 1f;
+
+            var tacticalMap = mapObj.AddComponent<TacticalMapDisplay>();
+            tacticalMap.envController = env;
+            tacticalMap.mapScaleFromRadar = 3f;
+            tacticalMap.radarRange = 1000f;
+            tacticalMap.gridSpacing = 500f;
+            tacticalMap.showRadarCircle = true;
+            uiCtrl.tacticalMap = tacticalMap;
+
+            // === 좌측: 범례 + 정보 ===
+            var legendPanel = CreatePanel(page.transform, "LegendPanel",
+                new Vector2(0.01f, 0.35f), new Vector2(0.14f, 0.94f),
+                Vector2.zero, Vector2.zero, BG_PANEL);
+
+            CreateLabel(legendPanel.transform, "LegendTitle", "LEGEND",
+                new Vector2(0, 0.88f), new Vector2(1, 1),
+                new Vector2(8, 0), Vector2.zero, 13, FontStyle.Bold, TEXT_DIM);
+
+            CreateLabel(legendPanel.transform, "LegFriendly", "\u25B2 Friendly",
+                new Vector2(0, 0.72f), new Vector2(1, 0.84f),
+                new Vector2(8, 0), Vector2.zero, 12, FontStyle.Normal, ACCENT_CYAN);
+
+            CreateLabel(legendPanel.transform, "LegEnemy", "\u25B2 Enemy",
+                new Vector2(0, 0.58f), new Vector2(1, 0.70f),
+                new Vector2(8, 0), Vector2.zero, 12, FontStyle.Normal, ACCENT_RED);
+
+            CreateLabel(legendPanel.transform, "LegMS", "\u25C6 Mothership",
+                new Vector2(0, 0.44f), new Vector2(1, 0.56f),
+                new Vector2(8, 0), Vector2.zero, 12, FontStyle.Normal, mothershipColor());
+
+            CreateLabel(legendPanel.transform, "LegWeb", "\u2500 Web Line",
+                new Vector2(0, 0.30f), new Vector2(1, 0.42f),
+                new Vector2(8, 0), Vector2.zero, 12, FontStyle.Normal, ACCENT_GREEN);
+
+            CreateLabel(legendPanel.transform, "LegRadar", "\u25CB Radar",
+                new Vector2(0, 0.16f), new Vector2(1, 0.28f),
+                new Vector2(8, 0), Vector2.zero, 12, FontStyle.Normal,
+                new Color(0.15f, 0.5f, 0.2f, 1f));
+
+            CreateLabel(legendPanel.transform, "LegGrid", "\u2508 500m Grid",
+                new Vector2(0, 0.02f), new Vector2(1, 0.14f),
+                new Vector2(8, 0), Vector2.zero, 12, FontStyle.Normal, TEXT_DIM);
+
+            // === 우측: 거리 정보 ===
+            var infoPanel = CreatePanel(page.transform, "InfoPanel",
+                new Vector2(0.86f, 0.35f), new Vector2(0.99f, 0.94f),
+                Vector2.zero, Vector2.zero, BG_PANEL);
+
+            CreateLabel(infoPanel.transform, "InfoTitle", "INFO",
+                new Vector2(0, 0.88f), new Vector2(1, 1),
+                new Vector2(8, 0), Vector2.zero, 13, FontStyle.Bold, TEXT_DIM);
+
+            CreateLabel(infoPanel.transform, "MapRangeLbl", "Map Range",
+                new Vector2(0, 0.72f), new Vector2(1, 0.82f),
+                new Vector2(5, 0), Vector2.zero, 10, FontStyle.Normal, TEXT_DIM);
+
+            CreateLabel(infoPanel.transform, "MapRangeVal", "3000m",
+                new Vector2(0, 0.60f), new Vector2(1, 0.72f),
+                new Vector2(5, 0), Vector2.zero, 14, FontStyle.Bold, ACCENT_GREEN);
+
+            CreateLabel(infoPanel.transform, "RadarRangeLbl", "Radar",
+                new Vector2(0, 0.46f), new Vector2(1, 0.56f),
+                new Vector2(5, 0), Vector2.zero, 10, FontStyle.Normal, TEXT_DIM);
+
+            CreateLabel(infoPanel.transform, "RadarRangeVal", "1000m",
+                new Vector2(0, 0.34f), new Vector2(1, 0.46f),
+                new Vector2(5, 0), Vector2.zero, 14, FontStyle.Bold,
+                new Color(0.15f, 0.5f, 0.2f, 1f));
+
+            CreateLabel(infoPanel.transform, "GridLbl", "Grid",
+                new Vector2(0, 0.20f), new Vector2(1, 0.30f),
+                new Vector2(5, 0), Vector2.zero, 10, FontStyle.Normal, TEXT_DIM);
+
+            CreateLabel(infoPanel.transform, "GridVal", "500m",
+                new Vector2(0, 0.08f), new Vector2(1, 0.20f),
+                new Vector2(5, 0), Vector2.zero, 14, FontStyle.Bold, TEXT_BRIGHT);
+
+            // === 하단: 상태 바 ===
+            var statusBar = CreatePanel(page.transform, "MapStatusBar",
+                new Vector2(0.01f, 0.04f), new Vector2(0.14f, 0.33f),
+                Vector2.zero, Vector2.zero, BG_PANEL);
+
+            CreateLabel(statusBar.transform, "StatusTitle", "STATUS",
+                new Vector2(0, 0.85f), new Vector2(1, 1),
+                new Vector2(8, 0), Vector2.zero, 13, FontStyle.Bold, TEXT_DIM);
+
+            CreateLabel(statusBar.transform, "FrInfo", "FR: 2",
+                new Vector2(0, 0.55f), new Vector2(1, 0.75f),
+                new Vector2(8, 0), Vector2.zero, 14, FontStyle.Normal, ACCENT_CYAN);
+
+            CreateLabel(statusBar.transform, "EnInfo", "EN: 0",
+                new Vector2(0, 0.30f), new Vector2(1, 0.50f),
+                new Vector2(8, 0), Vector2.zero, 14, FontStyle.Normal, ACCENT_RED);
+
+            CreateLabel(statusBar.transform, "MSInfo", "MS: Active",
+                new Vector2(0, 0.05f), new Vector2(1, 0.25f),
+                new Vector2(8, 0), Vector2.zero, 14, FontStyle.Normal, mothershipColor());
+
+            EditorUtility.SetDirty(tacticalMap);
+        }
+
+        // ================================================================
         // Indicator Bar + Nav Buttons
         // ================================================================
 
@@ -656,6 +795,95 @@ namespace BoatAttack
                 8, FontStyle.Normal, TEXT_DIM).GetComponent<Text>().alignment = TextAnchor.MiddleCenter;
 
             return overlay;
+        }
+
+        // ================================================================
+        // Page 5: Observation Graph
+        // ================================================================
+
+        static void BuildObservationPage(GameObject page, DefenseEnvController env)
+        {
+            page.AddComponent<Image>().color = BG_DARK;
+
+            CreateLabel(page.transform, "Title", "OBSERVATION MONITOR",
+                new Vector2(0, 1), new Vector2(1, 1), new Vector2(20, -10), new Vector2(-20, 30),
+                26, FontStyle.Bold, ACCENT_GREEN);
+
+            // 그래프 표시 영역
+            var graphArea = new GameObject("GraphArea");
+            graphArea.transform.SetParent(page.transform, false);
+            var gaRt = graphArea.AddComponent<RectTransform>();
+            gaRt.anchorMin = new Vector2(0.02f, 0.03f);
+            gaRt.anchorMax = new Vector2(0.98f, 0.94f);
+            gaRt.offsetMin = Vector2.zero;
+            gaRt.offsetMax = Vector2.zero;
+
+            // ObservationGraphDisplay (MaskableGraphic)
+            var graph = graphArea.AddComponent<ObservationGraphDisplay>();
+
+            // DefenseAgent 자동 연결
+            var agents = Object.FindObjectsOfType<DefenseAgent>();
+            if (agents.Length > 0)
+                graph.targetAgent = agents[0];
+
+            // 라벨 + 값 텍스트 생성 (그래프 위에 오버레이)
+            int cols = 4;
+            int rows = 2;
+            var labelTexts = new Text[ObservationGraphDisplay.OBS_COUNT];
+            var valueTexts = new Text[ObservationGraphDisplay.OBS_COUNT];
+
+            for (int i = 0; i < ObservationGraphDisplay.OBS_COUNT; i++)
+            {
+                int col = i % cols;
+                int row = i / cols;
+
+                float pad = 4f;
+                float cellW = 1f / cols;
+                float cellH = 1f / rows;
+
+                float xMin = col * cellW;
+                float yMax = 1f - row * cellH;
+                float xMax = xMin + cellW;
+                float yMin = yMax - cellH;
+
+                // 패딩 적용 (비율)
+                float padX = pad / 1920f * cols;
+                float padY = pad / 1080f * rows;
+
+                Color lc = ObservationGraphDisplay.GetColor(i);
+                string hex = ColorUtility.ToHtmlStringRGB(lc);
+
+                // 라벨 (셀 상단, 크게)
+                var lbl = CreateLabel(graphArea.transform, $"Label_{i}",
+                    $"<color=#{hex}>{ObservationGraphDisplay.GetLabel(i)}</color>",
+                    new Vector2(xMin + padX, yMax - padY - 0.04f),
+                    new Vector2(xMax - padX, yMax - padY),
+                    new Vector2(6, 0), Vector2.zero,
+                    16, FontStyle.Bold, Color.white);
+                lbl.GetComponent<Text>().supportRichText = true;
+                labelTexts[i] = lbl.GetComponent<Text>();
+
+                // 현재 값 (셀 하단, 크게)
+                var val = CreateLabel(graphArea.transform, $"Value_{i}", "0.000",
+                    new Vector2(xMin + padX, yMin + padY),
+                    new Vector2(xMin + padX + cellW * 0.5f, yMin + padY + 0.035f),
+                    new Vector2(6, 0), Vector2.zero,
+                    15, FontStyle.Bold, new Color(0.85f, 0.85f, 0.85f));
+                valueTexts[i] = val.GetComponent<Text>();
+
+                // 범위 표시 (셀 우하단)
+                var rangeLabel = CreateLabel(graphArea.transform, $"Range_{i}", "[-1, 1]",
+                    new Vector2(xMin + padX + cellW * 0.5f, yMin + padY),
+                    new Vector2(xMax - padX, yMin + padY + 0.035f),
+                    Vector2.zero, new Vector2(-6, 0),
+                    12, FontStyle.Normal, new Color(0.45f, 0.45f, 0.5f));
+                rangeLabel.GetComponent<Text>().alignment = TextAnchor.MiddleRight;
+            }
+
+            graph.labelTexts = labelTexts;
+            graph.valueTexts = valueTexts;
+
+            EditorUtility.SetDirty(graph);
         }
 
         // ================================================================
