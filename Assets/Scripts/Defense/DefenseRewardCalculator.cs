@@ -38,7 +38,10 @@ namespace BoatAttack
         [Tooltip("충돌 페널티 (아군끼리/모선/거리초과 등)")]
         public float collisionPenalty = -0.5f;
 
-        // 이전 스텝의 Web-적 거리 (접근 보상 계산용)
+        // 이전 스텝의 Web-적 거리 (접근 보상 계산용, 페어별)
+        private System.Collections.Generic.Dictionary<GameObject, float> _prevWebToEnemyDists
+            = new System.Collections.Generic.Dictionary<GameObject, float>();
+        // 레거시 호환 (단일 페어)
         private float _prevWebToEnemyDist = float.MaxValue;
 
         /// <summary>
@@ -67,19 +70,26 @@ namespace BoatAttack
                 reward += formationReward * (1f - error / distanceTolerance);
             }
 
-            // 2. 적 접근: Web과 가장 가까운 적 사이 거리가 줄었으면 보상
+            // 2. 적 접근: Web과 가장 가까운 적 사이 거리가 줄었으면 보상 (페어별 추적)
             if (webObject != null && enemyShips != null)
             {
                 float closestDist = GetClosestEnemyDistance(webObject.transform.position, enemyShips);
-                if (closestDist < float.MaxValue && _prevWebToEnemyDist < float.MaxValue)
+
+                // 페어별 이전 거리 조회
+                float prevDist = float.MaxValue;
+                if (_prevWebToEnemyDists.ContainsKey(webObject))
+                    prevDist = _prevWebToEnemyDists[webObject];
+
+                if (closestDist < float.MaxValue && prevDist < float.MaxValue)
                 {
-                    float delta = _prevWebToEnemyDist - closestDist;
+                    float delta = prevDist - closestDist;
                     if (delta > 0f)
                     {
                         reward += approachRewardPerMeter * delta;
                     }
                 }
-                _prevWebToEnemyDist = closestDist;
+                _prevWebToEnemyDists[webObject] = closestDist;
+                _prevWebToEnemyDist = closestDist; // 레거시 호환
             }
 
             // 3. 시간 페널티
@@ -101,6 +111,33 @@ namespace BoatAttack
                 return headingAlignmentReward * alignment;
             }
             return 0f;
+        }
+
+        /// <summary>
+        /// 개별 헤딩 보상 (배정 타겟 우선, 없으면 가장 가까운 적)
+        /// </summary>
+        public float CalculateIndividualHeadingReward(AgentState agent, GameObject[] enemyShips, GameObject assignedTarget)
+        {
+            if (assignedTarget != null && assignedTarget.activeInHierarchy)
+            {
+                float alignment = GetHeadingAlignmentToTarget(agent, assignedTarget.transform.position);
+                return (alignment > 0f) ? headingAlignmentReward * alignment : 0f;
+            }
+            return CalculateIndividualHeadingReward(agent, enemyShips);
+        }
+
+        /// <summary>
+        /// 특정 위치에 대한 헤딩 정렬도
+        /// </summary>
+        private float GetHeadingAlignmentToTarget(AgentState agent, Vector3 targetPos)
+        {
+            float rad = agent.heading * Mathf.Deg2Rad;
+            Vector3 forward = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
+            Vector3 toTarget = targetPos - agent.position;
+            toTarget.y = 0f;
+            if (toTarget.sqrMagnitude < 0.01f) return 0f;
+            toTarget.Normalize();
+            return Vector3.Dot(forward, toTarget);
         }
 
         /// <summary>
@@ -180,6 +217,7 @@ namespace BoatAttack
         public void Reset()
         {
             _prevWebToEnemyDist = float.MaxValue;
+            _prevWebToEnemyDists.Clear();
         }
     }
 }

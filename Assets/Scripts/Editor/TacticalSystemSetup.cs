@@ -828,7 +828,7 @@ namespace BoatAttack
 
             // 라벨 + 값 텍스트 생성 (그래프 위에 오버레이)
             int cols = 4;
-            int rows = 2;
+            int rows = 3;
             var labelTexts = new Text[ObservationGraphDisplay.OBS_COUNT];
             var valueTexts = new Text[ObservationGraphDisplay.OBS_COUNT];
 

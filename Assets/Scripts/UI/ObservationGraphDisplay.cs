@@ -20,7 +20,7 @@ namespace BoatAttack
 
         [Header("=== Layout ===")]
         public int columns = 4;
-        public int rows = 2;
+        public int rows = 3;
         public float cellPadding = 4f;
         public float graphTopMargin = 32f;
         public float graphBottomMargin = 28f;
@@ -42,24 +42,27 @@ namespace BoatAttack
 
         private static readonly string[] Labels =
         {
-            "Partner R", "Partner F", "Partner Hdg",
-            "Enemy R", "Enemy F", "Enemy Hdg",
-            "Mother R", "Mother F"
+            "Partner R", "Partner F", "Partner Dist", "Partner Hdg",
+            "Target R", "Target F", "Target Dist", "Target Hdg",
+            "Mother R", "Mother F", "Mother Dist"
         };
 
         private static readonly Color[] GraphColors =
         {
-            new Color(1f, 0.8f, 0.2f),
-            new Color(1f, 0.6f, 0.1f),
-            new Color(0.9f, 0.4f, 0.1f),
-            new Color(1f, 0.3f, 0.3f),
-            new Color(0.9f, 0.2f, 0.5f),
-            new Color(0.7f, 0.2f, 0.7f),
-            new Color(0.5f, 0.5f, 1f),
-            new Color(0.4f, 0.8f, 1f),
+            new Color(1f, 0.8f, 0.2f),      // Partner R
+            new Color(1f, 0.6f, 0.1f),      // Partner F
+            new Color(0.85f, 0.5f, 0.0f),   // Partner Dist
+            new Color(0.9f, 0.4f, 0.1f),    // Partner Hdg
+            new Color(1f, 0.3f, 0.3f),      // Enemy R
+            new Color(0.9f, 0.2f, 0.5f),    // Enemy F
+            new Color(0.8f, 0.15f, 0.35f),  // Enemy Dist
+            new Color(0.7f, 0.2f, 0.7f),    // Enemy Hdg
+            new Color(0.5f, 0.5f, 1f),      // Mother R
+            new Color(0.4f, 0.8f, 1f),      // Mother F
+            new Color(0.3f, 0.65f, 0.85f),  // Mother Dist
         };
 
-        public const int OBS_COUNT = 8;
+        public const int OBS_COUNT = 11;
 
         protected override void Awake()
         {
