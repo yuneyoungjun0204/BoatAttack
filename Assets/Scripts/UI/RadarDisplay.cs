@@ -50,6 +50,11 @@ namespace BoatAttack
         [Header("=== Range Rings ===")]
         public int ringCount = 4;
 
+        [Header("=== Debug ===")]
+        [Tooltip("디버그 모드: 적군→모선 방향선 + 콘솔 로그")]
+        public bool showDebugLines = false;
+        public Color debugLineColor = new Color(1f, 1f, 0f, 0.5f);
+
         [Header("=== Island ===")]
         [Tooltip("지형 샘플 해상도 (낮을수록 가벼움)")]
         public int terrainSamples = 6;
@@ -84,6 +89,7 @@ namespace BoatAttack
         bool _islandsCached;
         bool _hasWebLine;
         Vector2 _webP1, _webP2;
+        int _debugFrameCount;
 
         // 레이더 기본 요소 버텍스 예산 (원, 격자, 링, 스위프, 마커 등)
         const int RADAR_BASE_VERTS = 2000;
@@ -106,6 +112,12 @@ namespace BoatAttack
                 SetVerticesDirty();
                 return;
             }
+
+            // 중심 좌표를 CollectShipData 전에 업데이트 (웹 라인 좌표 정확성)
+            if (envController.motherShip != null)
+                _radarWorldCenter = envController.motherShip.transform.position;
+
+            if (autoFitRange) CalculateAutoRange();
 
             if (!_islandsCached) CacheIslands();
             CollectShipData();
@@ -146,10 +158,7 @@ namespace BoatAttack
 
             if (envController == null) return;
 
-            if (envController.motherShip != null)
-                _radarWorldCenter = envController.motherShip.transform.position;
-
-            if (autoFitRange) CalculateAutoRange();
+            // _radarWorldCenter, autoFitRange는 LateUpdate()에서 이미 갱신됨
 
             // 4. 섬 지형 (버텍스 예산 체크 포함)
             DrawIslands(vh, cx, cy);
@@ -164,6 +173,14 @@ namespace BoatAttack
             }
 
             // 6. 선박 마커
+            bool doDebugLog = showDebugLines && (_debugFrameCount++ % 120 == 0);
+            if (doDebugLog)
+            {
+                Debug.Log($"[Radar DEBUG] center=({_radarWorldCenter.x:F0},{_radarWorldCenter.z:F0}), " +
+                          $"pixelR={_pixelRadius:F0}, range={radarRange:F0}, scale={(_pixelRadius / radarRange):F4}");
+            }
+
+            int enemyIdx = 0;
             foreach (var ship in _shipData)
             {
                 Vector2 rp = WorldToLocal(ship.worldPos, cx, cy);
@@ -174,6 +191,24 @@ namespace BoatAttack
                     DrawDiamond(vh, rp.x, rp.y, ship.size, ship.markerColor);
                 else
                     DrawTriangleMarker(vh, rp.x, rp.y, ship.heading, ship.size, ship.markerColor);
+
+                // 디버그: 적군→모선 중심 방향선
+                if (showDebugLines && ship.markerColor == enemyColor && !ship.isMothership)
+                {
+                    DrawLine(vh, rp.x, rp.y, cx, cy, 1f, debugLineColor);
+
+                    if (doDebugLog)
+                    {
+                        float worldDist = Vector3.Distance(ship.worldPos, _radarWorldCenter);
+                        float screenDist = Vector2.Distance(rp, new Vector2(cx, cy));
+                        Debug.Log($"[Radar DEBUG] Enemy#{enemyIdx}: " +
+                                  $"world=({ship.worldPos.x:F0},{ship.worldPos.z:F0}), " +
+                                  $"screen=({rp.x:F1},{rp.y:F1}), " +
+                                  $"worldDist={worldDist:F0}m, screenDist={screenDist:F1}px, " +
+                                  $"heading={ship.heading:F0}°");
+                    }
+                    enemyIdx++;
+                }
             }
         }
 
@@ -188,6 +223,7 @@ namespace BoatAttack
             float cx = rect.center.x;
             float cy = rect.center.y;
 
+            // 모선
             if (envController.motherShip != null)
             {
                 _shipData.Add(new ShipRenderData
@@ -200,16 +236,38 @@ namespace BoatAttack
                 });
             }
 
-            AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize);
-            AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize);
-
-            if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
+            // 아군: defensePairs 기반 (레거시 fallback 포함)
+            if (envController.defensePairs != null && envController.defensePairs.Count > 0)
             {
-                _webP1 = WorldToLocal(envController.defenseAgent1.transform.position, cx, cy);
-                _webP2 = WorldToLocal(envController.defenseAgent2.transform.position, cx, cy);
-                _hasWebLine = true;
+                foreach (var pair in envController.defensePairs)
+                {
+                    AddShipAgent(pair.agent1, friendlyColor, friendlyMarkerSize);
+                    AddShipAgent(pair.agent2, friendlyColor, friendlyMarkerSize);
+
+                    // 웹 라인 (첫 번째 페어만)
+                    if (!_hasWebLine && pair.agent1 != null && pair.agent2 != null)
+                    {
+                        _webP1 = WorldToLocal(pair.agent1.transform.position, cx, cy);
+                        _webP2 = WorldToLocal(pair.agent2.transform.position, cx, cy);
+                        _hasWebLine = true;
+                    }
+                }
+            }
+            else
+            {
+                // 레거시 fallback
+                AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize);
+                AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize);
+
+                if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
+                {
+                    _webP1 = WorldToLocal(envController.defenseAgent1.transform.position, cx, cy);
+                    _webP2 = WorldToLocal(envController.defenseAgent2.transform.position, cx, cy);
+                    _hasWebLine = true;
+                }
             }
 
+            // 적군: envController.enemyShips 배열만 사용 (멀티환경 안전)
             if (envController.enemyShips != null)
             {
                 foreach (var enemy in envController.enemyShips)
@@ -509,14 +567,29 @@ namespace BoatAttack
         void CalculateAutoRange()
         {
             float maxDist = 100f;
-            if (envController.defenseAgent1 != null)
-                maxDist = Mathf.Max(maxDist, HDist(envController.defenseAgent1.transform.position));
-            if (envController.defenseAgent2 != null)
-                maxDist = Mathf.Max(maxDist, HDist(envController.defenseAgent2.transform.position));
+
+            // 아군: defensePairs 기반
+            if (envController.defensePairs != null)
+            {
+                foreach (var pair in envController.defensePairs)
+                {
+                    if (pair.agent1 != null)
+                        maxDist = Mathf.Max(maxDist, HDist(pair.agent1.transform.position));
+                    if (pair.agent2 != null)
+                        maxDist = Mathf.Max(maxDist, HDist(pair.agent2.transform.position));
+                }
+            }
+
+            // 적군: envController.enemyShips 배열 사용 (멀티환경 안전)
             if (envController.enemyShips != null)
-                foreach (var e in envController.enemyShips)
-                    if (e != null && e.activeInHierarchy)
-                        maxDist = Mathf.Max(maxDist, HDist(e.transform.position));
+            {
+                foreach (var enemy in envController.enemyShips)
+                {
+                    if (enemy != null && enemy.activeInHierarchy)
+                        maxDist = Mathf.Max(maxDist, HDist(enemy.transform.position));
+                }
+            }
+
             radarRange = Mathf.Max(1000f, maxDist * autoFitMargin);
         }
 

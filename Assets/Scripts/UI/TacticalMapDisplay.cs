@@ -53,6 +53,11 @@ namespace BoatAttack
         public Color webLineColor = new Color(0.3f, 1f, 0.5f, 0.5f);
         public Color fogColor = new Color(0.0f, 0.0f, 0.02f, 0.4f);
 
+        [Header("=== Debug ===")]
+        [Tooltip("디버그 모드: 적군→모선 방향선 + 콘솔 로그")]
+        public bool showDebugLines = false;
+        public Color debugLineColor = new Color(1f, 1f, 0f, 0.5f);
+
         [Header("=== Island ===")]
         public Color islandColor = new Color(0.08f, 0.18f, 0.12f, 0.7f);
         public int terrainSamples = 6;
@@ -86,6 +91,7 @@ namespace BoatAttack
 
         bool _hasWebLine;
         Vector2 _webP1, _webP2;
+        int _debugFrameCount;
 
         protected override void Start()
         {
@@ -108,6 +114,10 @@ namespace BoatAttack
                 _effectiveRange = radarRange * mapScaleFromRadar;
             else
                 _effectiveRange = mapRange;
+
+            // 중심 좌표를 CollectShipData 전에 업데이트 (웹 라인 좌표 정확성)
+            if (envController.motherShip != null)
+                _mapWorldCenter = envController.motherShip.transform.position;
 
             if (!_islandsCached) CacheIslands();
             CollectShipData();
@@ -139,8 +149,7 @@ namespace BoatAttack
 
             if (envController == null) return;
 
-            if (envController.motherShip != null)
-                _mapWorldCenter = envController.motherShip.transform.position;
+            // _mapWorldCenter는 LateUpdate()에서 이미 갱신됨
 
             // 4. 섬 지형
             DrawIslands(vh, cx, cy, halfW, halfH);
@@ -159,6 +168,14 @@ namespace BoatAttack
             }
 
             // 7. 선박 마커
+            bool doDebugLog = showDebugLines && (_debugFrameCount++ % 120 == 0);
+            if (doDebugLog)
+            {
+                Debug.Log($"[TacticalMap DEBUG] center=({_mapWorldCenter.x:F0},{_mapWorldCenter.z:F0}), " +
+                          $"halfPx={_halfPixel:F0}, range={_effectiveRange:F0}, scale={(_effectiveRange > 0 ? _halfPixel / _effectiveRange : 0):F4}");
+            }
+
+            int enemyIdx = 0;
             foreach (var ship in _shipData)
             {
                 Vector2 rp = WorldToLocal(ship.worldPos, cx, cy);
@@ -177,6 +194,24 @@ namespace BoatAttack
                     Vector2 clamped = ClampToRect(rp, cx, cy, halfW - 6f, halfH - 6f);
                     DrawEdgeMarker(vh, clamped.x, clamped.y, ship.markerColor);
                 }
+
+                // 디버그: 적군→모선 중심 방향선
+                if (showDebugLines && ship.markerColor == enemyColor && !ship.isMothership)
+                {
+                    DrawLine(vh, rp.x, rp.y, cx, cy, 1f, debugLineColor);
+
+                    if (doDebugLog)
+                    {
+                        float worldDist = Vector3.Distance(ship.worldPos, _mapWorldCenter);
+                        float screenDist = Vector2.Distance(rp, new Vector2(cx, cy));
+                        Debug.Log($"[TacticalMap DEBUG] Enemy#{enemyIdx}: " +
+                                  $"world=({ship.worldPos.x:F0},{ship.worldPos.z:F0}), " +
+                                  $"screen=({rp.x:F1},{rp.y:F1}), " +
+                                  $"worldDist={worldDist:F0}m, screenDist={screenDist:F1}px, " +
+                                  $"heading={ship.heading:F0}°");
+                    }
+                    enemyIdx++;
+                }
             }
         }
 
@@ -191,6 +226,7 @@ namespace BoatAttack
             float cx = rect.center.x;
             float cy = rect.center.y;
 
+            // 모선
             if (envController.motherShip != null)
             {
                 _shipData.Add(new ShipRenderData
@@ -203,16 +239,36 @@ namespace BoatAttack
                 });
             }
 
-            AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize);
-            AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize);
-
-            if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
+            // 아군: defensePairs 기반 (레거시 fallback 포함)
+            if (envController.defensePairs != null && envController.defensePairs.Count > 0)
             {
-                _webP1 = WorldToLocal(envController.defenseAgent1.transform.position, cx, cy);
-                _webP2 = WorldToLocal(envController.defenseAgent2.transform.position, cx, cy);
-                _hasWebLine = true;
+                foreach (var pair in envController.defensePairs)
+                {
+                    AddShipAgent(pair.agent1, friendlyColor, friendlyMarkerSize);
+                    AddShipAgent(pair.agent2, friendlyColor, friendlyMarkerSize);
+
+                    if (!_hasWebLine && pair.agent1 != null && pair.agent2 != null)
+                    {
+                        _webP1 = WorldToLocal(pair.agent1.transform.position, cx, cy);
+                        _webP2 = WorldToLocal(pair.agent2.transform.position, cx, cy);
+                        _hasWebLine = true;
+                    }
+                }
+            }
+            else
+            {
+                AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize);
+                AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize);
+
+                if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
+                {
+                    _webP1 = WorldToLocal(envController.defenseAgent1.transform.position, cx, cy);
+                    _webP2 = WorldToLocal(envController.defenseAgent2.transform.position, cx, cy);
+                    _hasWebLine = true;
+                }
             }
 
+            // 적군: envController.enemyShips 배열만 사용 (멀티환경 안전)
             if (envController.enemyShips != null)
             {
                 foreach (var enemy in envController.enemyShips)

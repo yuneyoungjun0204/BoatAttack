@@ -422,8 +422,9 @@ namespace BoatAttack
                 rewardCalculator = GetComponent<DefenseRewardCalculator>();
             }
 
-            // Stage별 적군 활성화/비활성화
-            ApplyStageSettings();
+            // 주의: ApplyStageSettings()는 여기서 호출하지 않음!
+            // Start() → FindAndSaveAttackBoats() 전에 호출하면 적군이 비활성화되어 태그 검색 실패
+            // ResetScene() (아래 line 556)에서 호출하므로 중복 불필요
 
             // 모선 찾기 (환경 내에서만 검색)
             if (motherShip == null)
@@ -1266,7 +1267,23 @@ namespace BoatAttack
                 }
             }
             
+            // Inspector enemyShips 배열도 소스로 추가 (비활성 오브젝트 포함)
+            // FindGameObjectsWithTagInEnvironment은 비활성 오브젝트를 못 찾으므로
+            // Inspector에 직접 할당된 적군도 수집해야 함
+            var allBoatSources = new System.Collections.Generic.HashSet<GameObject>();
             foreach (var boat in foundBoats)
+            {
+                if (boat != null) allBoatSources.Add(boat);
+            }
+            if (enemyShips != null)
+            {
+                foreach (var enemy in enemyShips)
+                {
+                    if (enemy != null) allBoatSources.Add(enemy);
+                }
+            }
+
+            foreach (var boat in allBoatSources)
             {
                 if (boat != null && !_attackBoats.Contains(boat))
                 {
@@ -1726,8 +1743,38 @@ namespace BoatAttack
 
             Debug.Log($"[DefenseEnv] ResetAttackBoatsDynamic: placed={placedCount}/{stageTargetCount}, total={_attackBoats.Count}");
 
+            // 적군 간 물리 충돌 방지 (밀집 포메이션에서 서로 밀려남 방지)
+            IgnoreCollisionBetweenEnemies();
+
             // enemyShips 배열 업데이트 (DefenseAgent 관측용)
             UpdateEnemyShipsArray();
+        }
+
+        /// <summary>
+        /// 적군 선박 간 물리 충돌을 무시하도록 설정
+        /// 밀집 포메이션에서 스폰 직후 서로 밀려나는 현상 방지
+        /// </summary>
+        private void IgnoreCollisionBetweenEnemies()
+        {
+            var activeBoats = new List<GameObject>();
+            foreach (var boat in _attackBoats)
+            {
+                if (boat != null && boat.activeSelf)
+                    activeBoats.Add(boat);
+            }
+
+            for (int i = 0; i < activeBoats.Count; i++)
+            {
+                var collidersA = activeBoats[i].GetComponentsInChildren<Collider>();
+                for (int j = i + 1; j < activeBoats.Count; j++)
+                {
+                    var collidersB = activeBoats[j].GetComponentsInChildren<Collider>();
+                    foreach (var ca in collidersA)
+                        foreach (var cb in collidersB)
+                            if (ca != null && cb != null)
+                                Physics.IgnoreCollision(ca, cb, true);
+                }
+            }
         }
 
         /// <summary>
@@ -1735,7 +1782,7 @@ namespace BoatAttack
         /// </summary>
         private void EnsureAttackBoatCount(int targetCount)
         {
-            // 현재 활성 수
+            // 현재 유효한 수 (null이 아닌 것)
             int currentCount = 0;
             foreach (var boat in _attackBoats)
             {
@@ -1744,35 +1791,36 @@ namespace BoatAttack
 
             if (currentCount >= targetCount) return;
 
-            // 부족한 만큼 재생성
-            foreach (var kvp in _attackBoatPrefabs)
+            // 프리팹 리스트를 라운드로빈으로 사용
+            var prefabList = new List<KeyValuePair<string, GameObject>>(_attackBoatPrefabs);
+            if (prefabList.Count == 0)
             {
-                if (currentCount >= targetCount) break;
+                Debug.LogWarning("[DefenseEnv] EnsureAttackBoatCount: _attackBoatPrefabs가 비어있어 적군을 생성할 수 없습니다!");
+                return;
+            }
 
+            int prefabIdx = 0;
+            while (currentCount < targetCount)
+            {
+                var kvp = prefabList[prefabIdx % prefabList.Count];
                 string boatName = kvp.Key;
                 GameObject prefab = kvp.Value;
+                prefabIdx++;
+
                 if (prefab == null) continue;
 
-                // 이미 리스트에 있는지 확인
-                bool exists = false;
-                foreach (var boat in _attackBoats)
-                {
-                    if (boat != null && boat.name.Replace("(Clone)", "") == boatName)
-                    {
-                        exists = true;
-                        break;
-                    }
-                }
+                // 고유 이름 부여 (중복 방지)
+                string uniqueName = (currentCount == 0) ? boatName : $"{boatName}_{currentCount}";
 
-                if (!exists)
-                {
-                    GameObject recreated = Instantiate(prefab, GetEnvironmentRoot());
-                    recreated.name = boatName;
-                    recreated.tag = "attack_boat";
-                    recreated.SetActive(true);
-                    _attackBoats.Add(recreated);
-                    currentCount++;
-                }
+                GameObject recreated = Instantiate(prefab, GetEnvironmentRoot());
+                recreated.name = uniqueName;
+                recreated.tag = "attack_boat";
+                // 위치 설정 전에는 비활성 상태로 유지 (ResetAttackBoatsDynamic에서 활성화)
+                recreated.SetActive(false);
+                _attackBoats.Add(recreated);
+                currentCount++;
+
+                Debug.Log($"[DefenseEnv] EnsureAttackBoatCount: 적군 생성 '{uniqueName}' ({currentCount}/{targetCount})");
             }
         }
 
@@ -2260,6 +2308,14 @@ namespace BoatAttack
             foreach (var boat in _attackBoats)
             {
                 if (boat == null || !boat.activeSelf) continue;
+
+                // AttackAgent가 rush 모드로 실제 이동 처리 중일 때만 스킵 (이중 구동 방지)
+                // AttackAgent.FixedUpdate 실행 조건과 정확히 일치시켜야 함
+                var attackAgent = boat.GetComponent<AttackAgent>();
+                if (attackAgent != null && attackAgent.enabled &&
+                    !attackAgent.followWaypoints && attackAgent.enableRush &&
+                    attackAgent.targetMotherShip != null)
+                    continue;
 
                 var boatComp = boat.GetComponent<Boat>();
                 if (boatComp == null || boatComp.engine == null) continue;
