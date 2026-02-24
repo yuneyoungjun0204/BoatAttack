@@ -1035,5 +1035,237 @@ namespace BoatAttack
 
             return (slider, valObj.GetComponent<Text>());
         }
+
+        // ================================================================
+        // Ship Spawner Setup (닷지 스타일 스포너)
+        // ================================================================
+
+        [MenuItem("BoatAttack/Setup Ship Spawners", false, 115)]
+        public static void SetupShipSpawners()
+        {
+            try
+            {
+                SetupShipSpawnersInternal();
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[SetupShipSpawners] 에러: {ex.Message}\n{ex.StackTrace}");
+                EditorUtility.DisplayDialog("Error",
+                    $"스포너 생성 중 에러:\n{ex.Message}", "OK");
+            }
+        }
+
+        static void SetupShipSpawnersInternal()
+        {
+            Debug.Log("[SetupShipSpawners] === 시작 ===");
+
+            Transform parentTf = null;
+            Vector3 centerPos = Vector3.zero;
+            Transform targetTf = null;
+
+            var env = Object.FindObjectOfType<DefenseEnvController>();
+            if (env != null)
+            {
+                Debug.Log("[SetupShipSpawners] DefenseEnvController 발견");
+                parentTf = env.transform;
+                if (env.motherShip != null)
+                {
+                    centerPos = env.motherShip.transform.position;
+                    targetTf = env.motherShip.transform;
+                }
+                else
+                {
+                    centerPos = env.transform.position;
+                    targetTf = env.transform;
+                }
+            }
+            else
+            {
+                Debug.Log("[SetupShipSpawners] DefenseEnvController 없음 → 독립 모드");
+
+                GameObject ms = null;
+                try { ms = GameObject.FindGameObjectWithTag("MotherShip"); }
+                catch { Debug.Log("[SetupShipSpawners] MotherShip 태그 미등록"); }
+
+                if (ms != null)
+                {
+                    centerPos = ms.transform.position;
+                    targetTf = ms.transform;
+                }
+
+                var root = GameObject.Find("SpawnerRoot");
+                if (root == null)
+                {
+                    root = new GameObject("SpawnerRoot");
+                    Undo.RegisterCreatedObjectUndo(root, "Create SpawnerRoot");
+                    root.transform.position = centerPos;
+                    Debug.Log("[SetupShipSpawners] SpawnerRoot 생성");
+                }
+                parentTf = root.transform;
+            }
+
+            // 기존 스포너 제거
+            var existingAll = Object.FindObjectsOfType<ShipSpawner>();
+            foreach (var s in existingAll)
+                Undo.DestroyObjectImmediate(s.gameObject);
+
+            // 프리팹 검색 (씬 내 + 에셋)
+            GameObject enemyPrefab = FindShipPrefab("EnemyShip", typeof(AttackAgent));
+            GameObject defensePrefab = FindShipPrefab("DefenseShip", typeof(DefenseAgent));
+
+            // 크로스 폴백: 한쪽만 발견되면 다른쪽에도 사용
+            if (defensePrefab == null && enemyPrefab != null)
+            {
+                defensePrefab = enemyPrefab;
+                Debug.Log("[SetupShipSpawners] 아군 프리팹 미발견 → 적군 프리팹을 공유합니다.");
+            }
+            else if (enemyPrefab == null && defensePrefab != null)
+            {
+                enemyPrefab = defensePrefab;
+                Debug.Log("[SetupShipSpawners] 적군 프리팹 미발견 → 아군 프리팹을 공유합니다.");
+            }
+
+            // === 적군 스포너 4개 (사방에 배치) ===
+            float enemyDist = 1000f;
+            float[] angles = { 0f, 90f, 180f, 270f };
+            string[] dirNames = { "North", "East", "South", "West" };
+
+            for (int i = 0; i < 4; i++)
+            {
+                float rad = angles[i] * Mathf.Deg2Rad;
+                Vector3 pos = centerPos + new Vector3(
+                    Mathf.Sin(rad) * enemyDist, 0f, Mathf.Cos(rad) * enemyDist);
+
+                var spawnerObj = new GameObject($"AttackSpawner_{dirNames[i]}");
+                Undo.RegisterCreatedObjectUndo(spawnerObj, "Create Attack Spawner");
+                spawnerObj.transform.SetParent(parentTf, true);
+                spawnerObj.transform.position = pos;
+
+                var spawner = spawnerObj.AddComponent<ShipSpawner>();
+                spawner.spawnerType = ShipSpawner.SpawnerType.Attack;
+                spawner.spawnerName = $"Attack_{dirNames[i]}";
+                spawner.shipPrefab = enemyPrefab;
+                spawner.poolSize = 5;
+                spawner.maxActiveShips = 3;
+                spawner.spawnInterval = 15f;
+                spawner.spawnRadius = 50f;
+                spawner.faceTarget = true;
+                spawner.spawnTarget = targetTf;
+                spawner.autoSpawn = true;
+
+                EditorUtility.SetDirty(spawnerObj);
+            }
+
+            // === 아군 스포너 2개 (모선 양측) ===
+            float defenseDist = 100f;
+            Vector3[] defenseOffsets =
+            {
+                new Vector3(-defenseDist, 0f, 0f),
+                new Vector3(defenseDist, 0f, 0f)
+            };
+            string[] defNames = { "Port", "Starboard" };
+
+            for (int i = 0; i < 2; i++)
+            {
+                Vector3 pos = centerPos + defenseOffsets[i];
+
+                var spawnerObj = new GameObject($"DefenseSpawner_{defNames[i]}");
+                Undo.RegisterCreatedObjectUndo(spawnerObj, "Create Defense Spawner");
+                spawnerObj.transform.SetParent(parentTf, true);
+                spawnerObj.transform.position = pos;
+
+                var spawner = spawnerObj.AddComponent<ShipSpawner>();
+                spawner.spawnerType = ShipSpawner.SpawnerType.Defense;
+                spawner.spawnerName = $"Defense_{defNames[i]}";
+                spawner.shipPrefab = defensePrefab;
+                spawner.poolSize = 5;
+                spawner.maxActiveShips = 3;
+                spawner.spawnInterval = 20f;
+                spawner.spawnRadius = 30f;
+                spawner.faceTarget = true;
+                spawner.spawnTarget = targetTf;
+                spawner.spawnAtTarget = true;  // 모선 주변에 스폰
+                spawner.autoSpawn = true;
+                spawner.spawnAsPair = true;    // 2대 + Web 세트 스폰
+                spawner.pairSpread = 20f;      // 쌍 내 좌우 간격
+                spawner.spawnerColor = new Color(0.2f, 0.5f, 1f, 0.25f);
+
+                EditorUtility.SetDirty(spawnerObj);
+            }
+
+            string prefabInfo = "";
+            if (enemyPrefab == null) prefabInfo += "\n- 적군 프리팹: 미발견 (Inspector에서 수동 할당)";
+            if (defensePrefab == null) prefabInfo += "\n- 아군 프리팹: 미발견 (Inspector에서 수동 할당)";
+
+            Debug.Log($"[SetupShipSpawners] 적군 스포너 4개 + 아군 스포너 2개 생성 완료 (center={centerPos})");
+            EditorUtility.DisplayDialog("Ship Spawners",
+                $"적군 스포너 4개 (N/E/S/W, 중심에서 {enemyDist}m)\n" +
+                $"아군 스포너 2개 (Port/Starboard, 중심에서 {defenseDist}m)\n" +
+                $"중심 좌표: {centerPos}" +
+                (prefabInfo.Length > 0 ? $"\n{prefabInfo}" : "") +
+                "\n\nHierarchy에서 위치/프리팹을 조정하세요.", "OK");
+
+            // 첫 번째 스포너 선택 (하이라이트)
+            var firstSpawner = Object.FindObjectOfType<ShipSpawner>();
+            if (firstSpawner != null)
+                Selection.activeGameObject = firstSpawner.transform.parent.gameObject;
+        }
+
+        /// <summary>태그 또는 컴포넌트 타입으로 선박 프리팹 검색 (범용 보트 폴백 포함)</summary>
+        static GameObject FindShipPrefab(string tag, System.Type componentType)
+        {
+            // 1. 태그로 씬 내 검색
+            try
+            {
+                var tagged = GameObject.FindGameObjectsWithTag(tag);
+                if (tagged != null && tagged.Length > 0)
+                {
+                    Debug.Log($"[FindShipPrefab] {tag}: 태그로 발견 → {tagged[0].name}");
+                    return tagged[0];
+                }
+            }
+            catch (UnityException) { }
+
+            // 2. 컴포넌트 타입으로 씬 내 검색
+            var found = Object.FindObjectOfType(componentType) as Component;
+            if (found != null)
+            {
+                Debug.Log($"[FindShipPrefab] {tag}: 컴포넌트({componentType.Name})로 발견 → {found.gameObject.name}");
+                return found.gameObject;
+            }
+
+            // 3. 프로젝트 에셋에서 프리팹 검색 (정확한 이름)
+            string[] guids = AssetDatabase.FindAssets($"t:Prefab {tag}");
+            foreach (var guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (prefab != null && prefab.GetComponent(componentType) != null)
+                {
+                    Debug.Log($"[FindShipPrefab] {tag}: 에셋에서 발견 → {path}");
+                    return prefab;
+                }
+            }
+
+            // 4. 범용 보트 프리팹 폴백 검색 (Boat 컴포넌트 또는 Rigidbody가 있는 보트)
+            string[] boatSearchTerms = { "_BoatBase", "Boat", "boat", "Interceptor", "Renegade" };
+            foreach (var term in boatSearchTerms)
+            {
+                string[] boatGuids = AssetDatabase.FindAssets($"t:Prefab {term}");
+                foreach (var guid in boatGuids)
+                {
+                    string path = AssetDatabase.GUIDToAssetPath(guid);
+                    var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                    if (prefab != null && prefab.GetComponent<Rigidbody>() != null)
+                    {
+                        Debug.Log($"[FindShipPrefab] {tag}: 범용 보트 폴백 → {path}");
+                        return prefab;
+                    }
+                }
+            }
+
+            Debug.LogWarning($"[SetupShipSpawners] {tag} 프리팹을 찾을 수 없습니다. Inspector에서 수동 할당하세요.");
+            return null;
+        }
     }
 }
