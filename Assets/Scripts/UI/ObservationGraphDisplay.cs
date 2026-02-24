@@ -5,8 +5,9 @@ using System.Collections.Generic;
 namespace BoatAttack
 {
     /// <summary>
-    /// 관측값 10개 실시간 그래프 (MaskableGraphic 기반, Canvas UI)
+    /// 관측값 실시간 그래프 (MaskableGraphic 기반, Canvas UI)
     /// TacticalPageManager의 한 페이지로 동작
+    /// 마지막 행이 부족할 경우 자동 중앙 정렬
     /// </summary>
     [RequireComponent(typeof(CanvasRenderer))]
     public class ObservationGraphDisplay : MaskableGraphic
@@ -20,7 +21,6 @@ namespace BoatAttack
 
         [Header("=== Layout ===")]
         public int columns = 4;
-        public int rows = 3;
         public float cellPadding = 4f;
         public float graphTopMargin = 32f;
         public float graphBottomMargin = 28f;
@@ -34,11 +34,13 @@ namespace BoatAttack
         // 라벨 텍스트 (SetupScript에서 생성)
         [HideInInspector] public Text[] labelTexts;
         [HideInInspector] public Text[] valueTexts;
+        [HideInInspector] public Text[] rangeTexts;
 
         private float[][] _history;
         private int _writeIndex;
         private int _sampleCount;
         private bool _initialized;
+        private int _cachedColumns = -1;
 
         private static readonly string[] Labels =
         {
@@ -64,10 +66,19 @@ namespace BoatAttack
 
         public const int OBS_COUNT = 11;
 
+        /// <summary>columns와 OBS_COUNT로 행 수 자동 계산</summary>
+        public int ComputedRows => Mathf.CeilToInt((float)OBS_COUNT / Mathf.Max(1, columns));
+
         protected override void Awake()
         {
             base.Awake();
             InitHistory();
+        }
+
+        void Start()
+        {
+            RepositionLabels();
+            _cachedColumns = columns;
         }
 
         void InitHistory()
@@ -104,7 +115,78 @@ namespace BoatAttack
                 }
             }
 
+            // columns 변경 시 라벨 재배치
+            if (_cachedColumns != columns)
+            {
+                RepositionLabels();
+                _cachedColumns = columns;
+            }
+
             SetVerticesDirty();
+        }
+
+        /// <summary>
+        /// 셀의 정규화 좌표(0~1) 계산. 마지막 행은 중앙 정렬.
+        /// </summary>
+        private void GetCellAnchors(int obsIndex, out float xMin, out float yMin,
+            out float xMax, out float yMax)
+        {
+            int cols = Mathf.Max(1, columns);
+            int actualRows = Mathf.CeilToInt((float)OBS_COUNT / cols);
+
+            int row = obsIndex / cols;
+            int col = obsIndex % cols;
+
+            float cellW = 1f / cols;
+            float cellH = 1f / actualRows;
+
+            // 마지막 행 중앙 정렬 오프셋
+            int itemsInRow = (row < actualRows - 1) ? cols : (OBS_COUNT - row * cols);
+            float offsetX = (itemsInRow < cols) ? (cols - itemsInRow) * cellW * 0.5f : 0f;
+
+            xMin = col * cellW + offsetX;
+            xMax = xMin + cellW;
+            yMax = 1f - row * cellH;
+            yMin = yMax - cellH;
+        }
+
+        /// <summary>라벨/값/범위 텍스트를 현재 columns에 맞게 재배치</summary>
+        private void RepositionLabels()
+        {
+            for (int i = 0; i < OBS_COUNT; i++)
+            {
+                GetCellAnchors(i, out float xMin, out float yMin, out float xMax, out float yMax);
+
+                Rect rect = ((RectTransform)transform).rect;
+                float padX = cellPadding / Mathf.Max(1f, rect.width);
+                float padY = cellPadding / Mathf.Max(1f, rect.height);
+
+                // 라벨 (셀 상단)
+                if (labelTexts != null && i < labelTexts.Length && labelTexts[i] != null)
+                {
+                    var rt = labelTexts[i].rectTransform;
+                    rt.anchorMin = new Vector2(xMin + padX, yMax - padY - 0.04f);
+                    rt.anchorMax = new Vector2(xMax - padX, yMax - padY);
+                }
+
+                float cellW = 1f / Mathf.Max(1, columns);
+
+                // 현재 값 (셀 하단 좌측)
+                if (valueTexts != null && i < valueTexts.Length && valueTexts[i] != null)
+                {
+                    var rt = valueTexts[i].rectTransform;
+                    rt.anchorMin = new Vector2(xMin + padX, yMin + padY);
+                    rt.anchorMax = new Vector2(xMin + padX + cellW * 0.5f, yMin + padY + 0.035f);
+                }
+
+                // 범위 표시 (셀 하단 우측)
+                if (rangeTexts != null && i < rangeTexts.Length && rangeTexts[i] != null)
+                {
+                    var rt = rangeTexts[i].rectTransform;
+                    rt.anchorMin = new Vector2(xMin + padX + cellW * 0.5f, yMin + padY);
+                    rt.anchorMax = new Vector2(xMax - padX, yMin + padY + 0.035f);
+                }
+            }
         }
 
         protected override void OnPopulateMesh(VertexHelper vh)
@@ -114,17 +196,22 @@ namespace BoatAttack
             if (!_initialized || _history == null) return;
 
             Rect r = GetPixelAdjustedRect();
-            float cellW = r.width / columns;
-            float cellH = r.height / rows;
+            int cols = Mathf.Max(1, columns);
+            int actualRows = ComputedRows;
+            float cellW = r.width / cols;
+            float cellH = r.height / actualRows;
 
             for (int i = 0; i < OBS_COUNT; i++)
             {
-                int col = i % columns;
-                int row = i / columns;
+                int row = i / cols;
+                int col = i % cols;
 
-                // 셀 좌상단 기준 (UI 좌표: 좌하단 원점)
-                float cx = r.x + col * cellW + cellPadding;
-                float cy = r.y + (rows - 1 - row) * cellH + cellPadding;
+                // 마지막 행 중앙 정렬
+                int itemsInRow = (row < actualRows - 1) ? cols : (OBS_COUNT - row * cols);
+                float rowOffset = (itemsInRow < cols) ? (cols - itemsInRow) * cellW * 0.5f : 0f;
+
+                float cx = r.x + col * cellW + cellPadding + rowOffset;
+                float cy = r.y + (actualRows - 1 - row) * cellH + cellPadding;
                 float cw = cellW - cellPadding * 2;
                 float ch = cellH - cellPadding * 2;
 

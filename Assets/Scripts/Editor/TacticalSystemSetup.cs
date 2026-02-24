@@ -826,13 +826,15 @@ namespace BoatAttack
             if (agents.Length > 0)
                 graph.targetAgent = agents[0];
 
-            // 라벨 + 값 텍스트 생성 (그래프 위에 오버레이)
-            int cols = 4;
-            int rows = 3;
-            var labelTexts = new Text[ObservationGraphDisplay.OBS_COUNT];
-            var valueTexts = new Text[ObservationGraphDisplay.OBS_COUNT];
+            // 라벨 + 값 텍스트 생성 (그래프 위에 오버레이, 마지막 행 중앙 정렬)
+            int cols = graph.columns;
+            int obsCount = ObservationGraphDisplay.OBS_COUNT;
+            int rows = Mathf.CeilToInt((float)obsCount / Mathf.Max(1, cols));
+            var labelTexts = new Text[obsCount];
+            var valueTexts = new Text[obsCount];
+            var rangeTexts = new Text[obsCount];
 
-            for (int i = 0; i < ObservationGraphDisplay.OBS_COUNT; i++)
+            for (int i = 0; i < obsCount; i++)
             {
                 int col = i % cols;
                 int row = i / cols;
@@ -841,7 +843,11 @@ namespace BoatAttack
                 float cellW = 1f / cols;
                 float cellH = 1f / rows;
 
-                float xMin = col * cellW;
+                // 마지막 행 중앙 정렬
+                int itemsInRow = (row < rows - 1) ? cols : (obsCount - row * cols);
+                float offsetX = (itemsInRow < cols) ? (cols - itemsInRow) * cellW * 0.5f : 0f;
+
+                float xMin = col * cellW + offsetX;
                 float yMax = 1f - row * cellH;
                 float xMax = xMin + cellW;
                 float yMin = yMax - cellH;
@@ -878,10 +884,12 @@ namespace BoatAttack
                     Vector2.zero, new Vector2(-6, 0),
                     12, FontStyle.Normal, new Color(0.45f, 0.45f, 0.5f));
                 rangeLabel.GetComponent<Text>().alignment = TextAnchor.MiddleRight;
+                rangeTexts[i] = rangeLabel.GetComponent<Text>();
             }
 
             graph.labelTexts = labelTexts;
             graph.valueTexts = valueTexts;
+            graph.rangeTexts = rangeTexts;
 
             EditorUtility.SetDirty(graph);
         }

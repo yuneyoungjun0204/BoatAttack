@@ -1,19 +1,22 @@
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 using System.Collections.Generic;
 
 namespace BoatAttack
 {
     /// <summary>
-    /// 스타크래프트 스타일 사각형 전술맵 (MaskableGraphic 기반)
-    /// - 레이더 범위의 N배 넓은 시야
-    /// - 사각형 좌표계 + 격자
+    /// 스타크래프트 스타일 인터랙티브 전술맵 (MaskableGraphic 기반)
+    /// - 마우스 휠: 줌 인/아웃 (커서 위치 기준)
+    /// - 마우스 드래그: 팬 이동
+    /// - 더블클릭: 뷰 리셋 (모선 중심, 기본 줌)
     /// - 레이더 커버리지 원 오버레이
     /// - 범위 밖 선박 → 경계 클램프 마커
     /// - 섬 지형 렌더링
     /// </summary>
     [RequireComponent(typeof(CanvasRenderer))]
-    public class TacticalMapDisplay : MaskableGraphic
+    public class TacticalMapDisplay : MaskableGraphic,
+        IScrollHandler, IDragHandler, IBeginDragHandler, IPointerClickHandler
     {
         [Header("=== References ===")]
         public DefenseEnvController envController;
@@ -34,6 +37,14 @@ namespace BoatAttack
         [Header("=== Grid ===")]
         [Tooltip("격자 간격 (미터)")]
         public float gridSpacing = 500f;
+
+        [Header("=== Interactive Controls ===")]
+        [Tooltip("마우스 휠 줌 감도")]
+        public float zoomSpeed = 0.06f;
+        [Tooltip("최소 줌 (축소 한계)")]
+        public float minZoom = 0.5f;
+        [Tooltip("최대 줌 (확대 한계)")]
+        public float maxZoom = 8f;
 
         [Header("=== Marker Size ===")]
         public float friendlyMarkerSize = 12f;
@@ -59,6 +70,9 @@ namespace BoatAttack
         public int maxIslandTriangles = 15;
         public int maxTotalIslandVerts = 5000;
 
+        [Header("=== Zoom UI ===")]
+        [HideInInspector] public Text zoomText;
+
         // ── Internal ──
         struct IslandMeshData
         {
@@ -81,17 +95,22 @@ namespace BoatAttack
 
         Vector3 _mapWorldCenter;
         float _halfPixel;       // rect 절반 크기 (px)
-        float _effectiveRange;  // 실제 맵 범위 (m)
+        float _effectiveRange;  // 기본 맵 범위 (m)
         bool _islandsCached;
 
         bool _hasWebLine;
         Vector2 _webP1, _webP2;
 
+        // 줌/팬 상태
+        float _zoomLevel = 1f;
+        Vector2 _panOffset;     // 월드 XZ 오프셋 (미터)
+        Vector2 _dragPrevLocal;
+
         protected override void Start()
         {
             base.Start();
             color = Color.white;
-            raycastTarget = false;
+            raycastTarget = true;  // 마우스 이벤트 수신
             CacheIslands();
         }
 
@@ -111,8 +130,91 @@ namespace BoatAttack
 
             if (!_islandsCached) CacheIslands();
             CollectShipData();
+
+            // 줌 텍스트 업데이트
+            if (zoomText != null)
+                zoomText.text = $"x{_zoomLevel:F1}";
+
             SetVerticesDirty();
         }
+
+        #region Interactive Controls
+
+        /// <summary>실제 표시 범위 (줌 적용)</summary>
+        float ViewRange => _effectiveRange / Mathf.Max(_zoomLevel, 0.01f);
+
+        /// <summary>월드→로컬 스케일 (줌 적용)</summary>
+        float ViewScale => _halfPixel / Mathf.Max(ViewRange, 0.01f);
+
+        /// <summary>뷰 중심 월드 좌표 (팬 적용)</summary>
+        Vector3 ViewWorldCenter => new Vector3(
+            _mapWorldCenter.x + _panOffset.x,
+            _mapWorldCenter.y,
+            _mapWorldCenter.z + _panOffset.y);
+
+        public void OnScroll(PointerEventData eventData)
+        {
+            float scroll = eventData.scrollDelta.y;
+            if (Mathf.Abs(scroll) < 0.001f) return;
+
+            // 마우스 위치 → 로컬 좌표
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                rectTransform, eventData.position, eventData.pressEventCamera, out Vector2 localPoint);
+
+            Rect rect = rectTransform.rect;
+            float cx = rect.center.x;
+            float cy = rect.center.y;
+
+            // 줌 전: 마우스 위치의 월드 좌표
+            float oldRange = ViewRange;
+            float oldScale = _halfPixel / Mathf.Max(oldRange, 0.01f);
+            float worldMouseX = (localPoint.x - cx) / oldScale + _mapWorldCenter.x + _panOffset.x;
+            float worldMouseZ = (localPoint.y - cy) / oldScale + _mapWorldCenter.z + _panOffset.y;
+
+            // 줌 변경
+            float oldZoom = _zoomLevel;
+            _zoomLevel *= (1f + scroll * zoomSpeed);
+            _zoomLevel = Mathf.Clamp(_zoomLevel, minZoom, maxZoom);
+
+            // 줌 후: 마우스 아래 월드 좌표가 동일하도록 팬 보정
+            float newRange = ViewRange;
+            float newScale = _halfPixel / Mathf.Max(newRange, 0.01f);
+            float newPanX = worldMouseX - (localPoint.x - cx) / newScale - _mapWorldCenter.x;
+            float newPanY = worldMouseZ - (localPoint.y - cy) / newScale - _mapWorldCenter.z;
+            _panOffset = new Vector2(newPanX, newPanY);
+        }
+
+        public void OnBeginDrag(PointerEventData eventData)
+        {
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                rectTransform, eventData.position, eventData.pressEventCamera, out _dragPrevLocal);
+        }
+
+        public void OnDrag(PointerEventData eventData)
+        {
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                rectTransform, eventData.position, eventData.pressEventCamera, out Vector2 localPoint);
+
+            Vector2 delta = localPoint - _dragPrevLocal;
+            _dragPrevLocal = localPoint;
+
+            // 픽셀 이동량 → 월드 오프셋
+            float pixelToWorld = ViewRange / Mathf.Max(_halfPixel, 0.01f);
+            _panOffset.x -= delta.x * pixelToWorld;
+            _panOffset.y -= delta.y * pixelToWorld;
+        }
+
+        public void OnPointerClick(PointerEventData eventData)
+        {
+            // 더블클릭: 뷰 리셋
+            if (eventData.clickCount >= 2)
+            {
+                _zoomLevel = 1f;
+                _panOffset = Vector2.zero;
+            }
+        }
+
+        #endregion
 
         protected override void OnPopulateMesh(VertexHelper vh)
         {
@@ -165,7 +267,6 @@ namespace BoatAttack
 
                 if (IsInRect(rp, cx, cy, halfW - 4f, halfH - 4f))
                 {
-                    // 범위 내 → 일반 마커
                     if (ship.isMothership)
                         DrawDiamond(vh, rp.x, rp.y, ship.size, ship.markerColor);
                     else
@@ -173,11 +274,14 @@ namespace BoatAttack
                 }
                 else
                 {
-                    // 범위 밖 → 경계 클램프 작은 점
                     Vector2 clamped = ClampToRect(rp, cx, cy, halfW - 6f, halfH - 6f);
                     DrawEdgeMarker(vh, clamped.x, clamped.y, ship.markerColor);
                 }
             }
+
+            // 8. 줌 레벨 표시 (맵 우하단)
+            if (_zoomLevel != 1f)
+                DrawZoomIndicator(vh, cx + halfW - 60f, cy - halfH + 8f);
         }
 
         #region Data Collection
@@ -203,7 +307,6 @@ namespace BoatAttack
                 });
             }
 
-            // 아군 표시: LaunchZoneManager가 있으면 모든 활성 쌍, 없으면 원본 쌍만
             if (envController.launchZoneManager != null && envController.launchZoneManager.IsInitialized)
             {
                 var activeAgents = envController.launchZoneManager.GetActiveAgents();
@@ -478,32 +581,62 @@ namespace BoatAttack
 
         void DrawGrid(VertexHelper vh, float cx, float cy, float halfW, float halfH)
         {
-            if (_effectiveRange <= 0f || gridSpacing <= 0f) return;
+            float range = ViewRange;
+            if (range <= 0f || gridSpacing <= 0f) return;
+            float scale = ViewScale;
 
-            float scale = _halfPixel / _effectiveRange;
-            int lines = Mathf.CeilToInt(_effectiveRange / gridSpacing);
+            // 뷰 중심의 월드 좌표
+            float viewX = _mapWorldCenter.x + _panOffset.x;
+            float viewZ = _mapWorldCenter.z + _panOffset.y;
+
+            // 뷰 가장자리의 월드 좌표 범위
+            float worldLeft = viewX - halfW / scale;
+            float worldRight = viewX + halfW / scale;
+            float worldBottom = viewZ - halfH / scale;
+            float worldTop = viewZ + halfH / scale;
+
+            // 줌에 따라 그리드 간격 자동 조정
+            float adjustedSpacing = gridSpacing;
+            while (adjustedSpacing * scale < 30f) adjustedSpacing *= 2f;  // 너무 촘촘하면 2배
+            while (adjustedSpacing * scale > 250f) adjustedSpacing *= 0.5f; // 너무 넓으면 절반
+
+            int startX = Mathf.FloorToInt(worldLeft / adjustedSpacing);
+            int endX = Mathf.CeilToInt(worldRight / adjustedSpacing);
+            int startZ = Mathf.FloorToInt(worldBottom / adjustedSpacing);
+            int endZ = Mathf.CeilToInt(worldTop / adjustedSpacing);
+
+            // 격자선 수 제한
+            int maxLines = 60;
+            if (endX - startX > maxLines) endX = startX + maxLines;
+            if (endZ - startZ > maxLines) endZ = startZ + maxLines;
 
             // 수직선
-            for (int i = -lines; i <= lines; i++)
+            for (int i = startX; i <= endX; i++)
             {
-                float px = cx + i * gridSpacing * scale;
+                float worldX = i * adjustedSpacing;
+                float px = cx + (worldX - viewX) * scale;
                 if (px < cx - halfW || px > cx + halfW) continue;
                 DrawLine(vh, px, cy - halfH, px, cy + halfH, 1f, gridColor);
             }
 
             // 수평선
-            for (int i = -lines; i <= lines; i++)
+            for (int i = startZ; i <= endZ; i++)
             {
-                float py = cy + i * gridSpacing * scale;
+                float worldZ = i * adjustedSpacing;
+                float py = cy + (worldZ - viewZ) * scale;
                 if (py < cy - halfH || py > cy + halfH) continue;
                 DrawLine(vh, cx - halfW, py, cx + halfW, py, 1f, gridColor);
             }
 
-            // 중심 십자선 (강조)
+            // 모선 위치 십자선 (강조)
             Color centerGrid = gridColor * 2f;
             centerGrid.a = Mathf.Min(centerGrid.a, 0.6f);
-            DrawLine(vh, cx - halfW, cy, cx + halfW, cy, 1.5f, centerGrid);
-            DrawLine(vh, cx, cy - halfH, cx, cy + halfH, 1.5f, centerGrid);
+            float motherPx = cx + (_mapWorldCenter.x - viewX) * scale;
+            float motherPy = cy + (_mapWorldCenter.z - viewZ) * scale;
+            if (motherPx >= cx - halfW && motherPx <= cx + halfW)
+                DrawLine(vh, motherPx, cy - halfH, motherPx, cy + halfH, 1.5f, centerGrid);
+            if (motherPy >= cy - halfH && motherPy <= cy + halfH)
+                DrawLine(vh, cx - halfW, motherPy, cx + halfW, motherPy, 1.5f, centerGrid);
         }
 
         #endregion
@@ -512,14 +645,46 @@ namespace BoatAttack
 
         void DrawRadarCoverage(VertexHelper vh, float cx, float cy, float halfW, float halfH)
         {
-            float scale = _halfPixel / _effectiveRange;
+            float scale = ViewScale;
             float radarPx = radarRange * scale;
 
-            // 반투명 채우기 원 (레이더 커버 영역)
-            DrawFilledCircle(vh, cx, cy, radarPx, radarCircleColor, 32);
+            // 레이더는 모선 중심 (뷰 중심이 아님)
+            float viewX = _mapWorldCenter.x + _panOffset.x;
+            float viewZ = _mapWorldCenter.z + _panOffset.y;
+            float radarCx = cx + (_mapWorldCenter.x - viewX) * scale;
+            float radarCy = cy + (_mapWorldCenter.z - viewZ) * scale;
 
-            // 테두리 링
-            DrawCircleOutline(vh, cx, cy, radarPx, 1.5f, radarRingColor, 32);
+            DrawFilledCircle(vh, radarCx, radarCy, radarPx, radarCircleColor, 32);
+            DrawCircleOutline(vh, radarCx, radarCy, radarPx, 1.5f, radarRingColor, 32);
+        }
+
+        #endregion
+
+        #region Zoom Indicator
+
+        void DrawZoomIndicator(VertexHelper vh, float x, float y)
+        {
+            // 맵 우하단에 줌 바 표시
+            float barW = 50f;
+            float barH = 4f;
+
+            // 배경
+            DrawFilledRect(vh, x, y, x + barW, y + barH,
+                new Color(0.05f, 0.05f, 0.1f, 0.7f));
+
+            // 줌 레벨 바 (로그 스케일)
+            float t = Mathf.InverseLerp(
+                Mathf.Log(minZoom), Mathf.Log(maxZoom), Mathf.Log(_zoomLevel));
+            float fillW = barW * t;
+            DrawFilledRect(vh, x, y, x + fillW, y + barH,
+                new Color(0.3f, 0.8f, 1f, 0.6f));
+
+            // 1x 기준선
+            float oneT = Mathf.InverseLerp(
+                Mathf.Log(minZoom), Mathf.Log(maxZoom), 0f); // log(1) = 0
+            float onePx = x + barW * oneT;
+            DrawLine(vh, onePx, y - 1f, onePx, y + barH + 1f, 1.5f,
+                new Color(1f, 1f, 1f, 0.5f));
         }
 
         #endregion
@@ -528,18 +693,22 @@ namespace BoatAttack
 
         Vector2 WorldToLocal(Vector3 wp, float cx, float cy)
         {
-            float scale = _halfPixel / _effectiveRange;
+            float scale = ViewScale;
+            float viewX = _mapWorldCenter.x + _panOffset.x;
+            float viewZ = _mapWorldCenter.z + _panOffset.y;
             return new Vector2(
-                cx + (wp.x - _mapWorldCenter.x) * scale,
-                cy + (wp.z - _mapWorldCenter.z) * scale);
+                cx + (wp.x - viewX) * scale,
+                cy + (wp.z - viewZ) * scale);
         }
 
         Vector2 XZToLocal(Vector2 xz, float cx, float cy)
         {
-            float scale = _halfPixel / _effectiveRange;
+            float scale = ViewScale;
+            float viewX = _mapWorldCenter.x + _panOffset.x;
+            float viewZ = _mapWorldCenter.z + _panOffset.y;
             return new Vector2(
-                cx + (xz.x - _mapWorldCenter.x) * scale,
-                cy + (xz.y - _mapWorldCenter.z) * scale);
+                cx + (xz.x - viewX) * scale,
+                cy + (xz.y - viewZ) * scale);
         }
 
         bool IsInRect(Vector2 p, float cx, float cy, float halfW, float halfH)
@@ -589,7 +758,6 @@ namespace BoatAttack
 
         void DrawEdgeMarker(VertexHelper vh, float px, float py, Color col)
         {
-            // 경계에 작은 사각 점
             float s = edgeMarkerSize * 0.5f;
             Color dimCol = col * 0.6f;
             dimCol.a = 0.8f;
@@ -628,10 +796,10 @@ namespace BoatAttack
 
         void DrawRectOutline(VertexHelper vh, float l, float b, float r, float t, float w, Color col)
         {
-            DrawLine(vh, l, b, r, b, w, col); // 하단
-            DrawLine(vh, r, b, r, t, w, col); // 우측
-            DrawLine(vh, r, t, l, t, w, col); // 상단
-            DrawLine(vh, l, t, l, b, w, col); // 좌측
+            DrawLine(vh, l, b, r, b, w, col);
+            DrawLine(vh, r, b, r, t, w, col);
+            DrawLine(vh, r, t, l, t, w, col);
+            DrawLine(vh, l, t, l, b, w, col);
         }
 
         void DrawLine(VertexHelper vh, float x1, float y1, float x2, float y2, float w, Color col)
