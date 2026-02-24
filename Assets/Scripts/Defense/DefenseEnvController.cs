@@ -37,11 +37,11 @@ namespace BoatAttack
         public int stage1EnemyCount = 0;
 
         [Tooltip("Stage2에서 활성화할 적군 수")]
-        [Range(1, 5)]
+        [Range(1, 10)]
         public int stage2EnemyCount = 1;
 
         [Tooltip("Stage3에서 활성화할 적군 수")]
-        [Range(1, 5)]
+        [Range(1, 10)]
         public int stage3EnemyCount = 1;
 
         [Header("Agents")]
@@ -185,7 +185,16 @@ namespace BoatAttack
 
         [Header("Enemy Pool")]
         [Tooltip("풀 최대 크기 (stage*EnemyCount 이상으로 설정)")]
-        public int poolSize = 5;
+        public int poolSize = 10;
+
+        [Tooltip("적군 포메이션 스폰 관리자 (없으면 기존 단방향 스폰 사용)")]
+        public EnemyFormationSpawner formationSpawner;
+
+        [Tooltip("현재 에피소드의 포메이션 타입 (디버그 표시)")]
+        [SerializeField] private FormationType _currentFormation;
+
+        [Tooltip("아군 진수구역 관리자 (없으면 기존 1쌍 레거시 모드)")]
+        public LaunchZoneManager launchZoneManager;
 
         // 풀 배열 (Start()에서 초기화, 인덱스 기반)
         private GameObject[] _enemyPool;
@@ -339,14 +348,13 @@ namespace BoatAttack
                 m_AgentGroup = new SimpleMultiAgentGroup();
             }
             
-            // 에이전트 등록 (SimpleMultiAgentGroup이 있는 경우만)
-            if (m_AgentGroup != null)
+            // 에이전트 등록 (LaunchZoneManager가 없을 때만 — 있으면 DeployPairs()에서 동적 등록)
+            if (m_AgentGroup != null && launchZoneManager == null)
             {
                 if (defenseAgent1 != null)
                     m_AgentGroup.RegisterAgent(defenseAgent1);
                 if (defenseAgent2 != null)
                     m_AgentGroup.RegisterAgent(defenseAgent2);
-                
             }
             
             // RewardCalculator 초기화
@@ -453,6 +461,26 @@ namespace BoatAttack
             
             // 적군 오브젝트 풀 초기화 (프리팹 기반 고정 크기 풀)
             InitializeEnemyPool();
+
+            // 아군 진수구역 풀 초기화 (LaunchZoneManager가 있으면)
+            if (launchZoneManager != null)
+            {
+                if (launchZoneManager.motherShip == null)
+                    launchZoneManager.motherShip = motherShip;
+                if (launchZoneManager.envController == null)
+                    launchZoneManager.envController = this;
+                if (launchZoneManager.templatePair == null || launchZoneManager.templatePair.agent1 == null)
+                {
+                    // 기존 defenseAgent1/2/webObject를 템플릿으로 자동 설정
+                    launchZoneManager.templatePair = new DefensePair
+                    {
+                        agent1 = defenseAgent1,
+                        agent2 = defenseAgent2,
+                        webObject = webObject
+                    };
+                }
+                launchZoneManager.InitializeAllyPool();
+            }
 
             // 씬의 모든 attack_track 경로 수집 및 원본 웨이포인트 저장
             FindAllAttackTrackPaths();
@@ -1305,54 +1333,89 @@ namespace BoatAttack
                 // ========================================
                 Vector3 motherPos = motherShip.transform.position;
 
-                // 1. 적군 접근 각도 랜덤 결정 (0~360)
-                _currentEnemyApproachAngle = Random.Range(0f, 360f);
+                // 1. 적군 접근 각도 (formationSpawner가 있으면 내부에서 결정됨)
+                if (formationSpawner == null)
+                {
+                    _currentEnemyApproachAngle = Random.Range(0f, 360f);
+                }
                 float angleRad = _currentEnemyApproachAngle * Mathf.Deg2Rad;
                 Vector3 enemyDir = new Vector3(Mathf.Sin(angleRad), 0f, Mathf.Cos(angleRad));
 
-                // 2. 적군 스폰 (모선에서 enemySpawnDistance 거리, 모선 바라봄)
+                // 2. 적군 스폰 (formationSpawner가 있으면 포메이션별 패턴 적용)
                 ResetAttackBoatsDynamic(motherPos, enemyDir);
 
-                // 3. 아군 스폰 (적이 오는 방향, 모선 앞쪽 defenseSpawnDistance 거리)
-                // 적과 모선 사이에 배치 → 적을 맞이하는 형태
-                Vector3 defenseDir = enemyDir; // 적이 있는 방향 (모선→적 방향)
-                float spreadRad1 = -defenseSpawnSpread * Mathf.Deg2Rad;
-                float spreadRad2 = defenseSpawnSpread * Mathf.Deg2Rad;
-
-                // agent1: 왼쪽 (적 방향에서 -spread 회전)
-                Vector3 dir1 = RotateXZ(defenseDir, spreadRad1);
-                Vector3 spawnPos1 = motherPos + dir1 * defenseSpawnDistance;
-                spawnPos1.y = _originalDefense1Pos.y;
-                // 적이 오는 방향 바라봄 (= enemyDir, 적에서 모선으로의 방향이 아닌 모선에서 적으로)
-                Quaternion rot1 = Quaternion.LookRotation(defenseDir, Vector3.up);
-
-                // agent2: 오른쪽 (적 방향에서 +spread 회전)
-                Vector3 dir2 = RotateXZ(defenseDir, spreadRad2);
-                Vector3 spawnPos2 = motherPos + dir2 * defenseSpawnDistance;
-                spawnPos2.y = _originalDefense2Pos.y;
-                Quaternion rot2 = rot1; // 같은 방향 바라봄
-
-                // 아군 위치/각도에 각각 독립 랜덤 추가
-                if (enableRandomSpawn)
+                // 3. formationSpawner 사용 시 접근 각도가 업데이트되었으므로 enemyDir 재계산
+                if (formationSpawner != null)
                 {
-                    float jitter1 = Random.Range(-defenseRandomAngleRange, defenseRandomAngleRange);
-                    float jitter2 = Random.Range(-defenseRandomAngleRange, defenseRandomAngleRange);
-                    rot1 *= Quaternion.Euler(0f, jitter1, 0f);
-                    rot2 *= Quaternion.Euler(0f, jitter2, 0f);
+                    angleRad = _currentEnemyApproachAngle * Mathf.Deg2Rad;
+                    enemyDir = new Vector3(Mathf.Sin(angleRad), 0f, Mathf.Cos(angleRad));
                 }
 
-                ResetDefenseAgentDirect(defenseAgent1, spawnPos1, rot1);
-                ResetDefenseAgentDirect(defenseAgent2, spawnPos2, rot2);
+                // 4. 아군 스폰
+                if (launchZoneManager != null && launchZoneManager.IsInitialized)
+                {
+                    // LaunchZoneManager: 진수구역 기반 다수 쌍 배치
+                    float[] divAngles = (formationSpawner != null)
+                        ? formationSpawner.GetLastDiversionaryAngles()
+                        : null;
 
-                // 동적 스폰: 수직축 기반 위치 교차 판별 설정
-                _currentPerpendicularDir = RotateXZ(defenseDir, Mathf.PI / 2f);
-                float perpDot1 = Vector3.Dot(spawnPos1 - motherPos, _currentPerpendicularDir);
-                float perpDot2 = Vector3.Dot(spawnPos2 - motherPos, _currentPerpendicularDir);
-                _agent1StartsOnLeft = perpDot1 < perpDot2;
+                    int pairCount = Mathf.Min(launchZoneManager.activePairCount, launchZoneManager.maxPairCount);
+                    launchZoneManager.DeployPairs(
+                        _currentFormation, _currentEnemyApproachAngle,
+                        divAngles, pairCount, motherPos, m_AgentGroup);
 
-                Debug.Log($"[DefenseEnv] DynamicSpawn: enemyAngle={_currentEnemyApproachAngle:F0}°, " +
-                    $"ally1={spawnPos1}, ally2={spawnPos2}, allyDist={Vector3.Distance(spawnPos1, spawnPos2):F1}m, " +
-                    $"perpDot1={perpDot1:F1}, perpDot2={perpDot2:F1}, agent1Left={_agent1StartsOnLeft}");
+                    // defenseAgent1/2는 templatePair의 첫 쌍이므로 LaunchZoneManager가 이미 배치함
+                    // 위치 교차 판별은 첫 쌍 기준
+                    if (defenseAgent1 != null && defenseAgent2 != null)
+                    {
+                        Vector3 spawnPos1 = defenseAgent1.transform.position;
+                        Vector3 spawnPos2 = defenseAgent2.transform.position;
+                        Vector3 defenseDir = enemyDir;
+                        _currentPerpendicularDir = RotateXZ(defenseDir, Mathf.PI / 2f);
+                        float perpDot1 = Vector3.Dot(spawnPos1 - motherPos, _currentPerpendicularDir);
+                        float perpDot2 = Vector3.Dot(spawnPos2 - motherPos, _currentPerpendicularDir);
+                        _agent1StartsOnLeft = perpDot1 < perpDot2;
+                    }
+
+                    Debug.Log($"[DefenseEnv] LaunchZone Deploy: formation={_currentFormation}, " +
+                        $"pairs={pairCount}, angle={_currentEnemyApproachAngle:F0}°");
+                }
+                else
+                {
+                    // 레거시: 기존 1쌍 직접 배치
+                    Vector3 defenseDir = enemyDir;
+                    float spreadRad1 = -defenseSpawnSpread * Mathf.Deg2Rad;
+                    float spreadRad2 = defenseSpawnSpread * Mathf.Deg2Rad;
+
+                    Vector3 dir1 = RotateXZ(defenseDir, spreadRad1);
+                    Vector3 spawnPos1 = motherPos + dir1 * defenseSpawnDistance;
+                    spawnPos1.y = _originalDefense1Pos.y;
+                    Quaternion rot1 = Quaternion.LookRotation(defenseDir, Vector3.up);
+
+                    Vector3 dir2 = RotateXZ(defenseDir, spreadRad2);
+                    Vector3 spawnPos2 = motherPos + dir2 * defenseSpawnDistance;
+                    spawnPos2.y = _originalDefense2Pos.y;
+                    Quaternion rot2 = rot1;
+
+                    if (enableRandomSpawn)
+                    {
+                        float jitter1 = Random.Range(-defenseRandomAngleRange, defenseRandomAngleRange);
+                        float jitter2 = Random.Range(-defenseRandomAngleRange, defenseRandomAngleRange);
+                        rot1 *= Quaternion.Euler(0f, jitter1, 0f);
+                        rot2 *= Quaternion.Euler(0f, jitter2, 0f);
+                    }
+
+                    ResetDefenseAgentDirect(defenseAgent1, spawnPos1, rot1);
+                    ResetDefenseAgentDirect(defenseAgent2, spawnPos2, rot2);
+
+                    _currentPerpendicularDir = RotateXZ(defenseDir, Mathf.PI / 2f);
+                    float perpDot1 = Vector3.Dot(spawnPos1 - motherPos, _currentPerpendicularDir);
+                    float perpDot2 = Vector3.Dot(spawnPos2 - motherPos, _currentPerpendicularDir);
+                    _agent1StartsOnLeft = perpDot1 < perpDot2;
+
+                    Debug.Log($"[DefenseEnv] DynamicSpawn(legacy): enemyAngle={_currentEnemyApproachAngle:F0}°, " +
+                        $"ally1={spawnPos1}, ally2={spawnPos2}, allyDist={Vector3.Distance(spawnPos1, spawnPos2):F1}m");
+                }
             }
             else
             {
@@ -1469,7 +1532,8 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 적군 선박을 모선 기준 동적 위치로 스폰 (모선에서 enemySpawnDistance 거리, 모선 바라봄)
+        /// 적군 선박을 모선 기준 동적 위치로 스폰
+        /// formationSpawner가 있으면 포메이션 패턴 사용, 없으면 기존 단방향 스폰
         /// </summary>
         private void ResetAttackBoatsDynamic(Vector3 motherPos, Vector3 enemyDir)
         {
@@ -1477,47 +1541,80 @@ namespace BoatAttack
 
             int stageTargetCount = GetActiveEnemyCountForStage();
 
-            for (int i = 0; i < _enemyPool.Length; i++)
+            if (formationSpawner != null)
             {
-                if (_enemyPool[i] == null) continue;
+                // 포메이션 스폰: 3가지 패턴 중 선택하여 스폰 데이터 생성
+                SpawnData[] spawns = formationSpawner.GenerateFormation(
+                    motherPos, stageTargetCount, enemySpawnDistance, _poolTemplateY);
+                _currentFormation = formationSpawner.GetLastFormationType();
 
-                if (i < stageTargetCount)
+                // 포메이션 주 접근 방향으로 _currentEnemyApproachAngle 업데이트
+                _currentEnemyApproachAngle = formationSpawner.GetLastApproachAngleDeg();
+
+                for (int i = 0; i < _enemyPool.Length; i++)
                 {
-                    // 각 적군마다 약간의 위치 오프셋 (퍼짐)
-                    Vector3 spreadOffset = new Vector3(
-                        Random.Range(-enemySpawnSpread, enemySpawnSpread),
-                        0f,
-                        Random.Range(-enemySpawnSpread, enemySpawnSpread)
-                    );
+                    if (_enemyPool[i] == null) continue;
 
-                    Vector3 spawnPos = motherPos + enemyDir * enemySpawnDistance + spreadOffset;
-                    spawnPos.y = _poolTemplateY;
-
-                    // 모선 정중앙을 바라보는 회전
-                    Vector3 lookDir = motherPos - spawnPos;
-                    lookDir.y = 0f;
-                    Quaternion spawnRot = lookDir.sqrMagnitude > 0.01f
-                        ? Quaternion.LookRotation(lookDir, Vector3.up)
-                        : Quaternion.identity;
-
-                    ResetPoolObject(i, spawnPos, spawnRot);
-                }
-                else
-                {
-                    // 초과분 비활성화
-                    var behaviours = _enemyPool[i].GetComponents<MonoBehaviour>();
-                    foreach (var mb in behaviours)
+                    if (i < stageTargetCount && i < spawns.Length)
                     {
-                        if (mb != null) mb.CancelInvoke();
+                        ResetPoolObject(i, spawns[i].position, spawns[i].rotation);
                     }
-                    _enemyPool[i].SetActive(false);
+                    else
+                    {
+                        var behaviours = _enemyPool[i].GetComponents<MonoBehaviour>();
+                        foreach (var mb in behaviours)
+                        {
+                            if (mb != null) mb.CancelInvoke();
+                        }
+                        _enemyPool[i].SetActive(false);
+                    }
                 }
+
+                Debug.Log($"[DefenseEnv] Formation: {_currentFormation}, enemies: {stageTargetCount}, " +
+                    $"approachAngle: {_currentEnemyApproachAngle:F0}°, poolSize: {_enemyPool.Length}");
+            }
+            else
+            {
+                // 레거시 단방향 스폰 (fallback)
+                for (int i = 0; i < _enemyPool.Length; i++)
+                {
+                    if (_enemyPool[i] == null) continue;
+
+                    if (i < stageTargetCount)
+                    {
+                        Vector3 spreadOffset = new Vector3(
+                            Random.Range(-enemySpawnSpread, enemySpawnSpread),
+                            0f,
+                            Random.Range(-enemySpawnSpread, enemySpawnSpread)
+                        );
+
+                        Vector3 spawnPos = motherPos + enemyDir * enemySpawnDistance + spreadOffset;
+                        spawnPos.y = _poolTemplateY;
+
+                        Vector3 lookDir = motherPos - spawnPos;
+                        lookDir.y = 0f;
+                        Quaternion spawnRot = lookDir.sqrMagnitude > 0.01f
+                            ? Quaternion.LookRotation(lookDir, Vector3.up)
+                            : Quaternion.identity;
+
+                        ResetPoolObject(i, spawnPos, spawnRot);
+                    }
+                    else
+                    {
+                        var behaviours = _enemyPool[i].GetComponents<MonoBehaviour>();
+                        foreach (var mb in behaviours)
+                        {
+                            if (mb != null) mb.CancelInvoke();
+                        }
+                        _enemyPool[i].SetActive(false);
+                    }
+                }
+
+                Debug.Log($"[DefenseEnv] ResetAttackBoatsDynamic(legacy): target={stageTargetCount}, poolSize={_enemyPool.Length}");
             }
 
             // 풀 객체 간 충돌 무시
             IgnoreCollisionBetweenEnemies();
-
-            Debug.Log($"[DefenseEnv] ResetAttackBoatsDynamic: target={stageTargetCount}, poolSize={_enemyPool.Length}");
 
             UpdateEnemyShipsArray();
         }
@@ -1540,9 +1637,15 @@ namespace BoatAttack
 
             enemyShips = activeEnemies.ToArray();
 
-            // DefenseAgent에 적군 배열 전달
+            // DefenseAgent에 적군 배열 전달 (원본 쌍)
             if (defenseAgent1 != null) defenseAgent1.enemyShips = enemyShips;
             if (defenseAgent2 != null) defenseAgent2.enemyShips = enemyShips;
+
+            // LaunchZoneManager의 모든 활성 쌍에도 적군 배열 전달
+            if (launchZoneManager != null && launchZoneManager.IsInitialized)
+            {
+                launchZoneManager.UpdateAllAgentEnemyShips(enemyShips);
+            }
         }
 
         /// <summary>

@@ -200,8 +200,20 @@ namespace BoatAttack
                 });
             }
 
-            AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize);
-            AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize);
+            // 아군 표시: LaunchZoneManager가 있으면 모든 활성 쌍, 없으면 원본 쌍만
+            if (envController.launchZoneManager != null && envController.launchZoneManager.IsInitialized)
+            {
+                var activeAgents = envController.launchZoneManager.GetActiveAgents();
+                foreach (var agent in activeAgents)
+                {
+                    AddShipAgent(agent, friendlyColor, friendlyMarkerSize);
+                }
+            }
+            else
+            {
+                AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize);
+                AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize);
+            }
 
             if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
             {
