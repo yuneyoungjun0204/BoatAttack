@@ -26,7 +26,8 @@
       "Bash(conda info:*)",
       "Bash(pip3.10 list:*)",
       "Bash(pip install:*)",
-      "Bash(nvidia-smi:*)"
+      "Bash(nvidia-smi:*)",
+      "Bash(python3:*)"
     ]
   }
 }

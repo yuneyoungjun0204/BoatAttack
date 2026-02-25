@@ -45,33 +45,44 @@ namespace BoatAttack
 
     /// <summary>
     /// 진수구역 + 아군 쌍 풀 관리자
-    /// 모함 4방위 진수구역에서 적 방향에 따라 아군 쌍 출격
+    /// 모함 8방위 진수구역에서 적 방향에 따라 아군 쌍 출격
     /// 적군 풀과 동일한 패턴: 프리팹 복제 → SetActive로 활성/비활성 관리
     /// </summary>
     public class LaunchZoneManager : MonoBehaviour
     {
         [Header("Launch Zones (진수구역)")]
-        [Tooltip("모함 주변 진수구역 배열 (기본 4방위: 0°/90°/180°/270°)")]
-        public LaunchZone[] launchZones = new LaunchZone[]
-        {
-            new LaunchZone { angleDeg = 0f,   distance = 100f, pairSpreadDeg = 1.7f, angleJitter = 10f },
-            new LaunchZone { angleDeg = 90f,  distance = 100f, pairSpreadDeg = 1.7f, angleJitter = 10f },
-            new LaunchZone { angleDeg = 180f, distance = 100f, pairSpreadDeg = 1.7f, angleJitter = 10f },
-            new LaunchZone { angleDeg = 270f, distance = 100f, pairSpreadDeg = 1.7f, angleJitter = 10f },
-        };
+        [Tooltip("진수구역 개수 (360°를 균등 분할)")]
+        [Range(1, 20)]
+        public int zoneCount = 10;
+
+        [Tooltip("쌍의 좌우 펼침 각도 (±도)")]
+        public float pairSpreadDeg = 1.7f;
+
+        [Tooltip("에피소드마다 방위각 jitter (±도, 과적합 방지)")]
+        public float angleJitter = 10f;
+
+        [HideInInspector]
+        public LaunchZone[] launchZones;
 
         [Header("Ally Pool")]
         [Tooltip("최대 아군 쌍 수 (풀 크기)")]
-        [Range(1, 6)]
+        [Range(1, 10)]
         public int maxPairCount = 6;
 
         [Tooltip("현재 활성 쌍 수 (Stage/커리큘럼에서 제어)")]
-        [Range(1, 6)]
+        [Range(1, 10)]
         public int activePairCount = 1;
 
         [Header("Template")]
-        [Tooltip("템플릿 쌍 (씬에 이미 배치된 기존 defenseAgent1/2/web)")]
+        [Tooltip("템플릿 쌍 (씬에 이미 배치된 기존 defenseAgent1/2/web). 비어있으면 프리팹에서 자동 생성")]
         public DefensePair templatePair;
+
+        [Header("Prefab (templatePair 없을 때 사용)")]
+        [Tooltip("방어 선박 프리팹 (DefenseAgent 포함)")]
+        public GameObject defenseBoatPrefab;
+
+        [Tooltip("Web 프리팹 (비어있으면 자동 생성)")]
+        public GameObject webPrefab;
 
         [Header("References")]
         [Tooltip("모선 오브젝트")]
@@ -79,6 +90,26 @@ namespace BoatAttack
 
         [Tooltip("환경 컨트롤러")]
         public DefenseEnvController envController;
+
+        [Header("Ellipse Shape (타원 배치)")]
+        [Tooltip("타원 전후(Fore/Aft) 반경 - 선수/선미 방향 (0°/180°)")]
+        public float ellipseForeAft = 150f;
+
+        [Tooltip("타원 좌우(Beam) 반경 - 좌현/우현 방향 (90°/270°)")]
+        public float ellipseBeam = 80f;
+
+        [Header("Zone Visual (원통)")]
+        [Tooltip("진수구역 원통 비주얼 표시")]
+        public bool showZoneCylinders = true;
+
+        [Tooltip("원통 높이")]
+        public float cylinderHeight = 12f;
+
+        [Tooltip("원통 반경")]
+        public float cylinderRadius = 6f;
+
+        [Tooltip("원통 색상")]
+        public Color cylinderColor = new Color(0.2f, 0.5f, 1f, 0.25f);
 
         [Header("Debug")]
         [SerializeField] private int _deployedPairCount = 0;
@@ -92,20 +123,43 @@ namespace BoatAttack
         private float _templateAgent1Y;
         private float _templateAgent2Y;
 
+        // 원통 비주얼
+        private GameObject[] _zoneCylinders;
+
         /// <summary>
         /// 풀 초기화 (DefenseEnvController.Start()에서 호출)
         /// </summary>
         public void InitializeAllyPool()
         {
             if (_initialized) return;
+
+            // 진수구역 자동 생성 (zoneCount 기반 균등 분할)
+            GenerateLaunchZones();
+
+            // templatePair가 없으면 프리팹에서 자동 생성
             if (templatePair == null || templatePair.agent1 == null || templatePair.agent2 == null)
             {
-                Debug.LogError("[LaunchZoneManager] InitializeAllyPool: templatePair이 설정되지 않았습니다!");
+                if (defenseBoatPrefab != null)
+                {
+                    Debug.Log("[LaunchZoneManager] templatePair 없음 → 프리팹에서 자동 생성");
+                    CreateTemplateFromPrefab();
+                }
+                else
+                {
+                    Debug.LogError("[LaunchZoneManager] InitializeAllyPool: templatePair과 defenseBoatPrefab 모두 없습니다!");
+                    return;
+                }
+            }
+
+            if (templatePair == null || templatePair.agent1 == null || templatePair.agent2 == null)
+            {
+                Debug.LogError("[LaunchZoneManager] InitializeAllyPool: 템플릿 생성 실패!");
                 return;
             }
 
-            _templateAgent1Y = templatePair.agent1.transform.position.y;
-            _templateAgent2Y = templatePair.agent2.transform.position.y;
+            // Y방향은 0으로 고정 (수면 높이)
+            _templateAgent1Y = 0f;
+            _templateAgent2Y = 0f;
 
             _pairPool = new DefensePair[maxPairCount];
 
@@ -120,66 +174,7 @@ namespace BoatAttack
 
             for (int i = 1; i < maxPairCount; i++)
             {
-                DefensePair pair = new DefensePair();
-
-                // Agent1 복제
-                GameObject agent1Clone = Instantiate(templatePair.agent1.gameObject, poolParent);
-                agent1Clone.name = $"DefenseAgent1_pair{i}";
-                pair.agent1 = agent1Clone.GetComponent<DefenseAgent>();
-
-                // Agent2 복제
-                GameObject agent2Clone = Instantiate(templatePair.agent2.gameObject, poolParent);
-                agent2Clone.name = $"DefenseAgent2_pair{i}";
-                pair.agent2 = agent2Clone.GetComponent<DefenseAgent>();
-
-                // Web 복제
-                if (templatePair.webObject != null)
-                {
-                    GameObject webClone = Instantiate(templatePair.webObject, poolParent);
-                    webClone.name = $"Web_pair{i}";
-                    pair.webObject = webClone;
-                }
-
-                // 파트너/Web 교차 참조 설정
-                pair.agent1.partnerAgent = pair.agent2;
-                pair.agent2.partnerAgent = pair.agent1;
-                pair.agent1.webObject = pair.webObject;
-                pair.agent2.webObject = pair.webObject;
-
-                // 모선 참조
-                if (motherShip != null)
-                {
-                    pair.agent1.motherShip = motherShip;
-                    pair.agent2.motherShip = motherShip;
-                }
-
-                // 적군 배열 (envController에서 업데이트됨)
-                if (envController != null)
-                {
-                    pair.agent1.envController = envController;
-                    pair.agent2.envController = envController;
-                }
-
-                // WebCollisionDetector/DynamicWeb 설정
-                if (pair.webObject != null && envController != null)
-                {
-                    var webDetector = pair.webObject.GetComponent<WebCollisionDetector>();
-                    if (webDetector == null)
-                        webDetector = pair.webObject.AddComponent<WebCollisionDetector>();
-                    webDetector.envController = envController;
-
-                    var dynamicWeb = pair.webObject.GetComponent<DynamicWeb>();
-                    if (dynamicWeb != null)
-                    {
-                        dynamicWeb.envController = envController;
-                        dynamicWeb.defenseShip1 = pair.agent1.transform;
-                        dynamicWeb.defenseShip2 = pair.agent2.transform;
-
-                        // 복제된 Web의 webAnchor가 원본 선박을 가리키므로 복제 선박의 자식으로 재할당
-                        RemapWebAnchor(dynamicWeb, templatePair, pair);
-                    }
-                }
-
+                DefensePair pair = CreatePairClone(i, poolParent);
                 pair.isActive = false;
                 _pairPool[i] = pair;
             }
@@ -193,7 +188,192 @@ namespace BoatAttack
             }
 
             _initialized = true;
-            Debug.Log($"[LaunchZoneManager] InitializeAllyPool: maxPairs={maxPairCount}, template={templatePair.agent1.name}");
+
+            // 진수구역 원통 비주얼 생성
+            if (showZoneCylinders)
+                CreateZoneCylinders();
+
+            Debug.Log($"[LaunchZoneManager] InitializeAllyPool: maxPairs={maxPairCount}, template={templatePair.agent1.name}, zones={launchZones.Length}");
+        }
+
+        /// <summary>
+        /// 프리팹에서 템플릿 쌍 생성 (templatePair가 비어있을 때)
+        /// </summary>
+        private void CreateTemplateFromPrefab()
+        {
+            Transform poolParent = transform;
+
+            // Agent1
+            GameObject agent1Obj = Instantiate(defenseBoatPrefab, poolParent);
+            agent1Obj.name = "DefenseAgent1_template";
+            agent1Obj.transform.position = HIDDEN_POS;
+
+            // Agent2
+            GameObject agent2Obj = Instantiate(defenseBoatPrefab, poolParent);
+            agent2Obj.name = "DefenseAgent2_template";
+            agent2Obj.transform.position = HIDDEN_POS + Vector3.right * 50f;
+
+            var da1 = agent1Obj.GetComponent<DefenseAgent>();
+            var da2 = agent2Obj.GetComponent<DefenseAgent>();
+
+            if (da1 == null || da2 == null)
+            {
+                Debug.LogError("[LaunchZoneManager] defenseBoatPrefab에 DefenseAgent 컴포넌트가 없습니다!");
+                if (da1 == null) Destroy(agent1Obj);
+                if (da2 == null) Destroy(agent2Obj);
+                return;
+            }
+
+            // Web 생성
+            GameObject webObj = CreateWebObject(poolParent);
+
+            // 교차 참조 설정
+            da1.partnerAgent = da2;
+            da2.partnerAgent = da1;
+            da1.webObject = webObj;
+            da2.webObject = webObj;
+
+            if (motherShip != null)
+            {
+                da1.motherShip = motherShip;
+                da2.motherShip = motherShip;
+            }
+            if (envController != null)
+            {
+                da1.envController = envController;
+                da2.envController = envController;
+            }
+
+            // DynamicWeb 설정
+            var dw = webObj.GetComponent<DynamicWeb>();
+            if (dw != null)
+            {
+                dw.defenseShip1 = agent1Obj.transform;
+                dw.defenseShip2 = agent2Obj.transform;
+                if (envController != null)
+                    dw.envController = envController;
+            }
+
+            var wd = webObj.GetComponent<WebCollisionDetector>();
+            if (wd == null) wd = webObj.AddComponent<WebCollisionDetector>();
+            if (envController != null) wd.envController = envController;
+
+            // templatePair 설정
+            if (templatePair == null)
+                templatePair = new DefensePair();
+            templatePair.agent1 = da1;
+            templatePair.agent2 = da2;
+            templatePair.webObject = webObj;
+
+            // DefenseEnvController에도 참조 설정
+            if (envController != null)
+            {
+                envController.defenseAgent1 = da1;
+                envController.defenseAgent2 = da2;
+                envController.webObject = webObj;
+            }
+
+            Debug.Log($"[LaunchZoneManager] 프리팹에서 템플릿 쌍 생성 완료: {defenseBoatPrefab.name}");
+        }
+
+        /// <summary>
+        /// Web 오브젝트 생성 (프리팹 또는 기본 생성)
+        /// </summary>
+        private GameObject CreateWebObject(Transform parent)
+        {
+            if (webPrefab != null)
+                return Instantiate(webPrefab, parent);
+
+            // 기본 Web 오브젝트 생성
+            var webObj = new GameObject("DynamicWeb_template");
+            webObj.transform.SetParent(parent, false);
+
+            var rb = webObj.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+            rb.useGravity = false;
+
+            var col = webObj.AddComponent<BoxCollider>();
+            col.isTrigger = true;
+
+            var dw = webObj.AddComponent<DynamicWeb>();
+            dw.webHeight = 5f;
+            dw.webThickness = 0.5f;
+            dw.webColor = new Color(0f, 1f, 1f, 0.3f);
+            dw.isTrigger = true;
+            dw.showVisual = true;
+
+            webObj.AddComponent<WebCollisionDetector>();
+            webObj.SetActive(false);
+
+            return webObj;
+        }
+
+        /// <summary>
+        /// 템플릿으로부터 쌍 복제 (기존 로직 메서드화)
+        /// </summary>
+        private DefensePair CreatePairClone(int index, Transform poolParent)
+        {
+            DefensePair pair = new DefensePair();
+
+            // Agent1 복제
+            GameObject agent1Clone = Instantiate(templatePair.agent1.gameObject, poolParent);
+            agent1Clone.name = $"DefenseAgent1_pair{index}";
+            pair.agent1 = agent1Clone.GetComponent<DefenseAgent>();
+
+            // Agent2 복제
+            GameObject agent2Clone = Instantiate(templatePair.agent2.gameObject, poolParent);
+            agent2Clone.name = $"DefenseAgent2_pair{index}";
+            pair.agent2 = agent2Clone.GetComponent<DefenseAgent>();
+
+            // Web 복제
+            if (templatePair.webObject != null)
+            {
+                GameObject webClone = Instantiate(templatePair.webObject, poolParent);
+                webClone.name = $"Web_pair{index}";
+                pair.webObject = webClone;
+            }
+
+            // 파트너/Web 교차 참조 설정
+            pair.agent1.partnerAgent = pair.agent2;
+            pair.agent2.partnerAgent = pair.agent1;
+            pair.agent1.webObject = pair.webObject;
+            pair.agent2.webObject = pair.webObject;
+
+            // 모선 참조
+            if (motherShip != null)
+            {
+                pair.agent1.motherShip = motherShip;
+                pair.agent2.motherShip = motherShip;
+            }
+
+            // envController 참조
+            if (envController != null)
+            {
+                pair.agent1.envController = envController;
+                pair.agent2.envController = envController;
+            }
+
+            // WebCollisionDetector/DynamicWeb 설정
+            if (pair.webObject != null && envController != null)
+            {
+                var webDetector = pair.webObject.GetComponent<WebCollisionDetector>();
+                if (webDetector == null)
+                    webDetector = pair.webObject.AddComponent<WebCollisionDetector>();
+                webDetector.envController = envController;
+
+                var dynamicWeb = pair.webObject.GetComponent<DynamicWeb>();
+                if (dynamicWeb != null)
+                {
+                    dynamicWeb.envController = envController;
+                    dynamicWeb.defenseShip1 = pair.agent1.transform;
+                    dynamicWeb.defenseShip2 = pair.agent2.transform;
+
+                    // 복제된 Web의 webAnchor가 원본 선박을 가리키므로 복제 선박의 자식으로 재할당
+                    RemapWebAnchor(dynamicWeb, templatePair, pair);
+                }
+            }
+
+            return pair;
         }
 
         /// <summary>
@@ -249,6 +429,9 @@ namespace BoatAttack
                 float zoneAngleRad = zoneAngleDeg * Mathf.Deg2Rad;
                 Vector3 zoneDir = new Vector3(Mathf.Sin(zoneAngleRad), 0f, Mathf.Cos(zoneAngleRad));
 
+                // 타원 거리 계산 (jitter 적용된 각도 기준)
+                float zoneDist = GetEllipseDistance(zoneAngleDeg);
+
                 // 적이 오는 방향 (배치된 아군이 바라볼 방향)
                 float faceAngleRad = approachAngleDeg * Mathf.Deg2Rad;
                 Vector3 faceDir = new Vector3(Mathf.Sin(faceAngleRad), 0f, Mathf.Cos(faceAngleRad));
@@ -257,7 +440,7 @@ namespace BoatAttack
                 Vector3 lateralDir = new Vector3(zoneDir.z, 0f, -zoneDir.x); // 90° 회전
 
                 // 쌍 간 횡 간격 (쌍 내 2대 좌우폭 + 여유)
-                float pairWidth = 2f * zone.distance * Mathf.Tan(zone.pairSpreadDeg * Mathf.Deg2Rad);
+                float pairWidth = 2f * zoneDist * Mathf.Tan(zone.pairSpreadDeg * Mathf.Deg2Rad);
                 float lateralSpacing = pairWidth + 10f; // 쌍 간 최소 10m 여유
 
                 // 중심 기준 횡 오프셋 계산 (0이 중앙)
@@ -272,18 +455,18 @@ namespace BoatAttack
                     DefensePair pair = _pairPool[pi];
                     pair.assignedZoneIndex = zoneIdx;
 
-                    // 모선에서 동일 거리, 횡대열로 나란히 배치
+                    // 모선에서 타원 거리, 횡대열로 나란히 배치
                     float lateralOffset = startOffset + j * lateralSpacing;
-                    Vector3 pairCenter = motherPos + zoneDir * zone.distance + lateralDir * lateralOffset;
+                    Vector3 pairCenter = motherPos + zoneDir * zoneDist + lateralDir * lateralOffset;
 
                     // 2대 좌우 배치 (쌍 내)
                     float spreadRad = zone.pairSpreadDeg * Mathf.Deg2Rad;
                     Vector3 dir1 = RotateXZ(zoneDir, -spreadRad);
                     Vector3 dir2 = RotateXZ(zoneDir, spreadRad);
 
-                    Vector3 pos1 = pairCenter + lateralDir * (-pairWidth * 0.5f);
+                    Vector3 pos1 = pairCenter + lateralDir * (pairWidth * 0.5f);
                     pos1.y = _templateAgent1Y;
-                    Vector3 pos2 = pairCenter + lateralDir * (pairWidth * 0.5f);
+                    Vector3 pos2 = pairCenter + lateralDir * (-pairWidth * 0.5f);
                     pos2.y = _templateAgent2Y;
 
                     // 적 방향 바라봄
@@ -556,6 +739,42 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// zoneCount 기반으로 진수구역 배열 자동 생성 (360° 균등 분할)
+        /// </summary>
+        private void GenerateLaunchZones()
+        {
+            launchZones = new LaunchZone[zoneCount];
+            float angleStep = 360f / zoneCount;
+            for (int i = 0; i < zoneCount; i++)
+            {
+                launchZones[i] = new LaunchZone
+                {
+                    angleDeg = i * angleStep,
+                    distance = GetEllipseDistance(i * angleStep),
+                    pairSpreadDeg = this.pairSpreadDeg,
+                    angleJitter = this.angleJitter,
+                };
+            }
+            Debug.Log($"[LaunchZoneManager] {zoneCount}개 진수구역 생성 (간격 {angleStep:F1}°)");
+        }
+
+        /// <summary>
+        /// 타원 극좌표 공식으로 해당 방위각의 거리 계산
+        /// r(θ) = (a*b) / sqrt((b*cosθ)² + (a*sinθ)²)
+        /// a = 전후(fore/aft) 반경, b = 좌우(beam) 반경
+        /// θ=0°/180° → a (전후), θ=90°/270° → b (좌우)
+        /// </summary>
+        public float GetEllipseDistance(float angleDeg)
+        {
+            float angleRad = angleDeg * Mathf.Deg2Rad;
+            float cosA = Mathf.Cos(angleRad);
+            float sinA = Mathf.Sin(angleRad);
+            float a = ellipseForeAft;
+            float b = ellipseBeam;
+            return (a * b) / Mathf.Sqrt(b * b * cosA * cosA + a * a * sinA * sinA);
+        }
+
+        /// <summary>
         /// XZ 평면에서 방향 벡터를 라디안만큼 회전
         /// </summary>
         private Vector3 RotateXZ(Vector3 dir, float radians)
@@ -568,5 +787,170 @@ namespace BoatAttack
                 dir.x * sin + dir.z * cos
             );
         }
+
+        #region Zone Cylinder Visuals
+
+        /// <summary>
+        /// 각 진수구역 위치에 원통 비주얼 생성
+        /// </summary>
+        private void CreateZoneCylinders()
+        {
+            if (motherShip == null || launchZones == null) return;
+
+            _zoneCylinders = new GameObject[launchZones.Length];
+            Vector3 motherPos = motherShip.transform.position;
+
+            for (int i = 0; i < launchZones.Length; i++)
+            {
+                LaunchZone zone = launchZones[i];
+                float angleRad = zone.angleDeg * Mathf.Deg2Rad;
+                Vector3 zoneDir = new Vector3(Mathf.Sin(angleRad), 0f, Mathf.Cos(angleRad));
+                float dist = GetEllipseDistance(zone.angleDeg);
+                Vector3 zonePos = motherPos + zoneDir * dist;
+
+                // 원통 프리미티브 생성
+                GameObject cylinder = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                cylinder.name = $"LaunchZone_{i}_{zone.angleDeg:F0}deg";
+                cylinder.transform.SetParent(transform, true);
+                cylinder.transform.position = new Vector3(zonePos.x, motherPos.y + cylinderHeight * 0.5f, zonePos.z);
+                cylinder.transform.localScale = new Vector3(
+                    cylinderRadius * 2f, cylinderHeight * 0.5f, cylinderRadius * 2f);
+
+                // 콜라이더 제거 (비주얼 전용)
+                var col = cylinder.GetComponent<Collider>();
+                if (col != null) Object.Destroy(col);
+
+                // 반투명 머티리얼 설정
+                var renderer = cylinder.GetComponent<MeshRenderer>();
+                if (renderer != null)
+                {
+                    var mat = new Material(Shader.Find("Standard"));
+                    mat.SetFloat("_Mode", 3); // Transparent
+                    mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                    mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                    mat.SetInt("_ZWrite", 0);
+                    mat.DisableKeyword("_ALPHATEST_ON");
+                    mat.EnableKeyword("_ALPHABLEND_ON");
+                    mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                    mat.renderQueue = 3000;
+                    mat.color = cylinderColor;
+                    renderer.material = mat;
+                }
+
+                _zoneCylinders[i] = cylinder;
+            }
+
+            Debug.Log($"[LaunchZoneManager] {launchZones.Length}개 진수구역 원통 생성 완료");
+        }
+
+        /// <summary>
+        /// 원통 위치를 모선 기준으로 갱신 (모선이 이동하는 경우 대비)
+        /// </summary>
+        public void UpdateZoneCylinderPositions()
+        {
+            if (_zoneCylinders == null || motherShip == null) return;
+
+            Vector3 motherPos = motherShip.transform.position;
+            for (int i = 0; i < launchZones.Length && i < _zoneCylinders.Length; i++)
+            {
+                if (_zoneCylinders[i] == null) continue;
+                LaunchZone zone = launchZones[i];
+                float angleRad = zone.angleDeg * Mathf.Deg2Rad;
+                Vector3 zoneDir = new Vector3(Mathf.Sin(angleRad), 0f, Mathf.Cos(angleRad));
+                float dist = GetEllipseDistance(zone.angleDeg);
+                Vector3 zonePos = motherPos + zoneDir * dist;
+                _zoneCylinders[i].transform.position = new Vector3(
+                    zonePos.x, motherPos.y + cylinderHeight * 0.5f, zonePos.z);
+            }
+        }
+
+        #endregion
+
+        #region Gizmos
+
+        private void OnDrawGizmos()
+        {
+            // 모선 위치 (런타임이면 motherShip, 에디터에서는 transform 위치)
+            Vector3 center = (motherShip != null) ? motherShip.transform.position : transform.position;
+
+            // 타원 윤곽선 그리기
+            Gizmos.color = new Color(cylinderColor.r, cylinderColor.g, cylinderColor.b, 0.3f);
+            int ellipseSegments = 64;
+            Vector3 prevPoint = Vector3.zero;
+            for (int s = 0; s <= ellipseSegments; s++)
+            {
+                float angle = (float)s / ellipseSegments * 360f;
+                float dist = GetEllipseDistance(angle);
+                float rad = angle * Mathf.Deg2Rad;
+                Vector3 point = center + new Vector3(Mathf.Sin(rad) * dist, 0f, Mathf.Cos(rad) * dist);
+                if (s > 0) Gizmos.DrawLine(prevPoint, point);
+                prevPoint = point;
+            }
+
+            // 진수구역 표시 (런타임 배열 또는 zoneCount 기반)
+            int count = (launchZones != null && launchZones.Length > 0) ? launchZones.Length : zoneCount;
+            float angleStep = 360f / count;
+
+            for (int i = 0; i < count; i++)
+            {
+                float angleDeg = (launchZones != null && i < launchZones.Length)
+                    ? launchZones[i].angleDeg
+                    : i * angleStep;
+                float angleRad = angleDeg * Mathf.Deg2Rad;
+                Vector3 zoneDir = new Vector3(Mathf.Sin(angleRad), 0f, Mathf.Cos(angleRad));
+                float dist = GetEllipseDistance(angleDeg);
+                Vector3 zonePos = center + zoneDir * dist;
+
+                // 진수구역 원통 표시
+                Color c = cylinderColor;
+                c.a = 0.4f;
+                Gizmos.color = c;
+                DrawWireCylinder(zonePos + Vector3.up * cylinderHeight * 0.5f, cylinderRadius, cylinderHeight);
+
+                // 모선↔구역 연결선
+                Gizmos.color = new Color(c.r, c.g, c.b, 0.2f);
+                Gizmos.DrawLine(center, zonePos);
+
+#if UNITY_EDITOR
+                // 라벨 (거리 정보 포함)
+                var style = new GUIStyle();
+                style.normal.textColor = new Color(0.3f, 0.7f, 1f, 1f);
+                style.fontSize = 12;
+                style.fontStyle = FontStyle.Bold;
+                UnityEditor.Handles.Label(
+                    zonePos + Vector3.up * (cylinderHeight + 2f),
+                    $"Zone {i} ({angleDeg:F0}° / {dist:F0}m)", style);
+#endif
+            }
+        }
+
+        private static void DrawWireCylinder(Vector3 center, float radius, float height)
+        {
+            float halfH = height * 0.5f;
+            Vector3 top = center + Vector3.up * halfH;
+            Vector3 bot = center - Vector3.up * halfH;
+
+            int seg = 16;
+            Vector3 prevTop = Vector3.zero, prevBot = Vector3.zero;
+            for (int i = 0; i <= seg; i++)
+            {
+                float a = (float)i / seg * Mathf.PI * 2f;
+                float x = Mathf.Cos(a) * radius;
+                float z = Mathf.Sin(a) * radius;
+                Vector3 ct = top + new Vector3(x, 0, z);
+                Vector3 cb = bot + new Vector3(x, 0, z);
+
+                if (i > 0)
+                {
+                    Gizmos.DrawLine(prevTop, ct);
+                    Gizmos.DrawLine(prevBot, cb);
+                }
+                if (i % 4 == 0) Gizmos.DrawLine(ct, cb);
+                prevTop = ct;
+                prevBot = cb;
+            }
+        }
+
+        #endregion
     }
 }

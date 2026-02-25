@@ -302610,39 +302610,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d00c6f9b85e1e064fbd580cfebe43f1a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  launchZones:
-  - angleDeg: 0
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 90
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 180
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
+  zoneCount: 10
+  pairSpreadDeg: 1.7
+  angleJitter: 10
+  launchZones: []
   maxPairCount: 1
   activePairCount: 1
   templatePair:

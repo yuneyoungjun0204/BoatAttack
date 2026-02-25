@@ -2197,7 +2197,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &183842161
 Transform:
   m_ObjectHideFlags: 0
@@ -14474,7 +14474,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1106577702
 Transform:
   m_ObjectHideFlags: 0
@@ -16095,7 +16095,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1231791705
 Transform:
   m_ObjectHideFlags: 0
@@ -18367,7 +18367,8 @@ MonoBehaviour:
   maxEnvironmentSteps: 1000
   motherShip: {fileID: 341979842}
   enemyShips:
-  - {fileID: 0}
+  - {fileID: 7205157340779662337, guid: 8fcf83cfb0d8b7f4a8b92305753cbf39,
+    type: 3}
   webObject: {fileID: 1693386311}
   defense1SpawnPos: {x: -18, y: 0.8, z: 71}
   defense1SpawnRot: {x: 0, y: 180, z: 0}
@@ -18462,39 +18463,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d00c6f9b85e1e064fbd580cfebe43f1a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  launchZones:
-  - angleDeg: 0
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 90
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 180
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
-  - angleDeg: 270
-    distance: 100
-    pairSpreadDeg: 1.7
-    angleJitter: 10
+  zoneCount: 10
+  pairSpreadDeg: 1.7
+  angleJitter: 10
+  launchZones: []
   maxPairCount: 1
   activePairCount: 1
   templatePair:
@@ -18503,10 +18475,19 @@ MonoBehaviour:
     webObject: {fileID: 1693386311}
     assignedZoneIndex: -1
     isActive: 0
+  defenseBoatPrefab: {fileID: 9083998436884223129, guid: 405c4bc591de844a3a100e1538790229,
+    type: 3}
+  webPrefab: {fileID: 0}
   motherShip: {fileID: 341979842}
   envController: {fileID: 1396138363}
+  ellipseForeAft: 150
+  ellipseBeam: 80
+  showZoneCylinders: 1
+  cylinderHeight: 12
+  cylinderRadius: 6
+  cylinderColor: {r: 0.2, g: 0.5, b: 1, a: 0.25}
   _deployedPairCount: 0
-  _lastDeploymentInfo: 
+  _lastDeploymentInfo:
 --- !u!114 &1396138367
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -19970,7 +19951,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1526070229
 Transform:
   m_ObjectHideFlags: 0
@@ -25594,7 +25575,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &2030574416
 Transform:
   m_ObjectHideFlags: 0
@@ -26070,7 +26051,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &2056866120
 Transform:
   m_ObjectHideFlags: 0

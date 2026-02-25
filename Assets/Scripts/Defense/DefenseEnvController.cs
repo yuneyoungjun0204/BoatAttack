@@ -1384,8 +1384,8 @@ namespace BoatAttack
                 {
                     // 레거시: 기존 1쌍 직접 배치
                     Vector3 defenseDir = enemyDir;
-                    float spreadRad1 = -defenseSpawnSpread * Mathf.Deg2Rad;
-                    float spreadRad2 = defenseSpawnSpread * Mathf.Deg2Rad;
+                    float spreadRad1 = defenseSpawnSpread * Mathf.Deg2Rad;
+                    float spreadRad2 = -defenseSpawnSpread * Mathf.Deg2Rad;
 
                     Vector3 dir1 = RotateXZ(defenseDir, spreadRad1);
                     Vector3 spawnPos1 = motherPos + dir1 * defenseSpawnDistance;

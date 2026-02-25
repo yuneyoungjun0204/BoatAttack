@@ -56,7 +56,7 @@ namespace BoatAttack
 
         [Range(0f, 1f)]
         [Tooltip("최소 Throttle (감속 시 최소값)")]
-        public float minThrottle = 0.8f;
+        public float minThrottle = 0.0f;
 
         [Range(0.1f, 2.0f)]
         public float steeringSensitivity = 0.3f;
@@ -346,7 +346,7 @@ namespace BoatAttack
             steeringInput = Mathf.Clamp(steeringInput, -1f, 1f);
 
             // Throttle Mapping: -1 → minThrottle, +1 → maxThrottle (기본 전진에서 감속 학습)
-            float throttle = Mathf.Lerp(minThrottle, maxThrottle, (throttleInput + 1f) * 0.5f);
+            float throttle = Mathf.Lerp(minThrottle, maxThrottle, throttleInput);
 
             // Steering 감도 적용
             float steering = Mathf.Clamp(steeringInput * steeringSensitivity, -1f, 1f);

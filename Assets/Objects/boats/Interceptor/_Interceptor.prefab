@@ -565,8 +565,18 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
+      propertyPath: stabilizationTorque
+      value: 10
+      objectReference: {fileID: 0}
+    - target: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
       propertyPath: centerOfMassOffset.y
       value: -1.3
+      objectReference: {fileID: 0}
+    - target: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      propertyPath: stabilizationDamping
+      value: 5
       objectReference: {fileID: 0}
     - target: {fileID: 4399986893398198514, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
@@ -669,6 +679,9 @@ MonoBehaviour:
   motherShip: {fileID: 0}
   motherShipTag: MotherShip
   webObject: {fileID: 0}
+  assignedTargetIndex: -1
+  envController: {fileID: 0}
+  enemyBufferSensor: {fileID: 0}
   maxLinearVelocity: 20
   maxAngularVelocity: 90
   velocityControlGain: 1
@@ -679,9 +692,23 @@ MonoBehaviour:
   minThrottle: 0.5
   steeringSensitivity: 0.3
   inputSmoothing: 0.2
-  positionNormK: 250
+  partnerNormK: 50
+  enemyNormK: 250
+  motherNormK: 500
+  partnerRScale: 1
+  partnerFScale: 1
+  partnerDistScale: 1
+  partnerHdgScale: 1
+  enemyRScale: 1
+  enemyFScale: 1
+  enemyDistScale: 1
+  enemyHdgScale: 1
+  motherRScale: 1
+  motherFScale: 1
+  motherDistScale: 1
   showRaycasts: 1
   enableDebugLog: 1
+  lastObservations: []
   _totalReward: 0
   _lastStepReward: 0
 --- !u!114 &7411346295538081491
