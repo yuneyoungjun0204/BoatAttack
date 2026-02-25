@@ -25,8 +25,7 @@ namespace BoatAttack
         public int maxEnemyCount = 5;
 
         [Header("Target Settings")]
-        public DefenseAgent partnerAgent;
-        public GameObject motherShip;
+        public DefenseAgent partnerAgent;        public GameObject motherShip;
         public string motherShipTag = "MotherShip";
         public GameObject webObject;
 
@@ -59,7 +58,7 @@ namespace BoatAttack
         public float minThrottle = 0.0f;
 
         [Range(0.1f, 2.0f)]
-        public float steeringSensitivity = 0.3f;
+        public float steeringSensitivity = 1.0f;
 
         [Range(0.01f, 1.0f)]
         [Tooltip("입력 스무스 처리 (1.0 = 즉각 반응)")]
@@ -83,6 +82,10 @@ namespace BoatAttack
         [Range(0f, 5f)] public float motherFScale = 1f;
         [Range(0f, 5f)] public float motherDistScale = 1f;
 
+        [Header("Heuristic")]
+        [Tooltip("true면 화살표키, false면 WASD (페어 배치 시 자동 설정)")]
+        public bool useArrowKeys = false;
+
         [Header("Debug")]
         public bool showRaycasts = true;
         public bool enableDebugLog = true;
@@ -97,6 +100,7 @@ namespace BoatAttack
         #pragma warning restore CS0414
 
         private bool _episodeEnded = false;
+        private bool _neutralized = false;
         private float _prevThrottle = 0f;
         private float _prevSteering = 0f;
 
@@ -142,9 +146,31 @@ namespace BoatAttack
             }
         }
 
+        /// <summary>
+        /// 무력화 상태 설정 (DisablePair에서 호출)
+        /// true → OnActionReceived에서 엔진 구동 차단
+        /// </summary>
+        public void SetNeutralized(bool value) => _neutralized = value;
+
+        /// <summary>
+        /// 런타임 배치 시 에이전트 상태 리셋
+        /// OnEpisodeBegin과 달리 ML-Agents 에피소드를 건드리지 않고 내부 플래그만 초기화
+        /// </summary>
+        public void ResetForDeployment()
+        {
+            _episodeEnded = false;
+            _neutralized = false;
+            _prevThrottle = 0f;
+            _prevSteering = 0f;
+            _throttleDelta = 0f;
+            _steeringDelta = 0f;
+        }
+
         public override void OnEpisodeBegin()
         {
             _episodeEnded = false;
+            // _neutralized는 여기서 리셋하지 않음
+            // SetNeutralized(false)로만 해제 (DeployPairs/ResetScene에서 호출)
             _totalReward = 0f;
             _lastStepReward = 0f;
             _prevThrottle = 0f;
@@ -328,12 +354,12 @@ namespace BoatAttack
                 lastObservations[index++] = value;
         }
 
-        /// <summary>
+        /// <summary>ㅊ
         /// 액션 수신: actions[0]=throttle(-1~1), actions[1]=steering(-1~1)
         /// </summary>
         public override void OnActionReceived(ActionBuffers actions)
         {
-            if (_engine == null || _engine.RB == null || _episodeEnded)
+            if (_engine == null || _engine.RB == null || _episodeEnded || _neutralized)
                 return;
 
             float throttleInput = actions.ContinuousActions[0];
@@ -394,7 +420,7 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 수동 조종 (Agent1: WASD, Agent2: Arrow Keys)
+        /// 수동 조종 - agent1: WASD, agent2: 화살표키
         /// </summary>
         public override void Heuristic(in ActionBuffers actionsOut)
         {
@@ -411,19 +437,9 @@ namespace BoatAttack
             float throttle = 0f;
             float steering = 0f;
 
-            string agentName = gameObject.name.ToLower();
-            bool isAgent1 = agentName.Contains("1") || agentName.Contains("agent1") || agentName.Contains("defense1");
-            bool isAgent2 = agentName.Contains("2") || agentName.Contains("agent2") || agentName.Contains("defense2");
-
-            if (isAgent1)
+            if (useArrowKeys)
             {
-                if (keyboard.wKey.isPressed) throttle = 1f;
-                else if (keyboard.sKey.isPressed) throttle = -0.5f;
-                if (keyboard.dKey.isPressed) steering = 1f;
-                else if (keyboard.aKey.isPressed) steering = -1f;
-            }
-            else if (isAgent2)
-            {
+                // Agent2: 화살표키
                 if (keyboard.upArrowKey.isPressed) throttle = 1f;
                 else if (keyboard.downArrowKey.isPressed) throttle = -0.5f;
                 if (keyboard.rightArrowKey.isPressed) steering = 1f;
@@ -431,10 +447,11 @@ namespace BoatAttack
             }
             else
             {
-                if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed) throttle = 1f;
-                else if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed) throttle = -0.5f;
-                if (keyboard.dKey.isPressed || keyboard.rightArrowKey.isPressed) steering = 1f;
-                else if (keyboard.aKey.isPressed || keyboard.leftArrowKey.isPressed) steering = -1f;
+                // Agent1: WASD
+                if (keyboard.wKey.isPressed) throttle = 1f;
+                else if (keyboard.sKey.isPressed) throttle = -0.5f;
+                if (keyboard.dKey.isPressed) steering = 1f;
+                else if (keyboard.aKey.isPressed) steering = -1f;
             }
 
             continuousActions[0] = Mathf.Clamp(throttle, -1f, 1f);
@@ -443,7 +460,7 @@ namespace BoatAttack
 
         private void OnCollisionEnter(Collision collision)
         {
-            if (_episodeEnded)
+            if (_episodeEnded || _neutralized)
                 return;
 
             if (collision.gameObject.GetComponent<DefenseAgent>() != null ||
@@ -454,7 +471,7 @@ namespace BoatAttack
                 DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
                 if (envController != null)
                 {
-                    envController.OnFriendlyCollision();
+                    envController.OnFriendlyCollision(this);
                 }
             }
         }

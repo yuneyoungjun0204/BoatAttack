@@ -78,6 +78,16 @@ namespace BoatAttack
                     Destroy(effect, 3f);
                 }
             }
+            // 다른 페어의 아군 선박이 웹에 닿으면 처리
+            else if (other.GetComponent<DefenseAgent>() != null)
+            {
+                if (envController != null)
+                {
+                    envController.OnAllyHitWeb(other.gameObject);
+                    if (enableDebugLog)
+                        Debug.Log($"[WebCollisionDetector] 아군 웹 충돌! {other.gameObject.name}");
+                }
+            }
         }
 
         /// <summary>

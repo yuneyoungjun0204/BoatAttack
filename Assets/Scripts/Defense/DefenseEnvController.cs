@@ -23,6 +23,7 @@ namespace BoatAttack
     /// - 에피소드 시작/종료 관리
     /// - 커리큘럼 학습 단계별 보상 제어
     /// </summary>
+    [DefaultExecutionOrder(1000)] // LateUpdate가 다른 모든 스크립트보다 나중에 실행 → 카메라 최종 제어
     public class DefenseEnvController : MonoBehaviour
     {
         [Header("Training Stage")]
@@ -196,6 +197,12 @@ namespace BoatAttack
         [Tooltip("아군 진수구역 관리자 (없으면 기존 1쌍 레거시 모드)")]
         public LaunchZoneManager launchZoneManager;
 
+        [Tooltip("방어 추적 카메라 (없으면 카메라 전환 비활성화)")]
+        public DefenseFollowCamera followCamera;
+
+        [Tooltip("아군 생성 버튼 UI (없으면 무시)")]
+        public AllySpawnButtonUI spawnButtonUI;
+
         // 풀 배열 (Start()에서 초기화, 인덱스 기반)
         private GameObject[] _enemyPool;
         private AttackAgent[] _poolAttackAgents;
@@ -218,6 +225,7 @@ namespace BoatAttack
         [SerializeField] private int _totalCollisions = 0;
 
         private int _resetTimer = 0; // FixedUpdate 기반 타이머
+        public int CurrentStep => _resetTimer;
         private bool _episodeActive = false;
         private bool _episodeEnding = false; // 에피소드 종료 중 플래그 (중복 호출 방지)
         
@@ -263,8 +271,22 @@ namespace BoatAttack
         private System.Collections.Generic.Dictionary<GameObject, Quaternion> _originalBoatRotations = 
             new System.Collections.Generic.Dictionary<GameObject, Quaternion>(); // 태그가 "boat"인 모든 선박의 초기 각도
         
+        // 무력화된 적군 추적 (SetActive(false) 대신 현재 위치 정지 방식)
+        private System.Collections.Generic.HashSet<GameObject> _neutralizedEnemies =
+            new System.Collections.Generic.HashSet<GameObject>();
+
         // 적군 선박 관리 → _enemyPool 배열로 통합 (위 Enemy Pool 섹션 참조)
         
+        // FollowCam: C키로 [아군 페어 → 적군 개별] 순환
+        private Camera _followCamCamera;
+        private bool _followCamInitialized = false;
+        private bool _followCamSnap = false;
+        private enum FollowCamMode { None, Pair, Enemy }
+        private FollowCamMode _camMode = FollowCamMode.None;
+        private int _camTargetId = -1;
+        private UnityEngine.InputSystem.InputAction _camSwitchAction;
+        private bool _cKeyQueued = false;
+
         // Inspector에서 Stage 변경 시 자동 적용 (에디터 전용)
         private TrainingStage _lastStage;
 
@@ -334,6 +356,24 @@ namespace BoatAttack
                 _lastStage = currentStage;
 
                 ApplyStageSettings();
+            }
+        }
+
+        private void OnEnable()
+        {
+            _camSwitchAction = new UnityEngine.InputSystem.InputAction(
+                "SwitchCam", UnityEngine.InputSystem.InputActionType.Button, "<Keyboard>/c");
+            _camSwitchAction.performed += _ => _cKeyQueued = true;
+            _camSwitchAction.Enable();
+        }
+
+        private void OnDisable()
+        {
+            if (_camSwitchAction != null)
+            {
+                _camSwitchAction.Disable();
+                _camSwitchAction.Dispose();
+                _camSwitchAction = null;
             }
         }
 
@@ -480,6 +520,18 @@ namespace BoatAttack
                     };
                 }
                 launchZoneManager.InitializeAllyPool();
+
+                // 버튼으로만 배치: Inspector 값 무시, 강제 0
+                launchZoneManager.activePairCount = 0;
+            }
+
+            // 아군 생성 버튼 UI 자동 생성 (없으면)
+            if (spawnButtonUI == null && launchZoneManager != null)
+            {
+                GameObject btnObj = new GameObject("AllySpawnButtonUI");
+                btnObj.transform.SetParent(transform);
+                spawnButtonUI = btnObj.AddComponent<AllySpawnButtonUI>();
+                spawnButtonUI.envController = this;
             }
 
             // 씬의 모든 attack_track 경로 수집 및 원본 웨이포인트 저장
@@ -491,6 +543,260 @@ namespace BoatAttack
             
         }
         
+        /// <summary>
+        /// C키: [아군 페어들 → 적군 개별선박들] 순환
+        /// 명시적 (mode, id)로 추적 대상 관리
+        /// </summary>
+        private void Update()
+        {
+            // 카메라 초기화 (1회): 기존 카메라 전부 끄고, 새 카메라 생성
+            if (!_followCamInitialized)
+            {
+                _followCamInitialized = true;
+
+                // 씬의 모든 기존 카메라/AudioListener 비활성화
+                foreach (var cam in FindObjectsOfType<Camera>())
+                    cam.enabled = false;
+                foreach (var al in FindObjectsOfType<AudioListener>())
+                    al.enabled = false;
+
+                // 전용 카메라 새로 생성 (다른 스크립트가 절대 건드릴 수 없음)
+                var camObj = new GameObject("_DefenseFollowCam");
+                _followCamCamera = camObj.AddComponent<Camera>();
+                camObj.AddComponent<AudioListener>();
+                _followCamCamera.clearFlags = CameraClearFlags.Skybox;
+                _followCamCamera.nearClipPlane = 0.3f;
+                _followCamCamera.farClipPlane = 3000f;
+                _followCamCamera.fieldOfView = 60f;
+                Debug.LogWarning("[FollowCam] 전용 카메라 생성 완료");
+            }
+
+            // C키 입력 (InputAction 콜백 — 프레임 누락 없음)
+            if (_cKeyQueued)
+            {
+                _cKeyQueued = false;
+                AdvanceFollowCamTarget();
+            }
+
+            // 타겟 없으면 자동 선택 (최초 1회만)
+            if (_camMode == FollowCamMode.None)
+            {
+                SelectFirstAvailableCamTarget();
+            }
+        }
+
+        /// <summary>
+        /// 화면 좌상단에 카메라 타겟 정보 HUD 표시
+        /// </summary>
+        private void OnGUI()
+        {
+            string mode = _camMode.ToString();
+            string target = "None";
+            if (_camMode == FollowCamMode.Pair && launchZoneManager != null)
+            {
+                var pair = launchZoneManager.GetPair(_camTargetId);
+                target = pair != null ? $"Pair#{_camTargetId} active={pair.isActive}" : $"Pair#{_camTargetId} NULL";
+            }
+            else if (_camMode == FollowCamMode.Enemy && enemyShips != null && _camTargetId >= 0 && _camTargetId < enemyShips.Length)
+            {
+                var e = enemyShips[_camTargetId];
+                target = e != null ? e.name : "NULL";
+            }
+
+            string camName = _followCamCamera != null ? _followCamCamera.name : "NO CAM";
+            GUI.Label(new Rect(10, 10, 500, 25), $"[CAM] {mode} | {target} | cam={camName} | [C]=switch",
+                new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold,
+                    normal = { textColor = Color.yellow } });
+        }
+
+        /// <summary>
+        /// 현재 카메라 타겟이 유효한지 확인
+        /// </summary>
+        private bool IsCurrentCamTargetValid()
+        {
+            if (_camMode == FollowCamMode.Pair && launchZoneManager != null)
+            {
+                var pair = launchZoneManager.GetPair(_camTargetId);
+                return pair != null && pair.isActive;
+            }
+            if (_camMode == FollowCamMode.Enemy && enemyShips != null)
+            {
+                return _camTargetId >= 0 && _camTargetId < enemyShips.Length
+                    && enemyShips[_camTargetId] != null
+                    && !_neutralizedEnemies.Contains(enemyShips[_camTargetId]);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 다음 유효한 카메라 타겟으로 전진
+        /// 순서: 현재 위치 → 같은 카테고리 내 다음 → 다른 카테고리 → 처음
+        /// </summary>
+        private void AdvanceFollowCamTarget()
+        {
+            // 전체 타겟 목록을 (mode, id) 순서대로 구축
+            var targets = new System.Collections.Generic.List<(FollowCamMode mode, int id)>();
+
+            // 1. 활성 아군 페어들
+            if (launchZoneManager != null)
+            {
+                int cap = launchZoneManager.GetPoolCapacity();
+                for (int i = 0; i < cap; i++)
+                {
+                    var pair = launchZoneManager.GetPair(i);
+                    if (pair != null && pair.isActive)
+                        targets.Add((FollowCamMode.Pair, i));
+                }
+            }
+
+            // 2. 활성 적군들
+            if (enemyShips != null)
+            {
+                for (int i = 0; i < enemyShips.Length; i++)
+                {
+                    if (enemyShips[i] != null && !_neutralizedEnemies.Contains(enemyShips[i]))
+                        targets.Add((FollowCamMode.Enemy, i));
+                }
+            }
+
+            if (targets.Count == 0)
+            {
+                _camMode = FollowCamMode.None;
+                _camTargetId = -1;
+                Debug.LogWarning("[FollowCam] C키 → 타겟 없음");
+                return;
+            }
+
+            // 현재 타겟의 위치 찾기
+            int curIdx = -1;
+            for (int i = 0; i < targets.Count; i++)
+            {
+                if (targets[i].mode == _camMode && targets[i].id == _camTargetId)
+                {
+                    curIdx = i;
+                    break;
+                }
+            }
+
+            // 다음으로 전진
+            var prev = (_camMode, _camTargetId);
+            int nextIdx = (curIdx + 1) % targets.Count;
+            _camMode = targets[nextIdx].mode;
+            _camTargetId = targets[nextIdx].id;
+            _followCamSnap = true;
+
+            // 상세 로그: 이전→이후, 전체 목록 크기
+            int pairCnt = 0, enemyCnt = 0;
+            foreach (var t in targets) { if (t.mode == FollowCamMode.Pair) pairCnt++; else enemyCnt++; }
+            Debug.LogWarning($"[FollowCam] C키: {prev.Item1}[{prev.Item2}] → {_camMode}[{_camTargetId}] " +
+                $"(curIdx={curIdx}→{nextIdx}, total={targets.Count}, pairs={pairCnt}, enemies={enemyCnt})");
+        }
+
+        /// <summary>
+        /// 첫 유효 타겟 자동 선택 (타겟 없을 때)
+        /// </summary>
+        private void SelectFirstAvailableCamTarget()
+        {
+            // 적군 먼저 (아군 배치 전에도 볼 수 있도록)
+            if (enemyShips != null)
+            {
+                for (int i = 0; i < enemyShips.Length; i++)
+                {
+                    if (enemyShips[i] != null && !_neutralizedEnemies.Contains(enemyShips[i]))
+                    {
+                        _camMode = FollowCamMode.Enemy;
+                        _camTargetId = i;
+                        _followCamSnap = true;
+                        return;
+                    }
+                }
+            }
+
+            // 아군 페어
+            if (launchZoneManager != null)
+            {
+                int cap = launchZoneManager.GetPoolCapacity();
+                for (int i = 0; i < cap; i++)
+                {
+                    var pair = launchZoneManager.GetPair(i);
+                    if (pair != null && pair.isActive)
+                    {
+                        _camMode = FollowCamMode.Pair;
+                        _camTargetId = i;
+                        _followCamSnap = true;
+                        return;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// LateUpdate: 카메라 추적
+        /// Pair → 두 선박 중심점 (웹 + 양선박 한 화면)
+        /// Enemy → 해당 선박 개별 추적
+        /// </summary>
+        private void LateUpdate()
+        {
+            if (_followCamCamera == null || _camMode == FollowCamMode.None) return;
+
+            Vector3 targetPos;
+            Vector3 camForward;
+            float camHeight, camBack;
+
+            if (_camMode == FollowCamMode.Pair)
+            {
+                var pair = launchZoneManager.GetPair(_camTargetId);
+                if (pair == null || !pair.isActive) return;
+
+                Vector3 p1 = pair.agent1 != null ? pair.agent1.transform.position : Vector3.zero;
+                Vector3 p2 = pair.agent2 != null ? pair.agent2.transform.position : Vector3.zero;
+                targetPos = (p1 + p2) * 0.5f;
+                targetPos.y = 0f;
+
+                Vector3 fwd1 = pair.agent1 != null ? pair.agent1.transform.forward : Vector3.forward;
+                Vector3 fwd2 = pair.agent2 != null ? pair.agent2.transform.forward : Vector3.forward;
+                camForward = (fwd1 + fwd2).normalized;
+                camForward.y = 0f;
+                if (camForward.sqrMagnitude < 0.01f) camForward = Vector3.forward;
+                camForward.Normalize();
+
+                float shipDist = Vector3.Distance(p1, p2);
+                camHeight = Mathf.Max(30f, shipDist * 0.8f);
+                camBack = Mathf.Max(30f, shipDist * 0.6f);
+            }
+            else // Enemy
+            {
+                if (_camTargetId < 0 || _camTargetId >= enemyShips.Length || enemyShips[_camTargetId] == null) return;
+                var enemy = enemyShips[_camTargetId];
+
+                targetPos = enemy.transform.position;
+                targetPos.y = 0f;
+
+                camForward = enemy.transform.forward;
+                camForward.y = 0f;
+                if (camForward.sqrMagnitude < 0.01f) camForward = Vector3.forward;
+                camForward.Normalize();
+
+                camHeight = 40f;
+                camBack = 40f;
+            }
+
+            Vector3 desiredPos = targetPos + Vector3.up * camHeight + camForward * -camBack;
+
+            if (_followCamSnap)
+            {
+                Debug.LogWarning($"[FollowCam] SNAP! cam→{desiredPos:F0}, mode={_camMode}[{_camTargetId}]");
+                _followCamCamera.transform.position = desiredPos;
+                _followCamSnap = false;
+            }
+            else
+            {
+                _followCamCamera.transform.position = Vector3.Lerp(
+                    _followCamCamera.transform.position, desiredPos, 5f * Time.unscaledDeltaTime);
+            }
+            _followCamCamera.transform.LookAt(targetPos + Vector3.up * 1f);
+        }
+
         /// <summary>
         /// PushBlockEnvController 패턴: FixedUpdate에서 타이머 관리
         /// </summary>
@@ -522,65 +828,109 @@ namespace BoatAttack
                 return;
             }
 
-            // 아군 간 거리 체크 (최대/최소) - 유예기간 이후부터
-            if (!inGracePeriod && defenseAgent1 != null && defenseAgent2 != null)
+            // 아군 간 거리 체크 - 다중 쌍 지원
+            if (!inGracePeriod)
             {
-                Vector3 pos1 = defenseAgent1.transform.position;
-                Vector3 pos2 = defenseAgent2.transform.position;
-                float allyDist = Vector3.Distance(pos1, pos2);
+                if (launchZoneManager != null)
+                {
+                    // 다중 쌍: 각 활성 쌍의 거리 체크 → 위반 쌍만 무력화
+                    int poolCap = launchZoneManager.GetPoolCapacity();
+                    for (int pi = 0; pi < poolCap; pi++)
+                    {
+                        DefensePair pair = launchZoneManager.GetPair(pi);
+                        if (pair == null || !pair.isActive) continue;
+                        if (pair.agent1 == null || pair.agent2 == null) continue;
 
-                // 최대 거리 초과 체크
-                if (maxAllyDistance > 0f && allyDist > maxAllyDistance)
-                {
-                    RestartEpisode($"AllyDistanceExceeded(dist={allyDist:F1},max={maxAllyDistance})", rewardCalculator.collisionPenalty);
-                    return;
-                }
+                        // 배치 후 유예기간 (10스텝) 동안 거리 체크 건너뛰기
+                        if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
 
-                // 최소 거리 미달 체크
-                if (minAllyDistance > 0f && allyDist < minAllyDistance)
-                {
-                    RestartEpisode($"AllyDistanceTooClose(dist={allyDist:F1},min={minAllyDistance})", rewardCalculator.collisionPenalty);
-                    return;
-                }
+                        Vector3 p1 = pair.agent1.transform.position;
+                        Vector3 p2 = pair.agent2.transform.position;
+                        float allyDist = Vector3.Distance(p1, p2);
 
-                // 위치 교차 체크 (왼쪽/오른쪽 위치가 바뀌면 페널티)
-                // 동적 스폰: 적 접근 방향의 수직축 기준, 레거시: 전역 X축 기준
-                bool agent1CurrentlyOnLeft;
-                if (useDynamicSpawn && motherShip != null)
-                {
-                    Vector3 center = motherShip.transform.position;
-                    float dot1 = Vector3.Dot(pos1 - center, _currentPerpendicularDir);
-                    float dot2 = Vector3.Dot(pos2 - center, _currentPerpendicularDir);
-                    agent1CurrentlyOnLeft = dot1 < dot2;
+                        bool shouldDisable = false;
+                        if (maxAllyDistance > 0f && allyDist > maxAllyDistance)
+                            shouldDisable = true;
+                        if (minAllyDistance > 0f && allyDist < minAllyDistance)
+                            shouldDisable = true;
+
+                        if (shouldDisable)
+                        {
+                            pair.agent1.AddReward(rewardCalculator.collisionPenalty);
+                            pair.agent2.AddReward(rewardCalculator.collisionPenalty);
+                            launchZoneManager.DisablePair(pi, m_AgentGroup);
+                            NotifyCameraPairDisabled(pair);
+                            Debug.LogWarning($"[DefenseEnv] Pair {pi} 거리 위반 무력화 (dist={allyDist:F1}), step={_resetTimer}");
+                        }
+                    }
+                    // 모든 쌍 무력화 시 에피소드 종료 (한 번이라도 배치된 적이 있을 때만)
+                    if (launchZoneManager.GetActivePairCount() == 0 && launchZoneManager.GetDeployedPairCount() > 0)
+                    {
+                        CheckEpisodeEndCondition();
+                        return;
+                    }
                 }
-                else
+                else if (defenseAgent1 != null && defenseAgent2 != null)
                 {
-                    agent1CurrentlyOnLeft = pos1.x < pos2.x;
-                }
-                if (agent1CurrentlyOnLeft != _agent1StartsOnLeft)
-                {
-                    RestartEpisode($"PositionSwapped(startLeft={_agent1StartsOnLeft},nowLeft={agent1CurrentlyOnLeft})", rewardCalculator.collisionPenalty);
-                    return;
+                    // 레거시 단일 쌍: 기존 동작 유지
+                    Vector3 pos1 = defenseAgent1.transform.position;
+                    Vector3 pos2 = defenseAgent2.transform.position;
+                    float allyDist = Vector3.Distance(pos1, pos2);
+
+                    if (maxAllyDistance > 0f && allyDist > maxAllyDistance)
+                    {
+                        RestartEpisode($"AllyDistanceExceeded(dist={allyDist:F1},max={maxAllyDistance})", rewardCalculator.collisionPenalty);
+                        return;
+                    }
+                    if (minAllyDistance > 0f && allyDist < minAllyDistance)
+                    {
+                        RestartEpisode($"AllyDistanceTooClose(dist={allyDist:F1},min={minAllyDistance})", rewardCalculator.collisionPenalty);
+                        return;
+                    }
+
+                    // 위치 교차 체크
+                    bool agent1CurrentlyOnLeft;
+                    if (useDynamicSpawn && motherShip != null)
+                    {
+                        Vector3 center = motherShip.transform.position;
+                        float dot1 = Vector3.Dot(pos1 - center, _currentPerpendicularDir);
+                        float dot2 = Vector3.Dot(pos2 - center, _currentPerpendicularDir);
+                        agent1CurrentlyOnLeft = dot1 < dot2;
+                    }
+                    else
+                    {
+                        agent1CurrentlyOnLeft = pos1.x < pos2.x;
+                    }
+                    if (agent1CurrentlyOnLeft != _agent1StartsOnLeft)
+                    {
+                        RestartEpisode($"PositionSwapped(startLeft={_agent1StartsOnLeft},nowLeft={agent1CurrentlyOnLeft})", rewardCalculator.collisionPenalty);
+                        return;
+                    }
                 }
             }
 
-            // 방어선 돌파 체크: 적이 그물보다 모선에 임계값 이상 더 가까우면 에피소드 종료
-            if (!inGracePeriod && motherShip != null && webObject != null && enemyBreachThreshold > 0f)
+            // 방어선 돌파 체크: 적이 모선에 너무 가까우면 해당 적만 무력화
+            if (!inGracePeriod && motherShip != null && enemyBreachThreshold > 0f)
             {
                 Vector3 motherPos = motherShip.transform.position;
-                float webToMother = Vector3.Distance(webObject.transform.position, motherPos);
 
                 foreach (var enemy in enemyShips)
                 {
                     if (enemy == null || !enemy.activeInHierarchy) continue;
                     float enemyToMother = Vector3.Distance(enemy.transform.position, motherPos);
 
-                    if (enemyToMother < webToMother - enemyBreachThreshold)
+                    if (enemyToMother < enemyBreachThreshold)
                     {
-                        RestartEpisode($"EnemyBreach(enemy={enemy.name},enemyDist={enemyToMother:F0},webDist={webToMother:F0},gap={webToMother - enemyToMother:F0})", enemyBreachPenalty);
-                        return;
+                        // 페널티 부여
+                        if (m_AgentGroup != null)
+                            m_AgentGroup.AddGroupReward(enemyBreachPenalty);
+
+                        DisableEnemy(enemy);
+                        Debug.LogWarning($"[DefenseEnv] EnemyBreach → {enemy.name} 무력화, dist={enemyToMother:F0}m, step={_resetTimer}");
                     }
                 }
+                CheckEpisodeEndCondition();
+                if (_episodeEnding) return;
             }
 
             // 보상 계산 주기 확인
@@ -719,6 +1069,9 @@ namespace BoatAttack
             
             // 충돌 횟수 리셋
             _totalCollisionCount = 0;
+
+            // 무력화 적군 추적 초기화
+            _neutralizedEnemies.Clear();
             
             // 기존 리셋 코루틴 중지 및 플래그 초기화
             StopAllCoroutines();
@@ -761,9 +1114,20 @@ namespace BoatAttack
             // attack_boat의 대기 중인 Invoke 취소 (폭발 등)
             CancelAttackBoatPendingActions();
 
+            // 버튼으로만 배치: 매 에피소드마다 activePairCount=0 강제 (Inspector 값 무시)
+            if (launchZoneManager != null)
+                launchZoneManager.activePairCount = 0;
+
             // 모든 선박 리셋
             ResetPositionsOnly();
-            
+
+            // 카메라를 첫 번째 아군으로 초기화
+            if (followCamera != null)
+                followCamera.OnEpisodeReset();
+
+            // 아군 생성 버튼 리셋
+            if (spawnButtonUI != null)
+                spawnButtonUI.OnEpisodeReset();
         }
         
         #endregion
@@ -790,11 +1154,13 @@ namespace BoatAttack
         /// </summary>
         public void OnEnemyCaptured(Vector3 enemyPosition)
         {
-            // 에피소드가 종료 중이면 무시
-            if (_episodeEnding)
-                return;
+            if (_episodeEnding) return;
 
-            RestartEpisode("EnemyCaptured", rewardCalculator.captureReward);
+            // OnEnemyHitWeb에서 이미 처리됨 (보상 + 무력화 + 종료조건 체크)
+            // 레거시 호출 대비 fallback
+            if (m_AgentGroup != null)
+                m_AgentGroup.AddGroupReward(rewardCalculator.captureReward);
+            CheckEpisodeEndCondition();
         }
         
         /// <summary>
@@ -803,67 +1169,39 @@ namespace BoatAttack
         /// </summary>
         public void OnEnemyHitWeb(GameObject enemyBoat)
         {
-            // 에피소드가 종료 중이면 무시
-            if (_episodeEnding)
-                return;
+            if (_episodeEnding) return;
+            if (_resetTimer <= 10) return;
+            if (enemyBoat == null) return;
 
-            // 스폰 직후 유예기간에는 충돌 무시
-            if (_resetTimer <= 10)
-                return;
-
-            if (enemyBoat == null)
-                return;
-            
-            // 중복 충돌 방지: 같은 적군 선박이 쿨다운 시간 내에 다시 충돌하면 무시
+            // 중복 충돌 방지
             float currentTime = Time.time;
             if (_collisionCooldownTimes.ContainsKey(enemyBoat))
             {
-                float lastCollisionTime = _collisionCooldownTimes[enemyBoat];
-                if (currentTime - lastCollisionTime < _collisionCooldown)
-                {
+                if (currentTime - _collisionCooldownTimes[enemyBoat] < _collisionCooldown)
                     return;
-                }
             }
-
-            // 충돌 시간 기록
             _collisionCooldownTimes[enemyBoat] = currentTime;
-
-            // 통합 충돌 횟수 증가 (Web + MotherShip 합산)
             _totalCollisionCount++;
 
             float reward = rewardCalculator.captureReward;
 
-            // 통합 충돌 횟수가 maxCollisionCount 이상이면 에피소드 종료
-            if (_totalCollisionCount >= maxCollisionCount)
-            {
-                RestartEpisode("WebCollisionLimit", reward);
-                return;
-            }
-
-            // 충돌 횟수가 maxCollisionCount 미만이면 보상 부여 후 해당 적군만 리셋
+            // 보상 부여
             if (m_AgentGroup != null)
-            {
                 m_AgentGroup.AddGroupReward(reward);
-            }
             else
             {
-                if (defenseAgent1 != null)
-                    defenseAgent1.AddReward(reward);
-                if (defenseAgent2 != null)
-                    defenseAgent2.AddReward(reward);
+                if (defenseAgent1 != null) defenseAgent1.AddReward(reward);
+                if (defenseAgent2 != null) defenseAgent2.AddReward(reward);
             }
-            
-            // 적군 선박을 원점으로 리셋 (모선 충돌과 동일한 메커니즘 사용)
-            ResetSingleAttackBoat(enemyBoat);
 
-            // 아군 선박 위치 리셋은 에피소드 종료 시에만 수행 (mid-episode 리셋 비활성화)
-            // ResetDefenseAgentsToOrigin();
-            
-            // WebDetector 리셋
+            // 해당 적만 무력화 (비활성화)
+            DisableEnemy(enemyBoat);
+
             if (_webDetector != null)
-            {
                 _webDetector.ResetDetector();
-            }
+
+            // 전체 종료 조건 확인
+            CheckEpisodeEndCondition();
         }
 
         /// <summary>
@@ -871,14 +1209,34 @@ namespace BoatAttack
         /// </summary>
         public void OnAllyHitWeb(GameObject allyShip)
         {
-            if (_episodeEnding)
-                return;
+            if (_episodeEnding) return;
+            if (_resetTimer <= 10) return;
 
-            // 스폰 직후 유예기간에는 충돌 무시 (Web 재배치 전 겹침 방지)
-            if (_resetTimer <= 10)
-                return;
+            // LaunchZoneManager가 있으면 해당 쌍만 비활성화
+            if (launchZoneManager != null && allyShip != null)
+            {
+                int pairIdx = launchZoneManager.FindPairIndexByGameObject(allyShip);
+                if (pairIdx >= 0)
+                {
+                    DefensePair pair = launchZoneManager.GetPair(pairIdx);
 
-            // 페널티 부여 후 에피소드 종료 (인스펙터에서 조절 가능)
+                    // 배치 후 유예기간 (10스텝) 동안 충돌 무시
+                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10)
+                        return;
+
+                    if (pair?.agent1 != null) pair.agent1.AddReward(allyWebCollisionPenalty);
+                    if (pair?.agent2 != null) pair.agent2.AddReward(allyWebCollisionPenalty);
+
+                    launchZoneManager.DisablePair(pairIdx, m_AgentGroup);
+                    NotifyCameraPairDisabled(pair);
+                    Debug.LogWarning($"[DefenseEnv] AllyHitWeb → Pair {pairIdx} 무력화, step={_resetTimer}");
+
+                    CheckEpisodeEndCondition();
+                    return;
+                }
+            }
+
+            // 레거시 fallback
             RestartEpisode("AllyHitWeb", allyWebCollisionPenalty);
         }
 
@@ -905,57 +1263,36 @@ namespace BoatAttack
         /// </summary>
         public void OnMotherShipCollision(GameObject enemyBoat)
         {
-            // 에피소드가 종료 중이면 무시
-            if (_episodeEnding)
-                return;
+            if (_episodeEnding) return;
+            if (_resetTimer <= 10) return;
+            if (enemyBoat == null) return;
 
-            // 스폰 직후 유예기간에는 충돌 무시
-            if (_resetTimer <= 10)
-                return;
-
-            if (enemyBoat == null)
-                return;
-
-            // 중복 충돌 방지: 같은 적군 선박이 쿨다운 시간 내에 다시 충돌하면 무시
+            // 중복 충돌 방지
             float currentTime = Time.time;
             if (_collisionCooldownTimes.ContainsKey(enemyBoat))
             {
-                float lastCollisionTime = _collisionCooldownTimes[enemyBoat];
-                if (currentTime - lastCollisionTime < _collisionCooldown)
-                {
+                if (currentTime - _collisionCooldownTimes[enemyBoat] < _collisionCooldown)
                     return;
-                }
             }
-
-            // 충돌 시간 기록
             _collisionCooldownTimes[enemyBoat] = currentTime;
-
-            // 통합 충돌 횟수 증가 (Web + MotherShip 합산)
             _totalCollisionCount++;
 
             float penalty = rewardCalculator.motherShipHitPenalty;
 
-            // 통합 충돌 횟수가 maxCollisionCount 이상이면 에피소드 종료
-            if (_totalCollisionCount >= maxCollisionCount)
-            {
-                RestartEpisode("MotherShipCollisionLimit", penalty);
-                return;
-            }
-
-            // 충돌 횟수 미만이면 페널티 부여 + 해당 공격선만 리셋
+            // 페널티 부여
             if (m_AgentGroup != null)
-            {
                 m_AgentGroup.AddGroupReward(penalty);
-            }
             else
             {
-                if (defenseAgent1 != null)
-                    defenseAgent1.AddReward(penalty);
-                if (defenseAgent2 != null)
-                    defenseAgent2.AddReward(penalty);
+                if (defenseAgent1 != null) defenseAgent1.AddReward(penalty);
+                if (defenseAgent2 != null) defenseAgent2.AddReward(penalty);
             }
 
-            ResetSingleAttackBoat(enemyBoat);
+            // 해당 적만 무력화 (비활성화)
+            DisableEnemy(enemyBoat);
+
+            // 전체 종료 조건 확인
+            CheckEpisodeEndCondition();
         }
 
         /// <summary>
@@ -997,24 +1334,164 @@ namespace BoatAttack
                 }
             }
         }
-        
+
+        /// <summary>
+        /// 적군 선박 무력화 (비활성화, 리스폰 없음)
+        /// 포획 또는 모선 충돌 시 해당 적만 제거
+        /// </summary>
+        private void DisableEnemy(GameObject enemyBoat)
+        {
+            if (enemyBoat == null) return;
+
+            // 엔진 정지 (관성 제거, 파도/부력은 유지)
+            var rb = enemyBoat.GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+
+            // AttackAgent 액션 차단 (_hasExploded → FixedUpdate/OnActionReceived 스킵)
+            var attackAgent = enemyBoat.GetComponent<AttackAgent>();
+            if (attackAgent != null)
+                attackAgent.SetNeutralized();
+
+            // 활성 적군 목록에서 제거 (카메라/보상 계산에서 무시됨)
+            MarkEnemyAsNeutralized(enemyBoat);
+
+            // 카메라가 이 적을 추적 중이면 다른 선박으로 전환
+            if (followCamera != null)
+                followCamera.OnShipNeutralized(enemyBoat);
+
+            Debug.Log($"[DefenseEnv] DisableEnemy: {enemyBoat.name} (현재 위치 정지), step={_resetTimer}");
+        }
+
+        /// <summary>
+        /// 무력화된 적군 등록 (enemyShips null 처리 + HashSet 추적)
+        /// </summary>
+        private void MarkEnemyAsNeutralized(GameObject enemyBoat)
+        {
+            _neutralizedEnemies.Add(enemyBoat);
+
+            if (enemyShips == null) return;
+            for (int i = 0; i < enemyShips.Length; i++)
+            {
+                if (enemyShips[i] == enemyBoat)
+                {
+                    enemyShips[i] = null;
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 적군이 무력화 상태인지 확인
+        /// </summary>
+        public bool IsEnemyNeutralized(GameObject enemy)
+        {
+            return enemy == null || _neutralizedEnemies.Contains(enemy);
+        }
+
+        /// <summary>
+        /// 쌍 무력화 시 카메라에 양쪽 에이전트 알림
+        /// </summary>
+        private void NotifyCameraPairDisabled(DefensePair pair)
+        {
+            if (followCamera == null || pair == null) return;
+            if (pair.agent1 != null) followCamera.OnShipNeutralized(pair.agent1.gameObject);
+            if (pair.agent2 != null) followCamera.OnShipNeutralized(pair.agent2.gameObject);
+        }
+
+        /// <summary>
+        /// 에피소드 종료 조건 확인
+        /// - 모든 적 무력화 → 성공 종료 (+보상)
+        /// - 모든 아군 쌍 무력화 → 실패 종료 (-패널티)
+        /// </summary>
+        private void CheckEpisodeEndCondition()
+        {
+            if (_episodeEnding) return;
+
+            // 활성 적군 수 확인 (무력화 HashSet 기준)
+            int activeEnemies = 0;
+            if (_enemyPool != null)
+            {
+                for (int i = 0; i < _enemyPool.Length; i++)
+                {
+                    if (_enemyPool[i] != null && _enemyPool[i].activeSelf && !_neutralizedEnemies.Contains(_enemyPool[i]))
+                        activeEnemies++;
+                }
+            }
+
+            // 활성 쌍 수 확인
+            int activePairs = 0;
+            if (launchZoneManager != null)
+                activePairs = launchZoneManager.GetActivePairCount();
+            else if (defenseAgent1 != null && defenseAgent2 != null)
+                activePairs = 1; // 레거시: 단일 쌍
+
+            int totalEnemiesThisStage = GetActiveEnemyCountForStage();
+
+            // 모든 적 무력화 → 성공 종료
+            if (activeEnemies == 0 && totalEnemiesThisStage > 0)
+            {
+                Debug.LogWarning($"[DefenseEnv] ★ ALL ENEMIES NEUTRALIZED ★ step={_resetTimer}");
+                RestartEpisode("AllEnemiesNeutralized", rewardCalculator.captureReward);
+                return;
+            }
+
+            // 모든 쌍 무력화 → 실패 종료 (한 번이라도 배치된 적이 있을 때만)
+            if (activePairs == 0 && launchZoneManager != null && launchZoneManager.GetDeployedPairCount() > 0)
+            {
+                Debug.LogWarning($"[DefenseEnv] ★ ALL PAIRS NEUTRALIZED ★ step={_resetTimer}");
+                RestartEpisode("AllPairsNeutralized", rewardCalculator.collisionPenalty);
+                return;
+            }
+        }
+
         /// <summary>
         /// 아군 충돌 처리 (아군-아군 또는 아군-모선 충돌)
-        /// 에피소드 종료 + 페널티 부여
+        /// 해당 쌍만 무력화 (에피소드 유지)
         /// </summary>
-        public void OnFriendlyCollision()
+        public void OnFriendlyCollision(DefenseAgent collidedAgent = null)
         {
-            // 에피소드가 종료 중이면 무시
-            if (_episodeEnding)
-                return;
+            if (_episodeEnding) return;
+            if (_resetTimer <= 10) return;
 
-            // 스폰 직후 유예기간에는 충돌 무시 (물리 안정화 대기)
-            if (_resetTimer <= 10)
-                return;
+            float penalty = rewardCalculator.collisionPenalty;
 
-            // RestartEpisode를 통해 일관된 방식으로 에피소드 종료
-            // 패널티 부여 + EndGroupEpisode + ResetScene 모두 처리됨
-            RestartEpisode("FriendlyCollision", rewardCalculator.collisionPenalty);
+            // LaunchZoneManager가 있으면 해당 쌍만 비활성화
+            if (launchZoneManager != null && collidedAgent != null)
+            {
+                int pairIdx = launchZoneManager.FindPairIndex(collidedAgent);
+                if (pairIdx >= 0)
+                {
+                    // 배치 후 유예기간 (10스텝) 동안 충돌 무시
+                    DefensePair pair = launchZoneManager.GetPair(pairIdx);
+                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10)
+                        return;
+
+                    // 해당 쌍에만 페널티
+                    if (pair?.agent1 != null) pair.agent1.AddReward(penalty);
+                    if (pair?.agent2 != null) pair.agent2.AddReward(penalty);
+
+                    launchZoneManager.DisablePair(pairIdx, m_AgentGroup);
+                    NotifyCameraPairDisabled(pair);
+                    Debug.LogWarning($"[DefenseEnv] FriendlyCollision → Pair {pairIdx} 무력화, step={_resetTimer}");
+
+                    CheckEpisodeEndCondition();
+                    return;
+                }
+            }
+
+            // LaunchZoneManager 없거나 쌍 못찾으면 레거시: 전체 페널티
+            if (m_AgentGroup != null)
+                m_AgentGroup.AddGroupReward(penalty);
+            else
+            {
+                if (defenseAgent1 != null) defenseAgent1.AddReward(penalty);
+                if (defenseAgent2 != null) defenseAgent2.AddReward(penalty);
+            }
+            RestartEpisode("FriendlyCollision", penalty);
         }
         
         #region DefenseBoatManager 통합 기능
@@ -1048,27 +1525,13 @@ namespace BoatAttack
 
             Debug.Log($"[DefenseEnv] DeactivateAttackBoat: {attackBoat.name}, step={_resetTimer}");
 
-            // 비활성화 (풀에서 재사용 가능)
-            attackBoat.SetActive(false);
-            UpdateEnemyShipsArray();
+            // 현재 위치에서 무력화 (이동하지 않음)
+            DisableEnemy(attackBoat);
 
-            // 모든 활성 적군이 0이면 에피소드 종료
+            // 종료 조건 확인
             if (endEpisodeOnAllEnemiesDestroyed && !_episodeEnding)
             {
-                int activeCount = 0;
-                if (_enemyPool != null)
-                {
-                    for (int i = 0; i < _enemyPool.Length; i++)
-                    {
-                        if (_enemyPool[i] != null && _enemyPool[i].activeSelf)
-                            activeCount++;
-                    }
-                }
-
-                if (activeCount == 0 && GetActiveEnemyCountForStage() > 0)
-                {
-                    RestartEpisode("AllEnemiesDestroyed");
-                }
+                CheckEpisodeEndCondition();
             }
         }
         
@@ -1322,6 +1785,10 @@ namespace BoatAttack
         /// </summary>
         private System.Collections.IEnumerator ResetPositionsWithDeactivation()
         {
+            // Debug.LogWarning($"[DefenseEnv] ResetPositionsWithDeactivation 시작: " +
+            //     $"useDynamicSpawn={useDynamicSpawn}, motherShip={motherShip != null}, " +
+            //     $"launchZoneManager={launchZoneManager != null}, " +
+            //     $"lzmInitialized={launchZoneManager?.IsInitialized}");
 
             // 모든 WAKE 객체 제거 및 WakeGenerator 비활성화
             DestroyAllWakeObjects();
@@ -1352,37 +1819,45 @@ namespace BoatAttack
                 }
 
                 // 4. 아군 스폰
-                if (launchZoneManager != null && launchZoneManager.IsInitialized)
+                if (launchZoneManager != null)
                 {
-                    // LaunchZoneManager: 진수구역 기반 다수 쌍 배치
-                    float[] divAngles = (formationSpawner != null)
-                        ? formationSpawner.GetLastDiversionaryAngles()
-                        : null;
+                    int pairCount = launchZoneManager.IsInitialized
+                        ? Mathf.Min(launchZoneManager.activePairCount, launchZoneManager.maxPairCount)
+                        : 0;
 
-                    int pairCount = Mathf.Min(launchZoneManager.activePairCount, launchZoneManager.maxPairCount);
-                    launchZoneManager.DeployPairs(
-                        _currentFormation, _currentEnemyApproachAngle,
-                        divAngles, pairCount, motherPos, m_AgentGroup);
-
-                    // defenseAgent1/2는 templatePair의 첫 쌍이므로 LaunchZoneManager가 이미 배치함
-                    // 위치 교차 판별은 첫 쌍 기준
-                    if (defenseAgent1 != null && defenseAgent2 != null)
+                    if (pairCount <= 0)
                     {
-                        Vector3 spawnPos1 = defenseAgent1.transform.position;
-                        Vector3 spawnPos2 = defenseAgent2.transform.position;
-                        Vector3 defenseDir = enemyDir;
-                        _currentPerpendicularDir = RotateXZ(defenseDir, Mathf.PI / 2f);
-                        float perpDot1 = Vector3.Dot(spawnPos1 - motherPos, _currentPerpendicularDir);
-                        float perpDot2 = Vector3.Dot(spawnPos2 - motherPos, _currentPerpendicularDir);
-                        _agent1StartsOnLeft = perpDot1 < perpDot2;
+                        // activePairCount=0: 모든 쌍 비활성화 + defenseAgent1/2 숨김 (버튼으로만 배치)
+                        if (launchZoneManager.IsInitialized)
+                            launchZoneManager.DeactivateAllPairs(m_AgentGroup);
+                        HideDefenseAgentsAtHiddenPos();
                     }
+                    else
+                    {
+                        // activePairCount>0: 진수구역 기반 다수 쌍 자동 배치 (ML 학습용)
+                        float[] divAngles = (formationSpawner != null)
+                            ? formationSpawner.GetLastDiversionaryAngles()
+                            : null;
 
-                    Debug.Log($"[DefenseEnv] LaunchZone Deploy: formation={_currentFormation}, " +
-                        $"pairs={pairCount}, angle={_currentEnemyApproachAngle:F0}°");
+                        launchZoneManager.DeployPairs(
+                            _currentFormation, _currentEnemyApproachAngle,
+                            divAngles, pairCount, motherPos, m_AgentGroup);
+
+                        // 위치 교차 판별
+                        if (defenseAgent1 != null && defenseAgent2 != null)
+                        {
+                            Vector3 spawnPos1 = defenseAgent1.transform.position;
+                            Vector3 spawnPos2 = defenseAgent2.transform.position;
+                            _currentPerpendicularDir = RotateXZ(enemyDir, Mathf.PI / 2f);
+                            float perpDot1 = Vector3.Dot(spawnPos1 - motherPos, _currentPerpendicularDir);
+                            float perpDot2 = Vector3.Dot(spawnPos2 - motherPos, _currentPerpendicularDir);
+                            _agent1StartsOnLeft = perpDot1 < perpDot2;
+                        }
+                    }
                 }
                 else
                 {
-                    // 레거시: 기존 1쌍 직접 배치
+                    // 레거시: LaunchZoneManager 없을 때 기존 1쌍 직접 배치
                     Vector3 defenseDir = enemyDir;
                     float spreadRad1 = defenseSpawnSpread * Mathf.Deg2Rad;
                     float spreadRad2 = -defenseSpawnSpread * Mathf.Deg2Rad;
@@ -1412,9 +1887,6 @@ namespace BoatAttack
                     float perpDot1 = Vector3.Dot(spawnPos1 - motherPos, _currentPerpendicularDir);
                     float perpDot2 = Vector3.Dot(spawnPos2 - motherPos, _currentPerpendicularDir);
                     _agent1StartsOnLeft = perpDot1 < perpDot2;
-
-                    Debug.Log($"[DefenseEnv] DynamicSpawn(legacy): enemyAngle={_currentEnemyApproachAngle:F0}°, " +
-                        $"ally1={spawnPos1}, ally2={spawnPos2}, allyDist={Vector3.Distance(spawnPos1, spawnPos2):F1}m");
                 }
             }
             else
@@ -1453,6 +1925,14 @@ namespace BoatAttack
             // 코루틴 실행 완료 플래그 해제 및 에피소드 활성화
             _isResettingPositions = false;
             _episodeActive = true;
+
+            // // 배치 결과 확인 로그 (비활성화)
+            // if (launchZoneManager != null)
+            // {
+            //     int activePairs = launchZoneManager.GetActivePairCount();
+            //     var agents = launchZoneManager.GetActiveAgents();
+            //     Debug.LogWarning($"[DefenseEnv] 코루틴 완료: activePairs={activePairs}");
+            // }
         }
 
         /// <summary>
@@ -1506,6 +1986,29 @@ namespace BoatAttack
                 dir.y,
                 dir.x * sin + dir.z * cos
             );
+        }
+
+        /// <summary>
+        /// defenseAgent1/2를 수면 아래 HIDDEN_POS로 이동 (activePairCount=0일 때)
+        /// </summary>
+        private void HideDefenseAgentsAtHiddenPos()
+        {
+            Vector3 hiddenPos = new Vector3(0f, -500f, 0f);
+            HideAgentAtHiddenPos(defenseAgent1, hiddenPos);
+            HideAgentAtHiddenPos(defenseAgent2, hiddenPos + Vector3.right * 50f);
+            if (webObject != null) webObject.SetActive(false);
+        }
+
+        private void HideAgentAtHiddenPos(DefenseAgent agent, Vector3 pos)
+        {
+            if (agent == null) return;
+            agent.transform.position = pos;
+            if (agent.TryGetComponent<Rigidbody>(out var rb))
+            {
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+                rb.isKinematic = true;
+            }
         }
 
         /// <summary>
@@ -1631,7 +2134,7 @@ namespace BoatAttack
             var activeEnemies = new System.Collections.Generic.List<GameObject>();
             for (int i = 0; i < _enemyPool.Length; i++)
             {
-                if (_enemyPool[i] != null && _enemyPool[i].activeSelf)
+                if (_enemyPool[i] != null && _enemyPool[i].activeSelf && !_neutralizedEnemies.Contains(_enemyPool[i]))
                     activeEnemies.Add(_enemyPool[i]);
             }
 
@@ -2138,6 +2641,98 @@ namespace BoatAttack
         public bool IsTacticalRewardEnabled()
         {
             return currentStage == TrainingStage.Stage3_Tactical;
+        }
+
+        /// <summary>
+        /// 비활성/무력화된 적군 풀 오브젝트 수 반환 (스폰 가능한 수)
+        /// </summary>
+        public int GetInactiveEnemyCount()
+        {
+            if (_enemyPool == null) return 0;
+            int count = 0;
+            for (int i = 0; i < _enemyPool.Length; i++)
+            {
+                if (_enemyPool[i] == null) continue;
+                if (!_enemyPool[i].activeSelf || _neutralizedEnemies.Contains(_enemyPool[i]))
+                    count++;
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// 비활성 풀에서 적군을 추가 스폰 (런타임 버튼용)
+        /// 모선 주변 랜덤 위치에 배치, 모선을 향해 돌진
+        /// </summary>
+        /// <returns>실제 스폰된 수</returns>
+        public int SpawnAdditionalEnemies(int count)
+        {
+            if (_enemyPool == null || motherShip == null) return 0;
+
+            Vector3 motherPos = motherShip.transform.position;
+            int spawned = 0;
+
+            for (int i = 0; i < _enemyPool.Length && spawned < count; i++)
+            {
+                if (_enemyPool[i] == null) continue;
+
+                // 이미 활성 + 무력화 안 된 적은 스킵
+                if (_enemyPool[i].activeSelf && !_neutralizedEnemies.Contains(_enemyPool[i]))
+                    continue;
+
+                // 무력화된 적이면 해제
+                _neutralizedEnemies.Remove(_enemyPool[i]);
+
+                // 랜덤 방향에서 모선을 향해 스폰
+                float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
+                Vector3 dir = new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle));
+                Vector3 spawnPos = motherPos + dir * enemySpawnDistance;
+                spawnPos.y = _poolTemplateY;
+
+                Vector3 lookDir = motherPos - spawnPos;
+                lookDir.y = 0f;
+                Quaternion spawnRot = lookDir.sqrMagnitude > 0.01f
+                    ? Quaternion.LookRotation(lookDir, Vector3.up)
+                    : Quaternion.identity;
+
+                ResetPoolObject(i, spawnPos, spawnRot);
+                spawned++;
+            }
+
+            if (spawned > 0)
+            {
+                UpdateEnemyShipsArray();
+                Debug.Log($"[DefenseEnv] SpawnAdditionalEnemies: 요청={count}, 스폰={spawned}");
+            }
+
+            return spawned;
+        }
+
+        /// <summary>
+        /// 비활성 풀에서 아군 쌍을 추가 배치 (런타임 버튼용)
+        /// </summary>
+        /// <returns>배치 성공 여부</returns>
+        public bool SpawnAllyPair(int forceZoneIdx = -1)
+        {
+            if (launchZoneManager == null || motherShip == null)
+                return false;
+
+            int before = launchZoneManager.GetActivePairCount();
+            Vector3 motherPos = motherShip.transform.position;
+            bool result = launchZoneManager.DeploySinglePair(motherPos, _currentEnemyApproachAngle, m_AgentGroup, forceZoneIdx);
+            int after = launchZoneManager.GetActivePairCount();
+
+            Debug.LogWarning($"[SpawnAllyPair] zone={forceZoneIdx}, result={result}, active {before}→{after}, " +
+                $"inactive={launchZoneManager.GetInactivePairCount()}");
+            return result;
+        }
+
+        /// <summary>
+        /// 배치 가능한 비활성 아군 쌍 수 반환
+        /// </summary>
+        public int GetAvailableAllyPairCount()
+        {
+            if (launchZoneManager == null) return 0;
+            return launchZoneManager.GetInactivePairCount();
         }
 
         #endregion

@@ -5129,6 +5129,10 @@ MonoBehaviour:
   waterSound: {fileID: 8494342078711061309}
   steeringTorque: 5
   horsePower: 30
+  stabilizationTorque: 5
+  stabilizationDamping: 2
+  maxTiltAngle: 100
+  centerOfMassOffset: {x: 0, y: -1, z: 0}
   enginePosition: {x: 0, y: 0.05, z: -3.31}
 --- !u!1 &751402604966935014
 GameObject:
@@ -34784,8 +34788,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7205157340779662337}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.2114166, y: 0.9664021, z: 0.031241542, w: -0.14280757}
-  m_LocalPosition: {x: -52.1, y: 0, z: -10.213287}
+  m_LocalRotation: {x: 0, y: -0.5633072, z: -0, w: 0.8262475}
+  m_LocalPosition: {x: 883.1457, y: 0, z: -256.82642}
   m_LocalScale: {x: 2, y: 3, z: 1.4}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -34889,7 +34893,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7205157340779662337}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 99a9c787e5d1bbf48a389834c4a9641c, type: 3}
   m_Name: 
@@ -34914,7 +34918,7 @@ MonoBehaviour:
   motherShipTag: MotherShip
   explosionPrefab: {fileID: 100010, guid: e0609132424a24844b1d53ad3d704fd9, type: 3}
   explosionScale: 23
-  destroyAfterExplosion: 1
+  destroyAfterExplosion: 0
   destroyDelay: 1.5
   useTriggerCollision: 0
 --- !u!1 &8305774083215281229

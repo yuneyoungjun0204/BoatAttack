@@ -513,6 +513,16 @@ PrefabInstance:
       propertyPath: m_Materials.Array.data[0]
       value: 
       objectReference: {fileID: 2100000, guid: 92e3a622aaf5e4fadab4253ad1853184, type: 2}
+    - target: {fileID: 1046895372862771327, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      propertyPath: m_FollowOffset.x
+      value: 100
+      objectReference: {fileID: 0}
+    - target: {fileID: 1046895372862771327, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      propertyPath: m_FollowOffset.y
+      value: -50
+      objectReference: {fileID: 0}
     - target: {fileID: 1857749394586354482, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_LocalPosition.y
@@ -557,6 +567,11 @@ PrefabInstance:
         type: 3}
       propertyPath: m_LocalRotation.z
       value: 0.0000000029517164
+      objectReference: {fileID: 0}
+    - target: {fileID: 3138619813684846845, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
@@ -633,8 +648,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 23
-    NumStackedVectorObservations: 1
+    VectorObservationSize: 11
+    NumStackedVectorObservations: 3
     m_ActionSpec:
       m_NumContinuousActions: 2
       BranchSizes: 
@@ -690,7 +705,7 @@ MonoBehaviour:
   maxAngularAcceleration: 45
   maxThrottle: 1
   minThrottle: 0.5
-  steeringSensitivity: 0.3
+  steeringSensitivity: 0.891
   inputSmoothing: 0.2
   partnerNormK: 50
   enemyNormK: 250
@@ -706,6 +721,7 @@ MonoBehaviour:
   motherRScale: 1
   motherFScale: 1
   motherDistScale: 1
+  useArrowKeys: 0
   showRaycasts: 1
   enableDebugLog: 1
   lastObservations: []

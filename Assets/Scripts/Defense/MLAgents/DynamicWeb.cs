@@ -229,25 +229,27 @@ namespace BoatAttack
             {
                 HandleAttackBoatCollision(other.gameObject);
             }
-            else if (IsDefenseShip(other.gameObject))
+            else if (IsOtherPairDefenseShip(other.gameObject))
             {
                 HandleAllyWebCollision(other.gameObject);
             }
         }
 
         /// <summary>
-        /// 아군 선박인지 확인
+        /// 다른 페어의 아군 선박인지 확인 (자기 페어는 제외)
         /// </summary>
-        private bool IsDefenseShip(GameObject obj)
+        private bool IsOtherPairDefenseShip(GameObject obj)
         {
             if (obj == null)
                 return false;
 
+            // 자기 페어의 에이전트는 무시 (웹을 잡고 있는 본인들)
             if (defenseShip1 != null && obj.transform == defenseShip1)
-                return true;
+                return false;
             if (defenseShip2 != null && obj.transform == defenseShip2)
-                return true;
+                return false;
 
+            // 다른 페어의 DefenseAgent만 감지
             if (obj.GetComponent<DefenseAgent>() != null)
                 return true;
 
@@ -283,7 +285,7 @@ namespace BoatAttack
             {
                 HandleAttackBoatCollision(collision.gameObject);
             }
-            else if (IsDefenseShip(collision.gameObject))
+            else if (IsOtherPairDefenseShip(collision.gameObject))
             {
                 HandleAllyWebCollision(collision.gameObject);
             }

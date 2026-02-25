@@ -23,6 +23,9 @@ namespace BoatAttack
         [Tooltip("전술맵 디스플레이")]
         public TacticalMapDisplay tacticalMap;
 
+        [Tooltip("아군 풀 관리자 (미설정 시 자동 탐색)")]
+        public LaunchZoneManager launchZoneManager;
+
         [Header("=== Attack Mode Buttons ===")]
         [Tooltip("파상공격 버튼")]
         public Button btnWaveAttack;
@@ -93,6 +96,9 @@ namespace BoatAttack
 
         private void Start()
         {
+            if (launchZoneManager == null)
+                launchZoneManager = FindObjectOfType<LaunchZoneManager>();
+
             InitSliderValues();
             UpdateAllLabels();
             BindSliderListeners();
@@ -292,10 +298,21 @@ namespace BoatAttack
 
             if (textStatusFriendly != null)
             {
-                int count = 0;
-                if (envController.defenseAgent1 != null) count++;
-                if (envController.defenseAgent2 != null) count++;
-                textStatusFriendly.text = $"FRIENDLY: {count} vessels";
+                int shipCount = 0;
+                int pairCount = 0;
+                if (launchZoneManager != null && launchZoneManager.IsInitialized)
+                {
+                    var agents = launchZoneManager.GetActiveAgents();
+                    shipCount = agents.Count;
+                    pairCount = launchZoneManager.GetActivePairCount();
+                }
+                else
+                {
+                    if (envController.defenseAgent1 != null) shipCount++;
+                    if (envController.defenseAgent2 != null) shipCount++;
+                    pairCount = shipCount > 0 ? 1 : 0;
+                }
+                textStatusFriendly.text = $"FRIENDLY: {shipCount} ships ({pairCount} pairs)";
             }
 
             if (textStatusEnemy != null)
@@ -304,7 +321,7 @@ namespace BoatAttack
                 if (envController.enemyShips != null)
                     foreach (var e in envController.enemyShips)
                         if (e != null && e.activeInHierarchy) active++;
-                textStatusEnemy.text = $"ENEMY: {active} vessels";
+                textStatusEnemy.text = $"ENEMY: {active} ships";
             }
 
             if (textStatusMothership != null)

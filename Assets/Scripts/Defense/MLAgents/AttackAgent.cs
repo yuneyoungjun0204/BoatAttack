@@ -110,6 +110,9 @@ namespace BoatAttack
         
         // 폭발 관련 변수
         private bool _hasExploded = false;
+
+        /// <summary>무력화 설정 (외부에서 호출: 그 자리에서 정지용)</summary>
+        public void SetNeutralized() => _hasExploded = true;
         
         // Waypoint 추적 관련 변수 (AiController 참고)
         private int _currentWaypointIndex = 0;
@@ -196,7 +199,9 @@ namespace BoatAttack
             _totalReward = 0f; // 총 보상 초기화
             _smoothThrottle = 0f; // 스무스 입력 초기화
             _smoothSteering = 0f;
-            _hasExploded = false; // 폭발 상태 초기화
+            // _hasExploded는 여기서 리셋하지 않음
+            // SetNeutralized() 후 OnEpisodeBegin 자동 호출 시 다시 움직이는 것 방지
+            // 풀 재활성화 시 OnEnable()에서 리셋됨
             _noiseSeed = Random.Range(0f, 1000f); // 각 적군마다 다른 노이즈 패턴
             
             // Waypoint 초기화 (에피소드 재시작 시)
@@ -282,7 +287,7 @@ namespace BoatAttack
 
         public override void OnActionReceived(ActionBuffers actions)
         {
-            if (_engine == null)
+            if (_engine == null || _hasExploded)
             {
                 return;
             }

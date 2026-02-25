@@ -15,6 +15,12 @@ namespace BoatAttack
         [Header("=== References ===")]
         public DefenseAgent targetAgent;
 
+        [Tooltip("카메라 시점 전환 시 자동으로 대상 변경 (설정 시 targetAgent 자동 갱신)")]
+        public DefenseFollowCamera followCamera;
+
+        [Tooltip("카메라 없을 때 fallback (자동 탐색)")]
+        public DefenseEnvController envController;
+
         [Header("=== Graph Settings ===")]
         public int historyLength = 300;
         public float lineWidth = 1.5f;
@@ -41,6 +47,7 @@ namespace BoatAttack
         private int _sampleCount;
         private bool _initialized;
         private int _cachedColumns = -1;
+        private DefenseAgent _prevAgent; // 타겟 변경 감지용
 
         private static readonly string[] Labels =
         {
@@ -75,12 +82,6 @@ namespace BoatAttack
             InitHistory();
         }
 
-        void Start()
-        {
-            RepositionLabels();
-            _cachedColumns = columns;
-        }
-
         void InitHistory()
         {
             if (_initialized) return;
@@ -92,9 +93,74 @@ namespace BoatAttack
             _initialized = true;
         }
 
+        /// <summary>타겟 변경 시 히스토리 초기화</summary>
+        private void ClearHistory()
+        {
+            if (_history == null) return;
+            for (int i = 0; i < OBS_COUNT; i++)
+                System.Array.Clear(_history[i], 0, historyLength);
+            _writeIndex = 0;
+            _sampleCount = 0;
+        }
+
+        new void Start()
+        {
+            RepositionLabels();
+            _cachedColumns = columns;
+
+            // 자동 탐색
+            if (followCamera == null)
+                followCamera = FindObjectOfType<DefenseFollowCamera>();
+            if (envController == null)
+                envController = FindObjectOfType<DefenseEnvController>();
+
+            // targetAgent 초기 설정 (Inspector에서 미설정 시)
+            if (targetAgent == null)
+                FindInitialTarget();
+        }
+
+        /// <summary>카메라 또는 envController에서 초기 타겟 탐색</summary>
+        private void FindInitialTarget()
+        {
+            // 카메라에서 먼저
+            if (followCamera != null)
+            {
+                var camAgent = followCamera.CurrentDefenseAgent;
+                if (camAgent != null) { targetAgent = camAgent; return; }
+            }
+            // envController fallback
+            if (envController != null)
+            {
+                if (envController.defenseAgent1 != null)
+                    targetAgent = envController.defenseAgent1;
+                else if (envController.defenseAgent2 != null)
+                    targetAgent = envController.defenseAgent2;
+            }
+        }
+
         void Update()
         {
             if (!_initialized) InitHistory();
+
+            // 카메라 시점 대상과 자동 연동
+            if (followCamera != null)
+            {
+                DefenseAgent camAgent = followCamera.CurrentDefenseAgent;
+                if (camAgent != null)
+                    targetAgent = camAgent;
+            }
+
+            // 타겟이 아직 없으면 재탐색
+            if (targetAgent == null)
+                FindInitialTarget();
+
+            // 타겟 변경 시 히스토리 초기화
+            if (targetAgent != _prevAgent)
+            {
+                _prevAgent = targetAgent;
+                ClearHistory();
+            }
+
             if (targetAgent == null || targetAgent.lastObservations == null) return;
 
             int count = Mathf.Min(targetAgent.lastObservations.Length, OBS_COUNT);
