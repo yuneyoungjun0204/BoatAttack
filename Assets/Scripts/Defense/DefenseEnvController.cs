@@ -12,7 +12,9 @@ namespace BoatAttack
     {
         Stage1_Formation,   // 대형 유지 학습
         Stage2_Capture,     // 포획 보상 학습
-        Stage3_Tactical     // 전술 기동 학습
+        Stage3_Tactical,    // 전술 기동 학습
+        Stage4_Commander,   // Commander 기본 학습 (전략 에이전트 도입)
+        Stage5_FullScale    // 전체 복잡도 (Commander + DefenseAgent 동시 학습)
     }
 
     /// <summary>
@@ -44,6 +46,14 @@ namespace BoatAttack
         [Tooltip("Stage3에서 활성화할 적군 수")]
         [Range(1, 10)]
         public int stage3EnemyCount = 1;
+
+        [Tooltip("Stage4(Commander)에서 활성화할 적군 수")]
+        [Range(1, 10)]
+        public int stage4EnemyCount = 5;
+
+        [Tooltip("Stage5(FullScale)에서 활성화할 적군 수")]
+        [Range(1, 10)]
+        public int stage5EnemyCount = 10;
 
         [Header("Agents")]
         [Tooltip("방어 에이전트 1")]
@@ -197,6 +207,10 @@ namespace BoatAttack
         [Tooltip("아군 진수구역 관리자 (없으면 기존 1쌍 레거시 모드)")]
         public LaunchZoneManager launchZoneManager;
 
+        [Header("Commander (계층적 RL)")]
+        [Tooltip("전략 에이전트 (null이면 기존 레거시 모드 유지)")]
+        public CommanderAgent commanderAgent;
+
         [Tooltip("방어 추적 카메라 (없으면 카메라 전환 비활성화)")]
         public DefenseFollowCamera followCamera;
 
@@ -234,6 +248,7 @@ namespace BoatAttack
         
         // 충돌 횟수 추적 (Web + MotherShip 통합 카운트)
         private int _totalCollisionCount = 0; // 총 충돌 횟수 (Web + MotherShip 합산)
+        private int _breachedEnemyCount = 0; // 모선 도달(돌파) 적군 수 (Commander 보상용)
         
         // 중복 충돌 방지 (같은 적군 선박이 짧은 시간 내 여러 번 충돌하는 것 방지)
         private float _collisionCooldown = 2.0f; // 충돌 쿨다운 시간 (초)
@@ -925,6 +940,11 @@ namespace BoatAttack
                         if (m_AgentGroup != null)
                             m_AgentGroup.AddGroupReward(enemyBreachPenalty);
 
+                        // Commander에도 돌파 페널티
+                        if (commanderAgent != null && IsCommanderStage())
+                            commanderAgent.AddReward(enemyBreachPenalty);
+
+                        _breachedEnemyCount++;
                         DisableEnemy(enemy);
                         Debug.LogWarning($"[DefenseEnv] EnemyBreach → {enemy.name} 무력화, dist={enemyToMother:F0}m, step={_resetTimer}");
                     }
@@ -975,6 +995,10 @@ namespace BoatAttack
                 defenseAgent1.AddReward(heading1);
             if (heading2 > 0f && defenseAgent2 != null)
                 defenseAgent2.AddReward(heading2);
+
+            // Commander 매 스텝 보상 (미교전 적 접근 페널티 + 시간 페널티)
+            if (commanderAgent != null && IsCommanderStage())
+                commanderAgent.CalculateStepReward();
         }
 
         #region 중앙 허브: 통합 에피소드 재시작 로직
@@ -1039,6 +1063,14 @@ namespace BoatAttack
                 }
             }
             
+            // 2.5단계: Commander 에피소드 종료 보상 + EndEpisode
+            if (commanderAgent != null && IsCommanderStage())
+            {
+                commanderAgent.CalculateEpisodeEndReward();
+                commanderAgent.SetEpisodeEnded();
+                commanderAgent.EndEpisode();
+            }
+
             // 3단계: 에이전트 에피소드 종료
             if (m_AgentGroup != null)
             {
@@ -1069,6 +1101,7 @@ namespace BoatAttack
             
             // 충돌 횟수 리셋
             _totalCollisionCount = 0;
+            _breachedEnemyCount = 0;
 
             // 무력화 적군 추적 초기화
             _neutralizedEnemies.Clear();
@@ -1128,6 +1161,10 @@ namespace BoatAttack
             // 아군 생성 버튼 리셋
             if (spawnButtonUI != null)
                 spawnButtonUI.OnEpisodeReset();
+
+            // Commander 에피소드 리셋
+            if (commanderAgent != null && IsCommanderStage())
+                commanderAgent.OnEpisodeReset();
         }
         
         #endregion
@@ -1192,6 +1229,13 @@ namespace BoatAttack
             {
                 if (defenseAgent1 != null) defenseAgent1.AddReward(reward);
                 if (defenseAgent2 != null) defenseAgent2.AddReward(reward);
+            }
+
+            // Commander에도 포획 보상 라우팅
+            if (commanderAgent != null && IsCommanderStage())
+            {
+                commanderAgent.AddReward(reward);
+                commanderAgent.OnEnemyCaptured();
             }
 
             // 해당 적만 무력화 (비활성화)
@@ -1391,6 +1435,68 @@ namespace BoatAttack
         {
             return enemy == null || _neutralizedEnemies.Contains(enemy);
         }
+
+        #region Commander 쿼리 메서드
+
+        /// <summary>
+        /// 풀 인덱스로 적군 오브젝트 반환 (Commander 관측용)
+        /// </summary>
+        public GameObject GetPooledEnemy(int poolIndex)
+        {
+            if (_enemyPool == null || poolIndex < 0 || poolIndex >= _enemyPool.Length)
+                return null;
+            return _enemyPool[poolIndex];
+        }
+
+        /// <summary>
+        /// 현재 포메이션 유형 반환 (Commander 관측용)
+        /// </summary>
+        public FormationType GetCurrentFormationType()
+        {
+            return _currentFormation;
+        }
+
+        /// <summary>
+        /// 현재 적 접근 각도 반환 (Commander heuristic용)
+        /// </summary>
+        public float GetCurrentEnemyApproachAngle()
+        {
+            return _currentEnemyApproachAngle;
+        }
+
+        /// <summary>
+        /// Commander Stage 여부 확인
+        /// </summary>
+        public bool IsCommanderStage()
+        {
+            return currentStage == TrainingStage.Stage4_Commander ||
+                   currentStage == TrainingStage.Stage5_FullScale;
+        }
+
+        /// <summary>
+        /// 모선 도달(돌파) 적군 수 반환 (Commander 에피소드 종료 보상용)
+        /// </summary>
+        public int GetBreachedEnemyCount()
+        {
+            return _breachedEnemyCount;
+        }
+
+        /// <summary>
+        /// 활성 적군 수 반환 (Commander 관측용)
+        /// </summary>
+        public int GetActiveEnemyCount()
+        {
+            if (_enemyPool == null) return 0;
+            int count = 0;
+            for (int i = 0; i < _enemyPool.Length; i++)
+            {
+                if (_enemyPool[i] != null && _enemyPool[i].activeSelf && !_neutralizedEnemies.Contains(_enemyPool[i]))
+                    count++;
+            }
+            return count;
+        }
+
+        #endregion
 
         /// <summary>
         /// 쌍 무력화 시 카메라에 양쪽 에이전트 알림
@@ -2565,6 +2671,12 @@ namespace BoatAttack
 
                 case TrainingStage.Stage3_Tactical:
                     return stage3EnemyCount;
+
+                case TrainingStage.Stage4_Commander:
+                    return stage4EnemyCount;
+
+                case TrainingStage.Stage5_FullScale:
+                    return stage5EnemyCount;
 
                 default:
                     return 0;

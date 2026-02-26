@@ -574,7 +574,7 @@ namespace BoatAttack
         /// <summary>
         /// 주어진 각도에 가장 가까운 진수구역 인덱스 반환
         /// </summary>
-        private int FindClosestZone(float angleDeg)
+        public int FindClosestZone(float angleDeg)
         {
             int bestIdx = 0;
             float bestDiff = float.MaxValue;
@@ -1030,6 +1030,104 @@ namespace BoatAttack
             int canCreate = Mathf.Max(0, maxPairCount - _pairPool.Count);
             return existingInactive + canCreate;
         }
+
+        #region Commander 쿼리 메서드
+
+        /// <summary>
+        /// 특정 zone에 활성 쌍이 있는지 확인
+        /// </summary>
+        public bool IsZoneOccupied(int zoneIndex)
+        {
+            if (_pairPool == null) return false;
+            for (int i = 0; i < _pairPool.Count; i++)
+            {
+                if (_pairPool[i] != null && _pairPool[i].isActive && _pairPool[i].assignedZoneIndex == zoneIndex)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 비어있는(활성 쌍이 없는) zone 수 반환
+        /// </summary>
+        public int GetAvailableZoneCount()
+        {
+            if (launchZones == null) return 0;
+            int count = 0;
+            for (int z = 0; z < launchZones.Length; z++)
+            {
+                if (!IsZoneOccupied(z))
+                    count++;
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// centerZone에서 가까운 순서로 빈 zone 인덱스 배열 반환 (Commander 배치용)
+        /// 원형 거리 기준 정렬: zone 간 각도 차이가 작은 순
+        /// </summary>
+        public int[] GetNearestAvailableZones(int centerZone, int count)
+        {
+            if (launchZones == null || count <= 0) return new int[0];
+
+            var candidates = new System.Collections.Generic.List<(int idx, float diff)>();
+            for (int z = 0; z < launchZones.Length; z++)
+            {
+                if (IsZoneOccupied(z)) continue;
+                float diff = Mathf.Abs(Mathf.DeltaAngle(
+                    launchZones[centerZone >= 0 && centerZone < launchZones.Length ? centerZone : 0].angleDeg,
+                    launchZones[z].angleDeg));
+                candidates.Add((z, diff));
+            }
+
+            candidates.Sort((a, b) => a.diff.CompareTo(b.diff));
+
+            int resultCount = Mathf.Min(count, candidates.Count);
+            int[] result = new int[resultCount];
+            for (int i = 0; i < resultCount; i++)
+                result[i] = candidates[i].idx;
+            return result;
+        }
+
+        /// <summary>
+        /// 주어진 월드 위치에서 가장 가까운 zone과 그 거리 반환 (Commander 관측용)
+        /// 모선 위치 기준으로 각 zone의 월드 좌표를 계산하여 비교
+        /// </summary>
+        public (int zoneIndex, float distance) GetClosestZoneToPosition(Vector3 position, Vector3 motherPos)
+        {
+            if (launchZones == null || launchZones.Length == 0)
+                return (0, float.MaxValue);
+
+            int bestIdx = 0;
+            float bestDist = float.MaxValue;
+
+            for (int z = 0; z < launchZones.Length; z++)
+            {
+                float angleRad = launchZones[z].angleDeg * Mathf.Deg2Rad;
+                Vector3 zoneDir = new Vector3(Mathf.Sin(angleRad), 0f, Mathf.Cos(angleRad));
+                float zoneDist = GetEllipseDistance(launchZones[z].angleDeg);
+                Vector3 zoneWorldPos = motherPos + zoneDir * zoneDist;
+
+                float dist = Vector3.Distance(position, zoneWorldPos);
+                if (dist < bestDist)
+                {
+                    bestDist = dist;
+                    bestIdx = z;
+                }
+            }
+
+            return (bestIdx, bestDist);
+        }
+
+        /// <summary>
+        /// 현재 풀에서 생성된 쌍 수 반환 (Commander 관측용, maxPairCount와 별개)
+        /// </summary>
+        public int GetCurrentPoolCount()
+        {
+            return _pairPool != null ? _pairPool.Count : 0;
+        }
+
+        #endregion
 
         /// <summary>
         /// 특정 쌍 비활성화 + MA-POCA 해제 (개별 무력화용)

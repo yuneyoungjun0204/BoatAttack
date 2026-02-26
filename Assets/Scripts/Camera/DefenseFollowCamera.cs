@@ -359,7 +359,7 @@ namespace BoatAttack
             if (launchZoneManager != null)
                 pairCount = launchZoneManager.GetActivePairCount();
 
-            GUILayout.BeginArea(new Rect(15, 15, 260, 100), _hudStyle);
+            GUILayout.BeginArea(new Rect(Screen.width - 275, 15, 260, 100), _hudStyle);
 
             GUILayout.Label($"ALLY:  {allyCount} ships  ({pairCount} pairs)", _hudStyleAlly);
             GUILayout.Label($"ENEMY: {enemyCount} ships", _hudStyleEnemy);

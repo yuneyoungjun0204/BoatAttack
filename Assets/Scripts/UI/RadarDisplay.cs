@@ -39,6 +39,8 @@ namespace BoatAttack
         public Color enemyColor = new Color(1f, 0.25f, 0.2f, 1f);
         public Color mothershipColor = new Color(0.85f, 0.85f, 1f, 1f);
         public Color webLineColor = new Color(0.3f, 1f, 0.5f, 0.6f);
+        [Tooltip("아군-적군 매칭 라인 색상")]
+        public Color matchingLineColor = new Color(1f, 0.9f, 0.3f, 0.5f);
         public Color ringColor = new Color(0.15f, 0.55f, 0.2f, 0.6f);
         public Color sweepColor = new Color(0.2f, 1f, 0.3f, 0.5f);
         public Color gridColor = new Color(0.1f, 0.3f, 0.12f, 0.4f);
@@ -81,8 +83,15 @@ namespace BoatAttack
             public bool isMothership;
         }
 
+        struct MatchingLineData
+        {
+            public Vector3 allyCenter;  // 쌍 중심 월드 좌표
+            public Vector3 enemyPos;    // 타겟 적군 월드 좌표
+        }
+
         List<IslandMeshData> _islandCache = new List<IslandMeshData>();
         List<ShipRenderData> _shipData = new List<ShipRenderData>();
+        List<MatchingLineData> _matchingLines = new List<MatchingLineData>();
         int _totalIslandVerts;
 
         float _sweepAngle;
@@ -202,6 +211,25 @@ namespace BoatAttack
                     DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 5f,
                         new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.25f));
                     DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 2.5f, webLineColor);
+                }
+            }
+
+            // 9.5. 아군-적군 매칭 라인 (대시 스타일)
+            foreach (var ml in _matchingLines)
+            {
+                Vector2 ap = WorldToLocal(ml.allyCenter, cx, cy);
+                Vector2 ep = WorldToLocal(ml.enemyPos, cx, cy);
+                float dA = new Vector2(ap.x - cx, ap.y - cy).magnitude;
+                float dE = new Vector2(ep.x - cx, ep.y - cy).magnitude;
+                if (dA < _pixelRadius && dE < _pixelRadius)
+                {
+                    // 넓은 글로우
+                    DrawLine(vh, ap.x, ap.y, ep.x, ep.y, 6f,
+                        new Color(matchingLineColor.r, matchingLineColor.g, matchingLineColor.b, 0.08f));
+                    // 대시 라인
+                    DrawDashedLine(vh, ap.x, ap.y, ep.x, ep.y, 1.5f,
+                        matchingLineColor,
+                        new Color(matchingLineColor.r, matchingLineColor.g, matchingLineColor.b, 0.05f));
                 }
             }
 
@@ -394,6 +422,9 @@ namespace BoatAttack
                         AddShip(enemy, enemyColor, enemyMarkerSize);
                 }
             }
+
+            // 아군-적군 매칭 라인 수집
+            CollectMatchingLines();
         }
 
         void AddShipAgent(DefenseAgent agent, Color col, float size)
@@ -420,6 +451,36 @@ namespace BoatAttack
                 size = size,
                 isMothership = false
             });
+        }
+
+        void CollectMatchingLines()
+        {
+            _matchingLines.Clear();
+
+            var lzm = envController.launchZoneManager;
+            if (lzm == null || !lzm.IsInitialized) return;
+
+            int poolCount = lzm.GetCurrentPoolCount();
+            for (int i = 0; i < poolCount; i++)
+            {
+                DefensePair pair = lzm.GetPair(i);
+                if (pair == null || !pair.isActive) continue;
+                if (pair.agent1 == null || pair.agent2 == null) continue;
+
+                int targetIdx = pair.agent1.assignedTargetIndex; // 1-indexed, -1=none
+                if (targetIdx <= 0) continue;
+
+                int enemyPoolIdx = targetIdx - 1; // 0-indexed
+                GameObject enemy = envController.GetPooledEnemy(enemyPoolIdx);
+                if (enemy == null || !enemy.activeSelf) continue;
+
+                Vector3 center = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+                _matchingLines.Add(new MatchingLineData
+                {
+                    allyCenter = center,
+                    enemyPos = enemy.transform.position
+                });
+            }
         }
 
         #endregion

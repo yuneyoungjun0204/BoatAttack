@@ -2723,12 +2723,17 @@ MonoBehaviour:
   enemyColor: {r: 1, g: 0.25, b: 0.2, a: 1}
   mothershipColor: {r: 0.85, g: 0.85, b: 1, a: 1}
   webLineColor: {r: 0.3, g: 1, b: 0.5, a: 0.6}
+  matchingLineColor: {r: 1, g: 0.9, b: 0.3, a: 0.5}
   ringColor: {r: 0.15, g: 0.4, b: 0.15, a: 0.4}
   sweepColor: {r: 0.2, g: 1, b: 0.3, a: 0.25}
   gridColor: {r: 0.1, g: 0.25, b: 0.1, a: 0.3}
   bgCircleColor: {r: 0.02, g: 0.04, b: 0.02, a: 0.95}
   islandColor: {r: 0.12, g: 0.25, b: 0.1, a: 0.7}
+  bearingTickColor: {r: 0.3, g: 0.8, b: 0.4, a: 0.85}
+  outerGlowColor: {r: 0.1, g: 0.6, b: 0.2, a: 0.5}
   sweepSpeed: 60
+  sweepTrailAngle: 60
+  sweepTrailSegments: 8
   ringCount: 4
   terrainSamples: 6
   maxIslandTriangles: 15
@@ -3676,6 +3681,149 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: -10, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &340379351
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 340379352}
+  - component: {fileID: 340379357}
+  - component: {fileID: 340379356}
+  - component: {fileID: 340379355}
+  - component: {fileID: 340379354}
+  - component: {fileID: 340379353}
+  m_Layer: 0
+  m_Name: CommanderAgent
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &340379352
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 340379351}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1396138364}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &340379353
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 340379351}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dd8012d5925524537b27131fef517017, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_SensorName: PairBuffer
+  m_ObservableSize: 3
+  m_MaxNumObservables: 10
+--- !u!114 &340379354
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 340379351}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dd8012d5925524537b27131fef517017, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_SensorName: EnemyBuffer
+  m_ObservableSize: 2
+  m_MaxNumObservables: 10
+--- !u!114 &340379355
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 340379351}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3a5c9d521e5ef4759a8246a07d52221e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  DecisionPeriod: 50
+  TakeActionsBetweenDecisions: 0
+--- !u!114 &340379356
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 340379351}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4beb518638b639c4fbb7ab9bce29a31f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  agentParameters:
+    maxStep: 0
+  hasUpgradedFromAgentParameters: 1
+  MaxStep: 0
+  envController: {fileID: 1396138363}
+  launchZoneManager: {fileID: 1396138366}
+  enemyBufferSensor: {fileID: 340379354}
+  pairBufferSensor: {fileID: 340379353}
+  distNormK: 500
+  unengagedApproachPenalty: -0.001
+  timePenalty: -0.00005
+  deployEfficiencyCoeff: 0.3
+  duplicateTargetPenalty: -0.1
+  breachedPenaltyCoeff: 0.5
+  wastedPairPenaltyCoeff: 0.3
+  balanceRewardCoeff: 1
+  victoryBonus: 2
+  _cumulativeReward: 0
+  _deployCount: 0
+  _totalDeployed: 0
+--- !u!114 &340379357
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 340379351}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5d1c4e0b1822b495aa52bc52839ecb30, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_BrainParameters:
+    VectorObservationSize: 1
+    NumStackedVectorObservations: 1
+    m_ActionSpec:
+      m_NumContinuousActions: 0
+      BranchSizes: 0b000000060000000b000000
+    VectorActionSize: 0b000000060000000b000000
+    VectorActionDescriptions: []
+    VectorActionSpaceType: 0
+    hasUpgradedBrainParametersWithActionSpec: 1
+  m_Model: {fileID: 0}
+  m_InferenceDevice: 0
+  m_BehaviorType: 0
+  m_BehaviorName: Commander
+  TeamId: 0
+  m_UseChildSensors: 1
+  m_UseChildActuators: 1
+  m_DeterministicInference: 0
+  m_ObservableAttributeHandling: 0
 --- !u!1 &341979842 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 8032535109072541925, guid: eb727f41c5e41654f8d412ad349924d2,
@@ -7433,11 +7581,16 @@ MonoBehaviour:
   mothershipColor: {r: 0.85, g: 0.85, b: 1, a: 1}
   webLineColor: {r: 0.3, g: 1, b: 0.5, a: 0.5}
   fogColor: {r: 0, g: 0, b: 0.02, a: 0.4}
+  cornerBracketColor: {r: 0.3, g: 0.7, b: 1, a: 0.8}
+  threatCircleColor: {r: 1, g: 0.3, b: 0.2, a: 0.25}
   islandColor: {r: 0.08, g: 0.18, b: 0.12, a: 0.7}
   terrainSamples: 6
   maxIslandTriangles: 15
   maxTotalIslandVerts: 5000
   zoomText: {fileID: 0}
+  showTrails: 1
+  trailInterval: 0.5
+  trailMaxPoints: 30
 --- !u!222 &572852944
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -9072,6 +9225,8 @@ MonoBehaviour:
   graphBgColor: {r: 0.08, g: 0.08, b: 0.12, a: 1}
   zeroLineColor: {r: 0.3, g: 0.3, b: 0.4, a: 0.8}
   guideLineColor: {r: 0.2, g: 0.2, b: 0.25, a: 0.5}
+  cellBorderColor: {r: 0.25, g: 0.3, b: 0.45, a: 0.7}
+  cornerBracketColor: {r: 0.35, g: 0.7, b: 1, a: 0.75}
   labelTexts:
   - {fileID: 2007072543}
   - {fileID: 2069200374}
@@ -14081,12 +14236,17 @@ MonoBehaviour:
   enemyColor: {r: 1, g: 0.25, b: 0.2, a: 1}
   mothershipColor: {r: 0.85, g: 0.85, b: 1, a: 1}
   webLineColor: {r: 0.3, g: 1, b: 0.5, a: 0.6}
+  matchingLineColor: {r: 1, g: 0.9, b: 0.3, a: 0.5}
   ringColor: {r: 0.15, g: 0.4, b: 0.15, a: 0.4}
   sweepColor: {r: 0.2, g: 1, b: 0.3, a: 0.25}
   gridColor: {r: 0.1, g: 0.25, b: 0.1, a: 0.3}
   bgCircleColor: {r: 0.02, g: 0.04, b: 0.02, a: 0.95}
   islandColor: {r: 0.12, g: 0.25, b: 0.1, a: 0.7}
+  bearingTickColor: {r: 0.3, g: 0.8, b: 0.4, a: 0.85}
+  outerGlowColor: {r: 0.1, g: 0.6, b: 0.2, a: 0.5}
   sweepSpeed: 60
+  sweepTrailAngle: 60
+  sweepTrailSegments: 8
   ringCount: 4
   terrainSamples: 6
   maxIslandTriangles: 15
@@ -18325,6 +18485,8 @@ MonoBehaviour:
   stage1EnemyCount: 5
   stage2EnemyCount: 10
   stage3EnemyCount: 10
+  stage4EnemyCount: 5
+  stage5EnemyCount: 10
   defenseAgent1: {fileID: 0}
   defenseAgent2: {fileID: 0}
   rewardCalculator: {fileID: 1396138362}
@@ -18370,6 +18532,7 @@ MonoBehaviour:
   formationSpawner: {fileID: 1396138367}
   _currentFormation: 0
   launchZoneManager: {fileID: 1396138366}
+  commanderAgent: {fileID: 340379356}
   followCamera: {fileID: 0}
   spawnButtonUI: {fileID: 0}
   environmentRoot: {fileID: 0}
@@ -18398,6 +18561,7 @@ Transform:
   - {fileID: 1106577702}
   - {fileID: 2056866120}
   - {fileID: 183842161}
+  - {fileID: 340379352}
   m_Father: {fileID: 1626530120}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &1396138365
@@ -19902,6 +20066,8 @@ MonoBehaviour:
   arrowColor: {r: 0.3, g: 1, b: 0.5, a: 1}
   tickColor: {r: 0.4, g: 0.6, b: 0.4, a: 0.8}
   centerColor: {r: 0.2, g: 0.5, b: 0.25, a: 0.8}
+  innerRingColor: {r: 0.15, g: 0.4, b: 0.15, a: 0.45}
+  bgFillColor: {r: 0.02, g: 0.06, b: 0.03, a: 0.75}
 --- !u!1 &1526070228
 GameObject:
   m_ObjectHideFlags: 0
@@ -20370,6 +20536,44 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 39857cfad1651644682ff5b772e6e697, type: 3}
+--- !u!84 &1554406576
+RenderTexture:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: WaterDepthMap
+  m_ImageContentsHash:
+    serializedVersion: 2
+    Hash: 00000000000000000000000000000000
+  m_ForcedFallbackFormat: 4
+  m_DownscaleFallback: 0
+  m_IsAlphaChannelOptional: 0
+  serializedVersion: 5
+  m_Width: 1024
+  m_Height: 1024
+  m_AntiAliasing: 1
+  m_MipCount: -1
+  m_DepthStencilFormat: 94
+  m_ColorFormat: 0
+  m_MipMap: 0
+  m_GenerateMips: 1
+  m_SRGB: 0
+  m_UseDynamicScale: 0
+  m_BindMS: 0
+  m_EnableCompatibleFormat: 1
+  m_EnableRandomWrite: 0
+  m_TextureSettings:
+    serializedVersion: 2
+    m_FilterMode: 1
+    m_Aniso: 1
+    m_MipBias: 0
+    m_WrapU: 1
+    m_WrapV: 1
+    m_WrapW: 1
+  m_Dimension: 2
+  m_VolumeDepth: 1
+  m_ShadowSamplingMode: 2
 --- !u!1 &1556160792
 GameObject:
   m_ObjectHideFlags: 0
@@ -21860,44 +22064,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1683948571}
   m_CullTransparentMesh: 1
---- !u!84 &1686032021
-RenderTexture:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: WaterDepthMap
-  m_ImageContentsHash:
-    serializedVersion: 2
-    Hash: 00000000000000000000000000000000
-  m_ForcedFallbackFormat: 4
-  m_DownscaleFallback: 0
-  m_IsAlphaChannelOptional: 0
-  serializedVersion: 5
-  m_Width: 1024
-  m_Height: 1024
-  m_AntiAliasing: 1
-  m_MipCount: -1
-  m_DepthStencilFormat: 94
-  m_ColorFormat: 0
-  m_MipMap: 0
-  m_GenerateMips: 1
-  m_SRGB: 0
-  m_UseDynamicScale: 0
-  m_BindMS: 0
-  m_EnableCompatibleFormat: 1
-  m_EnableRandomWrite: 0
-  m_TextureSettings:
-    serializedVersion: 2
-    m_FilterMode: 1
-    m_Aniso: 1
-    m_MipBias: 0
-    m_WrapU: 1
-    m_WrapV: 1
-    m_WrapW: 1
-  m_Dimension: 2
-  m_VolumeDepth: 1
-  m_ShadowSamplingMode: 2
 --- !u!1 &1688588591
 GameObject:
   m_ObjectHideFlags: 0

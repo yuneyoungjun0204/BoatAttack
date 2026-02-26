@@ -160,6 +160,7 @@ namespace BoatAttack
         {
             _episodeEnded = false;
             _neutralized = false;
+            assignedTargetIndex = -1; // Commander가 새로 배정
             _prevThrottle = 0f;
             _prevSteering = 0f;
             _throttleDelta = 0f;
@@ -169,6 +170,7 @@ namespace BoatAttack
         public override void OnEpisodeBegin()
         {
             _episodeEnded = false;
+            assignedTargetIndex = -1; // Commander가 새로 배정
             // _neutralized는 여기서 리셋하지 않음
             // SetNeutralized(false)로만 해제 (DeployPairs/ResetScene에서 호출)
             _totalReward = 0f;

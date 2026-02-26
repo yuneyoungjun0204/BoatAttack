@@ -1,6 +1,9 @@
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
+using Unity.MLAgents;
+using Unity.MLAgents.Policies;
+using Unity.MLAgents.Sensors;
 
 namespace BoatAttack
 {
@@ -630,9 +633,9 @@ namespace BoatAttack
                 new Vector2(0, 0.02f), new Vector2(1, 0.14f),
                 new Vector2(8, 0), Vector2.zero, 12, FontStyle.Normal, TEXT_DIM);
 
-            // === 우측: 거리 정보 ===
+            // === 우측 상단: 거리 정보 ===
             var infoPanel = CreatePanel(page.transform, "InfoPanel",
-                new Vector2(0.86f, 0.35f), new Vector2(0.99f, 0.94f),
+                new Vector2(0.86f, 0.60f), new Vector2(0.99f, 0.95f),
                 Vector2.zero, Vector2.zero, BG_PANEL);
 
             CreateLabel(infoPanel.transform, "InfoTitle", "INFO",
@@ -1209,6 +1212,123 @@ namespace BoatAttack
             var firstSpawner = Object.FindObjectOfType<ShipSpawner>();
             if (firstSpawner != null)
                 Selection.activeGameObject = firstSpawner.transform.parent.gameObject;
+        }
+
+        // ================================================================
+        // Commander Agent 자동 세팅
+        // ================================================================
+
+        [MenuItem("BoatAttack/Setup Commander Agent", false, 120)]
+        public static void SetupCommanderAgent()
+        {
+            var env = Object.FindObjectOfType<DefenseEnvController>();
+            if (env == null)
+            {
+                EditorUtility.DisplayDialog("Error",
+                    "DefenseEnvController를 씬에서 찾을 수 없습니다.", "OK");
+                return;
+            }
+
+            var lzm = Object.FindObjectOfType<LaunchZoneManager>();
+            if (lzm == null)
+            {
+                EditorUtility.DisplayDialog("Error",
+                    "LaunchZoneManager를 씬에서 찾을 수 없습니다.", "OK");
+                return;
+            }
+
+            // 기존 CommanderAgent 확인
+            var existing = Object.FindObjectOfType<CommanderAgent>();
+            if (existing != null)
+            {
+                if (!EditorUtility.DisplayDialog("Commander Already Exists",
+                    $"이미 CommanderAgent가 존재합니다: {existing.gameObject.name}\n삭제하고 새로 생성하시겠습니까?",
+                    "새로 생성", "취소"))
+                    return;
+                Undo.DestroyObjectImmediate(existing.gameObject);
+            }
+
+            // CommanderAgent 오브젝트 생성 (EnvController 하위)
+            var cmdObj = new GameObject("CommanderAgent");
+            Undo.RegisterCreatedObjectUndo(cmdObj, "Create CommanderAgent");
+            cmdObj.transform.SetParent(env.transform, false);
+            cmdObj.transform.localPosition = Vector3.zero;
+
+            // 1. CommanderAgent 컴포넌트 (Agent 상속 → BehaviorParameters 자동 추가)
+            var cmdAgent = cmdObj.AddComponent<CommanderAgent>();
+            cmdAgent.envController = env;
+            cmdAgent.launchZoneManager = lzm;
+
+            // 2. BehaviorParameters 설정
+            var bp = cmdObj.GetComponent<BehaviorParameters>();
+            if (bp != null)
+            {
+                bp.BehaviorName = "Commander";
+                bp.BrainParameters.ActionSpec = Unity.MLAgents.Actuators.ActionSpec.MakeDiscrete(11, 6, 11);
+
+                var so = new SerializedObject(bp);
+                // Behavior Type = Default (학습 모드)
+                var behaviorType = so.FindProperty("m_BehaviorType");
+                if (behaviorType != null)
+                    behaviorType.enumValueIndex = 0; // Default
+                so.ApplyModifiedProperties();
+            }
+
+            // 3. DecisionRequester
+            var dr = cmdObj.AddComponent<DecisionRequester>();
+            dr.DecisionPeriod = 50;
+            dr.TakeActionsBetweenDecisions = false;
+
+            // 4. BufferSensor #1: 적군 (obsSize=2, max=10)
+            var enemyBuffer = cmdObj.AddComponent<BufferSensorComponent>();
+            var soEnemy = new SerializedObject(enemyBuffer);
+            soEnemy.FindProperty("m_MaxNumObservables").intValue = 10;
+            soEnemy.FindProperty("m_ObservableSize").intValue = 2;
+            soEnemy.FindProperty("m_SensorName").stringValue = "EnemyBuffer";
+            soEnemy.ApplyModifiedProperties();
+
+            // 5. BufferSensor #2: 아군쌍 (obsSize=3, max=10)
+            var pairBuffer = cmdObj.AddComponent<BufferSensorComponent>();
+            var soPair = new SerializedObject(pairBuffer);
+            soPair.FindProperty("m_MaxNumObservables").intValue = 10;
+            soPair.FindProperty("m_ObservableSize").intValue = 3;
+            soPair.FindProperty("m_SensorName").stringValue = "PairBuffer";
+            soPair.ApplyModifiedProperties();
+
+            // 6. CommanderAgent에 BufferSensor 참조 연결
+            cmdAgent.enemyBufferSensor = enemyBuffer;
+            cmdAgent.pairBufferSensor = pairBuffer;
+
+            // 7. DefenseEnvController에 Commander 연결
+            Undo.RecordObject(env, "Set CommanderAgent");
+            env.commanderAgent = cmdAgent;
+            EditorUtility.SetDirty(env);
+
+            // 8. SetDirty
+            EditorUtility.SetDirty(cmdObj);
+            EditorUtility.SetDirty(cmdAgent);
+            EditorUtility.SetDirty(bp);
+            EditorUtility.SetDirty(dr);
+
+            // 선택
+            Selection.activeGameObject = cmdObj;
+
+            EditorUtility.DisplayDialog("Commander Agent Setup",
+                "CommanderAgent 자동 세팅 완료!\n\n" +
+                "생성된 컴포넌트:\n" +
+                "  - CommanderAgent (전략 에이전트)\n" +
+                "  - BehaviorParameters (Commander, 이산 3브랜치: 11/6/11)\n" +
+                "  - DecisionRequester (Period=50)\n" +
+                "  - BufferSensor ×2 (적군 obs=2, 아군쌍 obs=3)\n\n" +
+                "자동 연결:\n" +
+                "  - envController → DefenseEnvController\n" +
+                "  - launchZoneManager → LaunchZoneManager\n" +
+                "  - enemyBufferSensor → EnemyBuffer\n" +
+                "  - pairBufferSensor → PairBuffer\n" +
+                "  - DefenseEnvController.commanderAgent → 연결 완료\n\n" +
+                "학습 시: currentStage → Stage4_Commander 로 전환\n" +
+                "테스트: BehaviorType → Heuristic Only\n\n" +
+                "Ctrl+S로 씬 저장하세요.", "OK");
         }
 
         /// <summary>태그 또는 컴포넌트 타입으로 선박 프리팹 검색 (범용 보트 폴백 포함)</summary>
