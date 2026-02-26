@@ -257,7 +257,7 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 아군 선박 Web 충돌 처리
+        /// 아군 선박 Web 충돌 처리 (자신의 Web 정보도 전달)
         /// </summary>
         private void HandleAllyWebCollision(GameObject allyShip)
         {
@@ -272,7 +272,7 @@ namespace BoatAttack
 
             if (envController != null)
             {
-                envController.OnAllyHitWeb(allyShip);
+                envController.OnAllyHitWeb(allyShip, this);
             }
         }
 
@@ -307,7 +307,7 @@ namespace BoatAttack
                     return;
             }
 
-            envController.OnEnemyHitWeb(attackBoat);
+            envController.OnEnemyHitWeb(attackBoat, this);
         }
 
         /// <summary>

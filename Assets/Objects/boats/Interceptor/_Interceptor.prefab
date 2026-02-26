@@ -648,7 +648,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 11
+    VectorObservationSize: 19
     NumStackedVectorObservations: 3
     m_ActionSpec:
       m_NumContinuousActions: 2
@@ -681,7 +681,7 @@ MonoBehaviour:
   agentParameters:
     maxStep: 0
   hasUpgradedFromAgentParameters: 1
-  MaxStep: 200
+  MaxStep: 5000
   _engine: {fileID: 0}
   enemyShips:
   - {fileID: 0}
@@ -721,6 +721,7 @@ MonoBehaviour:
   motherRScale: 1
   motherFScale: 1
   motherDistScale: 1
+  allyPairNormK: 100
   useArrowKeys: 0
   showRaycasts: 1
   enableDebugLog: 1

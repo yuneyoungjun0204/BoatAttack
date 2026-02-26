@@ -55,28 +55,45 @@ namespace BoatAttack
         {
             "Partner R", "Partner F", "Partner Dist", "Partner Hdg",
             "Target R", "Target F", "Target Dist", "Target Hdg",
-            "Mother R", "Mother F", "Mother Dist"
+            "Mother R", "Mother F", "Mother Dist",
+            "L-Pair Dist", "L-Pair Fwd", "L-Pair Side", "L-Pair Hdg",
+            "R-Pair Dist", "R-Pair Fwd", "R-Pair Side", "R-Pair Hdg"
         };
 
         private static readonly Color[] GraphColors =
         {
-            new Color(1f, 0.8f, 0.2f),
-            new Color(1f, 0.6f, 0.1f),
-            new Color(0.85f, 0.5f, 0.1f),
-            new Color(0.9f, 0.4f, 0.1f),
-            new Color(1f, 0.3f, 0.3f),
-            new Color(0.9f, 0.2f, 0.5f),
-            new Color(0.8f, 0.2f, 0.6f),
-            new Color(0.7f, 0.2f, 0.7f),
-            new Color(0.5f, 0.5f, 1f),
-            new Color(0.4f, 0.8f, 1f),
-            new Color(0.3f, 0.7f, 0.9f),
+            new Color(1f, 0.8f, 0.2f),      // Partner R
+            new Color(1f, 0.6f, 0.1f),      // Partner F
+            new Color(0.85f, 0.5f, 0.1f),   // Partner Dist
+            new Color(0.9f, 0.4f, 0.1f),    // Partner Hdg
+            new Color(1f, 0.3f, 0.3f),      // Target R
+            new Color(0.9f, 0.2f, 0.5f),    // Target F
+            new Color(0.8f, 0.2f, 0.6f),    // Target Dist
+            new Color(0.7f, 0.2f, 0.7f),    // Target Hdg
+            new Color(0.5f, 0.5f, 1f),      // Mother R
+            new Color(0.4f, 0.8f, 1f),      // Mother F
+            new Color(0.3f, 0.7f, 0.9f),    // Mother Dist
+            new Color(0.2f, 0.9f, 0.4f),    // L-Pair Dist
+            new Color(0.3f, 0.8f, 0.3f),    // L-Pair Fwd
+            new Color(0.4f, 0.7f, 0.2f),    // L-Pair Side
+            new Color(0.5f, 0.6f, 0.2f),    // L-Pair Hdg
+            new Color(0.2f, 0.6f, 0.9f),    // R-Pair Dist
+            new Color(0.3f, 0.5f, 0.8f),    // R-Pair Fwd
+            new Color(0.4f, 0.4f, 0.7f),    // R-Pair Side
+            new Color(0.5f, 0.3f, 0.6f),    // R-Pair Hdg
         };
 
-        public const int OBS_COUNT = 11;
+        /// <summary>현재 표시 중인 관측 수 (targetAgent에서 동적 결정)</summary>
+        private int _obsCount = Labels.Length;
 
-        /// <summary>columns와 OBS_COUNT로 행 수 자동 계산</summary>
-        public int ComputedRows => Mathf.CeilToInt((float)OBS_COUNT / Mathf.Max(1, columns));
+        /// <summary>현재 관측 수 (런타임 동적)</summary>
+        public int ObsCount => _obsCount;
+
+        /// <summary>알려진 라벨 수 (에디터 셋업용, Labels 배열 크기)</summary>
+        public static int DefaultObsCount => Labels.Length;
+
+        /// <summary>columns와 ObsCount로 행 수 자동 계산</summary>
+        public int ComputedRows => Mathf.CeilToInt((float)_obsCount / Mathf.Max(1, columns));
 
         protected override void Awake()
         {
@@ -86,9 +103,15 @@ namespace BoatAttack
 
         void InitHistory()
         {
-            if (_initialized) return;
-            _history = new float[OBS_COUNT][];
-            for (int i = 0; i < OBS_COUNT; i++)
+            InitHistory(_obsCount);
+        }
+
+        /// <summary>지정 크기로 히스토리 초기화 (관측 수 변경 시 재호출)</summary>
+        void InitHistory(int count)
+        {
+            _obsCount = Mathf.Max(1, count);
+            _history = new float[_obsCount][];
+            for (int i = 0; i < _obsCount; i++)
                 _history[i] = new float[historyLength];
             _writeIndex = 0;
             _sampleCount = 0;
@@ -99,7 +122,7 @@ namespace BoatAttack
         private void ClearHistory()
         {
             if (_history == null) return;
-            for (int i = 0; i < OBS_COUNT; i++)
+            for (int i = 0; i < _obsCount; i++)
                 System.Array.Clear(_history[i], 0, historyLength);
             _writeIndex = 0;
             _sampleCount = 0;
@@ -165,7 +188,15 @@ namespace BoatAttack
 
             if (targetAgent == null || targetAgent.lastObservations == null) return;
 
-            int count = Mathf.Min(targetAgent.lastObservations.Length, OBS_COUNT);
+            // 관측 수 변경 감지 → 히스토리 + 라벨 동적 리사이즈
+            int agentObsCount = targetAgent.lastObservations.Length;
+            if (agentObsCount != _obsCount)
+            {
+                InitHistory(agentObsCount);
+                RepositionLabels();
+            }
+
+            int count = Mathf.Min(agentObsCount, _obsCount);
             for (int i = 0; i < count; i++)
                 _history[i][_writeIndex] = targetAgent.lastObservations[i];
 
@@ -200,7 +231,7 @@ namespace BoatAttack
             out float xMax, out float yMax)
         {
             int cols = Mathf.Max(1, columns);
-            int actualRows = Mathf.CeilToInt((float)OBS_COUNT / cols);
+            int actualRows = Mathf.CeilToInt((float)_obsCount / cols);
 
             int row = obsIndex / cols;
             int col = obsIndex % cols;
@@ -209,7 +240,7 @@ namespace BoatAttack
             float cellH = 1f / actualRows;
 
             // 마지막 행 중앙 정렬 오프셋
-            int itemsInRow = (row < actualRows - 1) ? cols : (OBS_COUNT - row * cols);
+            int itemsInRow = (row < actualRows - 1) ? cols : (_obsCount - row * cols);
             float offsetX = (itemsInRow < cols) ? (cols - itemsInRow) * cellW * 0.5f : 0f;
 
             xMin = col * cellW + offsetX;
@@ -221,7 +252,7 @@ namespace BoatAttack
         /// <summary>라벨/값/범위 텍스트를 현재 columns에 맞게 재배치</summary>
         private void RepositionLabels()
         {
-            for (int i = 0; i < OBS_COUNT; i++)
+            for (int i = 0; i < _obsCount; i++)
             {
                 GetCellAnchors(i, out float xMin, out float yMin, out float xMax, out float yMax);
 
@@ -269,13 +300,13 @@ namespace BoatAttack
             float cellW = r.width / cols;
             float cellH = r.height / actualRows;
 
-            for (int i = 0; i < OBS_COUNT; i++)
+            for (int i = 0; i < _obsCount; i++)
             {
                 int row = i / cols;
                 int col = i % cols;
 
                 // 마지막 행 중앙 정렬
-                int itemsInRow = (row < actualRows - 1) ? cols : (OBS_COUNT - row * cols);
+                int itemsInRow = (row < actualRows - 1) ? cols : (_obsCount - row * cols);
                 float rowOffset = (itemsInRow < cols) ? (cols - itemsInRow) * cellW * 0.5f : 0f;
 
                 float cx = r.x + col * cellW + cellPadding + rowOffset;
@@ -315,7 +346,7 @@ namespace BoatAttack
                     new Color(cellBorderColor.r, cellBorderColor.g, cellBorderColor.b, 0.3f));
 
                 // 컬러 인디케이터 바 (상단 좌측, 그래프 색상 - 더 굵게)
-                Color indicatorCol = GraphColors[i];
+                Color indicatorCol = GetColor(i);
                 AddRect(vh, cx + 3f, cy + ch - graphTopMargin + 4f, 4f, graphTopMargin - 8f, indicatorCol);
                 // 인디케이터 글로우
                 AddRect(vh, cx + 2f, cy + ch - graphTopMargin + 3f, 6f, graphTopMargin - 6f,
@@ -357,13 +388,13 @@ namespace BoatAttack
                 if (_sampleCount >= 2)
                 {
                     // 외곽 글로우 (넓고 부드러운)
-                    Color glowCol1 = new Color(GraphColors[i].r, GraphColors[i].g, GraphColors[i].b, 0.06f);
+                    Color glowCol1 = new Color(indicatorCol.r, indicatorCol.g, indicatorCol.b, 0.06f);
                     DrawGraphLine(vh, i, gx, gy, gw, gh, glowCol1, lineWidth * 7f);
                     // 내부 글로우 (중간)
-                    Color glowCol2 = new Color(GraphColors[i].r, GraphColors[i].g, GraphColors[i].b, 0.18f);
+                    Color glowCol2 = new Color(indicatorCol.r, indicatorCol.g, indicatorCol.b, 0.18f);
                     DrawGraphLine(vh, i, gx, gy, gw, gh, glowCol2, lineWidth * 3f);
                     // 메인 라인 (밝은 코어)
-                    DrawGraphLine(vh, i, gx, gy, gw, gh, GraphColors[i], lineWidth);
+                    DrawGraphLine(vh, i, gx, gy, gw, gh, indicatorCol, lineWidth);
                 }
 
                 // 현재값 인디케이터 (그래프 우측 끝에 작은 마커)
@@ -374,7 +405,7 @@ namespace BoatAttack
                     float markerY = gy + (lastVal + 1f) * 0.5f * gh;
                     float markerX = gx + gw;
                     // 작은 삼각형 마커
-                    Color mCol = GraphColors[i];
+                    Color mCol = indicatorCol;
                     int mi = vh.currentVertCount;
                     vh.AddVert(new Vector3(markerX, markerY), mCol, Vector2.zero);
                     vh.AddVert(new Vector3(markerX + 4f, markerY + 3f), mCol, Vector2.zero);
@@ -438,8 +469,19 @@ namespace BoatAttack
             vh.AddTriangle(idx, idx + 2, idx + 3);
         }
 
-        // Setup 스크립트에서 사용
-        public static string GetLabel(int index) => Labels[index];
-        public static Color GetColor(int index) => GraphColors[index];
+        // Setup 스크립트 및 런타임에서 사용 (범위 초과 시 자동 생성)
+        public static string GetLabel(int index)
+        {
+            if (index >= 0 && index < Labels.Length) return Labels[index];
+            return $"Obs {index}";
+        }
+
+        public static Color GetColor(int index)
+        {
+            if (index >= 0 && index < GraphColors.Length) return GraphColors[index];
+            // 골든 레이시오 기반 색상 자동 생성 (겹치지 않는 색)
+            float hue = (index * 0.618034f) % 1f;
+            return Color.HSVToRGB(hue, 0.7f, 0.9f);
+        }
     }
 }

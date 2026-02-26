@@ -25,6 +25,10 @@ namespace BoatAttack
         [Tooltip("디버그 로그 활성화")]
         public bool enableDebugLog = true;
 
+        /// <summary>
+        /// 부모 DynamicWeb 참조 (포획 시 쌍 식별용)
+        /// </summary>
+        [HideInInspector] public DynamicWeb parentDynamicWeb;
 
         private bool _hasTriggered = false;
 
@@ -35,6 +39,14 @@ namespace BoatAttack
             {
                 Transform envRoot = transform.parent != null ? transform.parent : transform;
                 envController = envRoot.GetComponentInChildren<DefenseEnvController>();
+            }
+
+            // 부모 DynamicWeb 자동 찾기
+            if (parentDynamicWeb == null)
+            {
+                parentDynamicWeb = GetComponent<DynamicWeb>();
+                if (parentDynamicWeb == null)
+                    parentDynamicWeb = GetComponentInParent<DynamicWeb>();
             }
         }
 
@@ -57,10 +69,10 @@ namespace BoatAttack
                 // 적군 선박 참조
                 GameObject enemyBoat = other.gameObject;
 
-                // DefenseEnvController를 통해 적군과 아군 모두 원점으로 리셋 처리 (에피소드 종료 없음)
+                // DefenseEnvController를 통해 포획 처리 (적 무력화 + 쌍 풀 반환)
                 if (envController != null)
                 {
-                    envController.OnEnemyHitWeb(enemyBoat);
+                    envController.OnEnemyHitWeb(enemyBoat, parentDynamicWeb);
                 }
                 else
                 {
@@ -83,7 +95,7 @@ namespace BoatAttack
             {
                 if (envController != null)
                 {
-                    envController.OnAllyHitWeb(other.gameObject);
+                    envController.OnAllyHitWeb(other.gameObject, parentDynamicWeb);
                     if (enableDebugLog)
                         Debug.Log($"[WebCollisionDetector] 아군 웹 충돌! {other.gameObject.name}");
                 }

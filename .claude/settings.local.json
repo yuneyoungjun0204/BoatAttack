@@ -27,7 +27,11 @@
       "Bash(pip3.10 list:*)",
       "Bash(pip install:*)",
       "Bash(nvidia-smi:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(xxd:*)",
+      "Bash(\"C:/Users/ANSL/anaconda3/envs/mlagents-gpu/python.exe\" -c \"import sys; print\\(''Default encoding:'', sys.getdefaultencoding\\(\\)\\); import locale; print\\(''Preferred encoding:'', locale.getpreferredencoding\\(\\)\\); print\\(''PYTHONUTF8:'', __import__\\(''os''\\).environ.get\\(''PYTHONUTF8'', ''not set''\\)\\); print\\(''Python UTF8 mode:'', sys.flags.utf8_mode\\)\")",
+      "Bash(\"C:/Users/ANSL/anaconda3/envs/mlagents-gpu/python.exe\" -c:*)",
+      "Bash(\"C:/Users/ANSL/anaconda3/envs/mlagents-gpu/python.exe\" -c \":*)"
     ]
   }
 }

@@ -1,5 +1,6 @@
 using UnityEngine;
 using Unity.MLAgents;
+using Unity.MLAgents.Sensors;
 using System.Collections.Generic;
 
 namespace BoatAttack
@@ -42,6 +43,10 @@ namespace BoatAttack
         [HideInInspector] public int assignedZoneIndex = -1;
         [HideInInspector] public bool isActive = false;
         [HideInInspector] public int deployStep = -1; // 배치 시점 (FixedUpdate 스텝)
+
+        // 좌/우 교차 체크용 (배치 시 기록)
+        [HideInInspector] public bool agent1StartsOnLeft = true; // agent1이 lateralDir 기준 왼쪽인지
+        [HideInInspector] public Vector3 deployLateralDir = Vector3.right; // 배치 시 횡방향 (좌/우 판별 축)
     }
 
     /// <summary>
@@ -239,6 +244,10 @@ namespace BoatAttack
             if (wd == null) wd = webObj.AddComponent<WebCollisionDetector>();
             if (envController != null) wd.envController = envController;
 
+            // BufferSensor 크기 보정
+            NormalizeBufferSensor(da1);
+            NormalizeBufferSensor(da2);
+
             // templatePair 설정
             if (templatePair == null)
                 templatePair = new DefensePair();
@@ -330,6 +339,10 @@ namespace BoatAttack
             EnsureEngineRB(agent1Clone);
             EnsureEngineRB(agent2Clone);
 
+            // BufferSensor 크기 보정 (inactive 클론은 Awake 미호출이므로 여기서 강제)
+            NormalizeBufferSensor(pair.agent1);
+            NormalizeBufferSensor(pair.agent2);
+
             // 파트너/Web 교차 참조 설정
             pair.agent1.partnerAgent = pair.agent2;
             pair.agent2.partnerAgent = pair.agent1;
@@ -379,6 +392,24 @@ namespace BoatAttack
                 $"a1RB={pair.agent1?._engine?.RB != null}");
 
             return pair;
+        }
+
+        /// <summary>
+        /// BufferSensorComponent의 ObservableSize/MaxNumObservables 강제 보정
+        /// Inspector 불일치 방지 (코드에서 AppendObservation 4개 값 사용)
+        /// inactive 오브젝트에서도 동작 (Awake 전에 호출 가능)
+        /// </summary>
+        private void NormalizeBufferSensor(DefenseAgent agent)
+        {
+            if (agent == null) return;
+            var buf = agent.enemyBufferSensor;
+            if (buf == null)
+                buf = agent.GetComponent<BufferSensorComponent>();
+            if (buf == null)
+                buf = agent.gameObject.AddComponent<BufferSensorComponent>();
+            buf.ObservableSize = 4;       // r, f, d, h
+            buf.MaxNumObservables = 10;
+            agent.enemyBufferSensor = buf;
         }
 
         /// <summary>
@@ -492,19 +523,26 @@ namespace BoatAttack
                     Vector3 pos2 = pairCenter + lateralDir * (pairWidth * 0.5f);
                     pos2.y = _templateAgent2Y;
 
-                    // 두 선박 모두 zoneDir(모선→바깥) 방향으로 동일하게 향함
-                    Quaternion rot = Quaternion.LookRotation(zoneDir, Vector3.up);
+                    // 적군 배열 전달 (회전 계산 전에 설정)
+                    GameObject[] enemies = envController != null ? envController.enemyShips : null;
+                    if (enemies != null)
+                    {
+                        pair.agent1.enemyShips = enemies;
+                        pair.agent2.enemyShips = enemies;
+                    }
+
+                    // 배정된 적 방향으로 ±45° 클램프 회전 (적 없으면 zoneDir 기본)
+                    int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
+                    Quaternion rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
 
                     // 에이전트 위치/회전 설정
                     ResetAgent(pair.agent1, pos1, rot);
                     ResetAgent(pair.agent2, pos2, rot);
 
-                    // 적군 배열 전달
-                    if (envController != null)
-                    {
-                        pair.agent1.enemyShips = envController.enemyShips;
-                        pair.agent2.enemyShips = envController.enemyShips;
-                    }
+                    // 좌/우 교차 체크용 초기값 기록
+                    pair.deployLateralDir = lateralDir;
+                    float dot1 = Vector3.Dot(pos1 - pairCenter, lateralDir);
+                    pair.agent1StartsOnLeft = dot1 < 0f;
 
                     // 활성화 (에이전트 위치는 위의 ResetAgent에서 이미 설정됨)
                     SetPairActive(pi, true);
@@ -730,11 +768,21 @@ namespace BoatAttack
             }
             else
             {
-                // "활성화": kinematic 해제 (위치는 ResetAgent에서 설정됨)
-                if (pair.agent1 != null && pair.agent1.TryGetComponent<Rigidbody>(out var rb1))
-                    rb1.isKinematic = false;
-                if (pair.agent2 != null && pair.agent2.TryGetComponent<Rigidbody>(out var rb2))
-                    rb2.isKinematic = false;
+                // "활성화": GameObject 활성화 (inactive 클론 대응) + kinematic 해제
+                if (pair.agent1 != null)
+                {
+                    if (!pair.agent1.gameObject.activeSelf)
+                        pair.agent1.gameObject.SetActive(true);
+                    if (pair.agent1.TryGetComponent<Rigidbody>(out var rb1))
+                        rb1.isKinematic = false;
+                }
+                if (pair.agent2 != null)
+                {
+                    if (!pair.agent2.gameObject.activeSelf)
+                        pair.agent2.gameObject.SetActive(true);
+                    if (pair.agent2.TryGetComponent<Rigidbody>(out var rb2))
+                        rb2.isKinematic = false;
+                }
             }
 
             // Web만 SetActive 토글
@@ -844,13 +892,14 @@ namespace BoatAttack
             Vector3 pos2 = pairCenter + lateralDir * (pairSpacing * 0.5f);
             pos2.y = _templateAgent2Y;
 
-            // 두 선박 모두 zoneDir(모선→바깥) 방향으로 동일하게 향함
-            // → Web이 lateralDir(수직 방향)로 연결되므로 진행방향에 수직
-            Quaternion rot = Quaternion.LookRotation(zoneDir, Vector3.up);
-
             // 2. 기존 비활성 쌍 재사용 또는 프리팹에서 새로 생성
+            // (적군 참조를 먼저 설정한 뒤 회전 계산)
             int pairIdx;
             DefensePair pair;
+            GameObject[] enemies = envController != null ? envController.enemyShips : null;
+
+            // 임시로 zoneDir 기본 회전 사용 (후에 적 방향으로 보정)
+            Quaternion rot = Quaternion.LookRotation(zoneDir, Vector3.up);
 
             int existingInactive = FindInactivePairIndex();
             if (existingInactive >= 0)
@@ -858,8 +907,6 @@ namespace BoatAttack
                 // 기존 비활성 쌍 재사용
                 pairIdx = existingInactive;
                 pair = _pairPool[pairIdx];
-                ResetAgent(pair.agent1, pos1, rot);
-                ResetAgent(pair.agent2, pos2, rot);
             }
             else
             {
@@ -869,7 +916,7 @@ namespace BoatAttack
                     Debug.LogError("[DeploySingle] defenseBoatPrefab이 null! Inspector에서 할당하세요.");
                     return false;
                 }
-    
+
                 pairIdx = _pairPool.Count;
                 pair = SpawnPairFromPrefab(pairIdx, pos1, pos2, rot);
                 if (pair == null) return false;
@@ -879,12 +926,23 @@ namespace BoatAttack
             pair.assignedZoneIndex = zoneIdx;
             pair.deployStep = envController != null ? envController.CurrentStep : 0;
 
-            // 3. 적군 참조
-            if (envController != null)
+            // 3. 적군 참조 설정
+            if (enemies != null)
             {
-                pair.agent1.enemyShips = envController.enemyShips;
-                pair.agent2.enemyShips = envController.enemyShips;
+                pair.agent1.enemyShips = enemies;
+                pair.agent2.enemyShips = enemies;
             }
+
+            // 배정된 적 방향으로 ±45° 클램프 회전
+            int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
+            rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
+            ResetAgent(pair.agent1, pos1, rot);
+            ResetAgent(pair.agent2, pos2, rot);
+
+            // 좌/우 교차 체크용 초기값 기록
+            pair.deployLateralDir = lateralDir;
+            float dotSingle = Vector3.Dot(pos1 - pairCenter, lateralDir);
+            pair.agent1StartsOnLeft = dotSingle < 0f;
 
             // 4. 활성화
             SetPairActive(pairIdx, true);
@@ -990,6 +1048,10 @@ namespace BoatAttack
             // Engine.RB 확인
             EnsureEngineRB(a1Obj);
             EnsureEngineRB(a2Obj);
+
+            // BufferSensor 크기 보정 (프리팹 Inspector 불일치 방지)
+            NormalizeBufferSensor(a1);
+            NormalizeBufferSensor(a2);
 
             pair.isActive = false; // SetPairActive에서 true로 변경됨
             return pair;
@@ -1162,6 +1224,60 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// 포획 성공 시 쌍을 풀로 반환 (재활용 가능).
+        /// DisablePair와 달리 HIDDEN_POS로 이동 + neutralized 해제하여 나중에 재배치 가능.
+        /// Web은 즉시 비활성화하지 않고, delayWebDisable=true이면 0.5초 후 비활성화.
+        /// </summary>
+        public void ReturnPairToPool(int pairIndex, SimpleMultiAgentGroup agentGroup, bool delayWebDisable = true)
+        {
+            if (_pairPool == null || pairIndex < 0 || pairIndex >= _pairPool.Count)
+                return;
+            DefensePair pair = _pairPool[pairIndex];
+            if (!pair.isActive) return;
+
+            // MA-POCA 등록 해제 (Posthumous Credit 작동)
+            if (agentGroup != null)
+            {
+                if (pair.agent1 != null) agentGroup.UnregisterAgent(pair.agent1);
+                if (pair.agent2 != null) agentGroup.UnregisterAgent(pair.agent2);
+            }
+
+            // HIDDEN_POS로 이동 + isKinematic (재활용 가능 상태)
+            SetPairActive(pairIndex, false);
+            pair.assignedZoneIndex = -1;
+            pair.deployStep = -1;
+
+            // neutralized 해제 (재배치 시 다시 사용 가능하도록)
+            if (pair.agent1 != null) pair.agent1.SetNeutralized(false);
+            if (pair.agent2 != null) pair.agent2.SetNeutralized(false);
+            if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
+            if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
+
+            _deployedPairCount = Mathf.Max(0, _deployedPairCount - 1);
+
+            // Web: 0.5초 뒤 비활성화 (포획 연출용)
+            if (delayWebDisable && pair.webObject != null)
+            {
+                // SetPairActive(false)에서 이미 webObject.SetActive(false) 했으므로
+                // delayWebDisable일 때는 잠시 다시 켜고 0.5초 후 끔
+                pair.webObject.SetActive(true);
+                var webObj = pair.webObject; // 클로저 캡처용
+                StartCoroutine(DelayedWebDisable(webObj, 0.5f));
+            }
+
+            Debug.Log($"[LaunchZoneManager] Pair {pairIndex} 풀 반환 (재활용 가능)");
+        }
+
+        /// <summary>
+        /// Web을 delay 초 후 비활성화하는 코루틴
+        /// </summary>
+        private System.Collections.IEnumerator DelayedWebDisable(GameObject webObj, float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            if (webObj != null) webObj.SetActive(false);
+        }
+
+        /// <summary>
         /// 에이전트 엔진 정지 (물리/파도/부력은 유지)
         /// SetNeutralized → OnActionReceived에서 엔진 구동 차단
         /// </summary>
@@ -1312,20 +1428,56 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 모선→진수위치 벡터에 수직한 방향 + ±30° 랜덤 회전으로 스폰 방향 계산
+        /// zoneDir(모선→바깥) 기본 방향에서, 배정된 적 방향으로 최대 ±45° 회전하여 스폰 방향 계산.
+        /// 적이 없거나 enemyShips가 null이면 기본 zoneDir 그대로 사용.
         /// </summary>
-        private Quaternion ComputeSpawnFacing(Vector3 zoneDir, float randomAngleDeg = 30f)
+        private Quaternion ComputeSpawnRotation(Vector3 zoneDir, Vector3 pairCenter,
+            GameObject[] enemies, int assignedTargetIndex, float maxAngleDeg = 45f)
         {
-            // 모선→진수위치 벡터에 수직 (XZ 평면 90° 회전)
-            Vector3 perpDir = new Vector3(-zoneDir.z, 0f, zoneDir.x);
+            Vector3 targetDir = Vector3.zero;
+            bool hasTarget = false;
 
-            // ±randomAngleDeg 랜덤 회전
-            float randomAngle = Random.Range(-randomAngleDeg, randomAngleDeg);
-            Vector3 faceDir = RotateXZ(perpDir, randomAngle * Mathf.Deg2Rad);
+            // 1. 배정된 타겟이 있으면 그 방향 사용 (1-indexed)
+            if (assignedTargetIndex > 0 && enemies != null)
+            {
+                int idx = assignedTargetIndex - 1;
+                if (idx < enemies.Length && enemies[idx] != null && enemies[idx].activeInHierarchy)
+                {
+                    targetDir = enemies[idx].transform.position - pairCenter;
+                    targetDir.y = 0f;
+                    hasTarget = targetDir.sqrMagnitude > 1f;
+                }
+            }
 
-            return faceDir.sqrMagnitude > 0.01f
-                ? Quaternion.LookRotation(faceDir, Vector3.up)
-                : Quaternion.identity;
+            // 2. 배정 타겟 없으면 가장 가까운 활성 적 사용
+            if (!hasTarget && enemies != null)
+            {
+                float closestDist = float.MaxValue;
+                for (int i = 0; i < enemies.Length; i++)
+                {
+                    if (enemies[i] == null || !enemies[i].activeInHierarchy) continue;
+                    Vector3 toEnemy = enemies[i].transform.position - pairCenter;
+                    toEnemy.y = 0f;
+                    float dist = toEnemy.sqrMagnitude;
+                    if (dist < closestDist)
+                    {
+                        closestDist = dist;
+                        targetDir = toEnemy;
+                        hasTarget = true;
+                    }
+                }
+            }
+
+            if (!hasTarget)
+                return Quaternion.LookRotation(zoneDir, Vector3.up);
+
+            // 3. zoneDir과 targetDir 사이의 각도를 ±maxAngleDeg로 클램프
+            targetDir.Normalize();
+            float angleBetween = Vector3.SignedAngle(zoneDir, targetDir, Vector3.up);
+            float clampedAngle = Mathf.Clamp(angleBetween, -maxAngleDeg, maxAngleDeg);
+            Vector3 finalDir = RotateXZ(zoneDir, clampedAngle * Mathf.Deg2Rad);
+
+            return Quaternion.LookRotation(finalDir, Vector3.up);
         }
 
         #region Zone Cylinder Visuals

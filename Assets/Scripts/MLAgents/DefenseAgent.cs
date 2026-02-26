@@ -82,6 +82,9 @@ namespace BoatAttack
         [Range(0f, 5f)] public float motherFScale = 1f;
         [Range(0f, 5f)] public float motherDistScale = 1f;
 
+        [Header("Ally Pair Observation (좌/우 가장 가까운 아군 쌍)")]
+        [Range(1f, 1000f)] public float allyPairNormK = 100f;
+
         [Header("Heuristic")]
         [Tooltip("true면 화살표키, false면 WASD (페어 배치 시 자동 설정)")]
         public bool useArrowKeys = false;
@@ -119,6 +122,15 @@ namespace BoatAttack
             {
                 _engine = _boat.engine;
             }
+
+            // BufferSensor 자동 찾기 → 없으면 AddComponent → 크기 보정
+            // 코드에서 AppendObservation(new float[] { r, f, d, h }) → 4개 값
+            if (enemyBufferSensor == null)
+                enemyBufferSensor = GetComponent<BufferSensorComponent>();
+            if (enemyBufferSensor == null)
+                enemyBufferSensor = gameObject.AddComponent<BufferSensorComponent>();
+            enemyBufferSensor.ObservableSize = 4;   // r, f, d, h
+            enemyBufferSensor.MaxNumObservables = 10;
         }
 
         protected override void OnEnable()
@@ -227,13 +239,13 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 관측 수집 (VectorSensor 11개 + EnemyBufferSensor 가변)
-        /// VectorSensor: 파트너(4) + 배정타겟(4) + 모선(3) = 11
+        /// 관측 수집 (VectorSensor 19개 + EnemyBufferSensor 가변)
+        /// VectorSensor: 파트너(4) + 배정타겟(4) + 모선(3) + 좌측아군쌍(4) + 우측아군쌍(4) = 19
         /// BufferSensor: 나머지 적군 각 4개 (R, F, Dist, Hdg)
         /// </summary>
         public override void CollectObservations(VectorSensor sensor)
         {
-            const int VECTOR_OBS_COUNT = 11;  // 파트너4 + 타겟4 + 모선3
+            const int VECTOR_OBS_COUNT = 19;  // 파트너4 + 타겟4 + 모선3 + 좌쌍4 + 우쌍4
             if (lastObservations == null || lastObservations.Length != VECTOR_OBS_COUNT)
                 lastObservations = new float[VECTOR_OBS_COUNT];
             int oi = 0;
@@ -301,7 +313,10 @@ namespace BoatAttack
                 for (int i = 0; i < 3; i++) AddObs(sensor, 0f, ref oi);
             }
 
-            // 4. BufferSensor: 나머지 적군 (배정 타겟 제외, 가변)
+            // 4. 좌/우 가장 가까운 아군 쌍 (각 4: dist, fwd, right, hdg)
+            CollectNearbyAllyPairObs(sensor, myPos, myForward, myRight, myAngle, ref oi);
+
+            // 5. BufferSensor: 나머지 적군 (배정 타겟 제외, 가변)
             if (enemyBufferSensor != null && enemyShips != null)
             {
                 foreach (var enemy in enemyShips)
@@ -348,6 +363,112 @@ namespace BoatAttack
             AddObs(sensor, NormalizeAngle(myAngle, target.eulerAngles.y) * hdgScale, ref oi);
         }
 
+        /// <summary>
+        /// 좌/우 가장 가까운 아군 쌍 관측 수집 (8개: 좌4 + 우4)
+        /// 내 heading 기준 좌측/우측에서 가장 가까운 다른 쌍의 중심점 정보
+        /// 해당 방향에 쌍이 없으면 (1.0, 0, 0, 0) = "매우 멀고 방향 없음"
+        /// </summary>
+        private void CollectNearbyAllyPairObs(VectorSensor sensor, Vector3 myPos,
+            Vector3 myForward, Vector3 myRight, float myAngle, ref int oi)
+        {
+            float leftMinDist = float.MaxValue;
+            float rightMinDist = float.MaxValue;
+            Vector3 leftCenter = Vector3.zero;
+            Vector3 rightCenter = Vector3.zero;
+            float leftHeading = 0f;
+            float rightHeading = 0f;
+            bool hasLeft = false, hasRight = false;
+
+            var lzm = envController != null ? envController.launchZoneManager : null;
+            if (lzm != null && lzm.IsInitialized)
+            {
+                int myPairIdx = lzm.FindPairIndex(this);
+                int poolCount = lzm.GetCurrentPoolCount();
+
+                for (int i = 0; i < poolCount; i++)
+                {
+                    if (i == myPairIdx) continue;
+                    DefensePair pair = lzm.GetPair(i);
+                    if (pair == null || !pair.isActive) continue;
+                    if (pair.agent1 == null || pair.agent2 == null) continue;
+
+                    // 다른 쌍의 중심점
+                    Vector3 otherCenter = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+                    Vector3 toOther = otherCenter - myPos;
+                    float dist = toOther.magnitude;
+
+                    // 좌/우 판별: myRight와의 내적
+                    float rightDot = Vector3.Dot(myRight, toOther);
+
+                    // 쌍의 평균 헤딩
+                    float otherHeading = (pair.agent1.transform.eulerAngles.y + pair.agent2.transform.eulerAngles.y) * 0.5f;
+
+                    if (rightDot >= 0f) // 우측
+                    {
+                        if (dist < rightMinDist)
+                        {
+                            rightMinDist = dist;
+                            rightCenter = otherCenter;
+                            rightHeading = otherHeading;
+                            hasRight = true;
+                        }
+                    }
+                    else // 좌측
+                    {
+                        if (dist < leftMinDist)
+                        {
+                            leftMinDist = dist;
+                            leftCenter = otherCenter;
+                            leftHeading = otherHeading;
+                            hasLeft = true;
+                        }
+                    }
+                }
+            }
+
+            // 좌측 쌍 (4개)
+            if (hasLeft)
+            {
+                Vector3 rel = leftCenter - myPos;
+                float dist = rel.magnitude;
+                float fwdDot = Vector3.Dot(rel, myForward);
+                float rDot = Vector3.Dot(rel, myRight);
+
+                AddObs(sensor, dist / (dist + allyPairNormK), ref oi);
+                AddObs(sensor, dist > 0.1f ? fwdDot / dist : 0f, ref oi);
+                AddObs(sensor, dist > 0.1f ? rDot / dist : 0f, ref oi);
+                AddObs(sensor, NormalizeAngle(myAngle, leftHeading), ref oi);
+            }
+            else
+            {
+                AddObs(sensor, 1f, ref oi);  // 거리 = 1.0 (매우 멀다)
+                AddObs(sensor, 0f, ref oi);  // 전방 성분 없음
+                AddObs(sensor, 0f, ref oi);  // 측면 성분 없음
+                AddObs(sensor, 0f, ref oi);  // 헤딩 차이 없음
+            }
+
+            // 우측 쌍 (4개)
+            if (hasRight)
+            {
+                Vector3 rel = rightCenter - myPos;
+                float dist = rel.magnitude;
+                float fwdDot = Vector3.Dot(rel, myForward);
+                float rDot = Vector3.Dot(rel, myRight);
+
+                AddObs(sensor, dist / (dist + allyPairNormK), ref oi);
+                AddObs(sensor, dist > 0.1f ? fwdDot / dist : 0f, ref oi);
+                AddObs(sensor, dist > 0.1f ? rDot / dist : 0f, ref oi);
+                AddObs(sensor, NormalizeAngle(myAngle, rightHeading), ref oi);
+            }
+            else
+            {
+                AddObs(sensor, 1f, ref oi);
+                AddObs(sensor, 0f, ref oi);
+                AddObs(sensor, 0f, ref oi);
+                AddObs(sensor, 0f, ref oi);
+            }
+        }
+
         /// <summary>관측값 기록 + 센서 추가 헬퍼</summary>
         private void AddObs(VectorSensor sensor, float value, ref int index)
         {
@@ -362,7 +483,10 @@ namespace BoatAttack
         public override void OnActionReceived(ActionBuffers actions)
         {
             if (_engine == null || _engine.RB == null || _episodeEnded || _neutralized)
+            {
+                Debug.LogWarning($"[{name}] OnAction BLOCKED: engine={_engine != null}, RB={_engine?.RB != null}, ended={_episodeEnded}, neutral={_neutralized}");
                 return;
+            }
 
             float throttleInput = actions.ContinuousActions[0];
             float steeringInput = actions.ContinuousActions[1];

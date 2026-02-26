@@ -18,6 +18,10 @@ namespace BoatAttack
         public float steeringTorque = 5f;
         public float horsePower = 5800f;
 
+        [Header("Speed Limit")]
+        [Tooltip("Max speed in m/s (0 = no limit)")]
+        public float maxSpeed = 30f;
+
         [Header("Stabilization")]
         [Tooltip("자세 안정화 토크 강도 (0이면 비활성)")]
         public float stabilizationTorque = 5f;
@@ -133,6 +137,17 @@ namespace BoatAttack
                     pitch = Mathf.Clamp(pitch, -maxTiltAngle, maxTiltAngle);
                     RB.MoveRotation(Quaternion.Euler(pitch, euler.y, roll));
                     RB.angularVelocity = Vector3.Scale(RB.angularVelocity, new Vector3(0.3f, 1f, 0.3f));
+                }
+            }
+
+            // Speed limiter: clamp velocity to maxSpeed
+            if (maxSpeed > 0f)
+            {
+                Vector3 vel = RB.velocity;
+                float speed = vel.magnitude;
+                if (speed > maxSpeed)
+                {
+                    RB.velocity = vel * (maxSpeed / speed);
                 }
             }
 

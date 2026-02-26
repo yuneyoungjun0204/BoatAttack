@@ -831,7 +831,7 @@ namespace BoatAttack
 
             // 라벨 + 값 텍스트 생성 (그래프 위에 오버레이, 마지막 행 중앙 정렬)
             int cols = graph.columns;
-            int obsCount = ObservationGraphDisplay.OBS_COUNT;
+            int obsCount = ObservationGraphDisplay.DefaultObsCount;
             int rows = Mathf.CeilToInt((float)obsCount / Mathf.Max(1, cols));
             var labelTexts = new Text[obsCount];
             var valueTexts = new Text[obsCount];

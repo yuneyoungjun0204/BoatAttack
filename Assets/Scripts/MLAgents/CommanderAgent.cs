@@ -75,6 +75,21 @@ namespace BoatAttack
 
         #region ML-Agents Lifecycle
 
+        /// <summary>
+        /// non-Commander Stage: Agent 등록 전에 자신을 비활성화
+        /// Commander Stage: base.Awake() 호출하여 정상 초기화
+        /// </summary>
+        protected override void Awake()
+        {
+            if (envController == null || !envController.IsCommanderStage())
+            {
+                Debug.Log($"[CommanderAgent] Disabling self (stage={envController?.currentStage})");
+                gameObject.SetActive(false);
+                return;
+            }
+            base.Awake();
+        }
+
         public override void OnEpisodeBegin()
         {
             _episodeEnded = false;
@@ -115,10 +130,12 @@ namespace BoatAttack
 
         public override void CollectObservations(VectorSensor sensor)
         {
-            if (envController == null || launchZoneManager == null)
+            if (envController == null || launchZoneManager == null
+                || !envController.IsCommanderStage())
             {
-                // 안전 padding
+                // 안전 padding (비-Commander 스테이지 포함)
                 for (int i = 0; i < 4; i++) sensor.AddObservation(0f);
+                // BufferSensor는 AppendObservation 호출 안 하면 자동 zero-pad
                 return;
             }
 
@@ -213,7 +230,8 @@ namespace BoatAttack
 
         public override void OnActionReceived(ActionBuffers actions)
         {
-            if (_episodeEnded || envController == null || launchZoneManager == null) return;
+            if (_episodeEnded || envController == null || launchZoneManager == null
+                || !envController.IsCommanderStage()) return;
 
             int zoneAction = actions.DiscreteActions[0];   // 0-9: zone, 10: 대기
             int countAction = actions.DiscreteActions[1];   // 0-5: 배치 수
