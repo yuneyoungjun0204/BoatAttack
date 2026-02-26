@@ -32,10 +32,12 @@ namespace BoatAttack
         public float graphBottomMargin = 28f;
 
         [Header("=== Colors ===")]
-        public Color cellBgColor = new Color(0.12f, 0.12f, 0.18f, 1f);
-        public Color graphBgColor = new Color(0.08f, 0.08f, 0.12f, 1f);
+        public Color cellBgColor = new Color(0.08f, 0.09f, 0.14f, 1f);
+        public Color graphBgColor = new Color(0.04f, 0.05f, 0.09f, 1f);
         public Color zeroLineColor = new Color(0.3f, 0.3f, 0.4f, 0.8f);
         public Color guideLineColor = new Color(0.2f, 0.2f, 0.25f, 0.5f);
+        public Color cellBorderColor = new Color(0.25f, 0.3f, 0.45f, 0.7f);
+        public Color cornerBracketColor = new Color(0.35f, 0.7f, 1f, 0.75f);
 
         // 라벨 텍스트 (SetupScript에서 생성)
         [HideInInspector] public Text[] labelTexts;
@@ -284,6 +286,41 @@ namespace BoatAttack
                 // 셀 배경
                 AddRect(vh, cx, cy, cw, ch, cellBgColor);
 
+                // 셀 테두리
+                float bw = 1f;
+                AddRect(vh, cx, cy, cw, bw, cellBorderColor); // bottom
+                AddRect(vh, cx, cy + ch - bw, cw, bw, cellBorderColor); // top
+                AddRect(vh, cx, cy, bw, ch, cellBorderColor); // left
+                AddRect(vh, cx + cw - bw, cy, bw, ch, cellBorderColor); // right
+
+                // 코너 브라켓 (군사 HUD 스타일 - 굵고 뚜렷하게)
+                float bracketLen = Mathf.Min(cw, ch) * 0.18f;
+                float bracketW = 2f;
+                // 좌상단
+                AddRect(vh, cx, cy + ch - bracketW, bracketLen, bracketW, cornerBracketColor);
+                AddRect(vh, cx, cy + ch - bracketLen, bracketW, bracketLen, cornerBracketColor);
+                // 우상단
+                AddRect(vh, cx + cw - bracketLen, cy + ch - bracketW, bracketLen, bracketW, cornerBracketColor);
+                AddRect(vh, cx + cw - bracketW, cy + ch - bracketLen, bracketW, bracketLen, cornerBracketColor);
+                // 좌하단
+                AddRect(vh, cx, cy, bracketLen, bracketW, cornerBracketColor);
+                AddRect(vh, cx, cy, bracketW, bracketLen, cornerBracketColor);
+                // 우하단
+                AddRect(vh, cx + cw - bracketLen, cy, bracketLen, bracketW, cornerBracketColor);
+                AddRect(vh, cx + cw - bracketW, cy, bracketW, bracketLen, cornerBracketColor);
+
+                // 상단 라벨 영역 분리선
+                float headerY = cy + ch - graphTopMargin;
+                AddRect(vh, cx + 4f, headerY, cw - 8f, 0.5f,
+                    new Color(cellBorderColor.r, cellBorderColor.g, cellBorderColor.b, 0.3f));
+
+                // 컬러 인디케이터 바 (상단 좌측, 그래프 색상 - 더 굵게)
+                Color indicatorCol = GraphColors[i];
+                AddRect(vh, cx + 3f, cy + ch - graphTopMargin + 4f, 4f, graphTopMargin - 8f, indicatorCol);
+                // 인디케이터 글로우
+                AddRect(vh, cx + 2f, cy + ch - graphTopMargin + 3f, 6f, graphTopMargin - 6f,
+                    new Color(indicatorCol.r, indicatorCol.g, indicatorCol.b, 0.15f));
+
                 // 그래프 영역
                 float gx = cx + 2;
                 float gy = cy + graphBottomMargin;
@@ -293,22 +330,63 @@ namespace BoatAttack
                 // 그래프 배경
                 AddRect(vh, gx, gy, gw, gh, graphBgColor);
 
-                // 0 기준선 (중앙)
+                // 수직 격자 (5등분)
+                for (int g = 1; g < 5; g++)
+                {
+                    float vx = gx + gw * g / 5f;
+                    AddRect(vh, vx - 0.25f, gy, 0.5f, gh,
+                        new Color(guideLineColor.r, guideLineColor.g, guideLineColor.b, 0.2f));
+                }
+
+                // 0 기준선 (중앙, 강조)
                 float zeroY = gy + gh * 0.5f;
-                AddRect(vh, gx, zeroY - 0.5f, gw, 1f, zeroLineColor);
+                AddRect(vh, gx, zeroY - 0.5f, gw, 1.5f, zeroLineColor);
 
                 // ±0.5 보조선
-                AddRect(vh, gx, gy + gh * 0.75f - 0.5f, gw, 1f, guideLineColor);
-                AddRect(vh, gx, gy + gh * 0.25f - 0.5f, gw, 1f, guideLineColor);
+                AddRect(vh, gx, gy + gh * 0.75f - 0.25f, gw, 0.5f, guideLineColor);
+                AddRect(vh, gx, gy + gh * 0.25f - 0.25f, gw, 0.5f, guideLineColor);
 
-                // 그래프 라인
+                // ±0.25, ±0.75 미세 보조선
+                Color fineGuide = new Color(guideLineColor.r, guideLineColor.g, guideLineColor.b, 0.15f);
+                AddRect(vh, gx, gy + gh * 0.875f - 0.25f, gw, 0.5f, fineGuide);
+                AddRect(vh, gx, gy + gh * 0.625f - 0.25f, gw, 0.5f, fineGuide);
+                AddRect(vh, gx, gy + gh * 0.375f - 0.25f, gw, 0.5f, fineGuide);
+                AddRect(vh, gx, gy + gh * 0.125f - 0.25f, gw, 0.5f, fineGuide);
+
+                // 그래프 라인 (글로우 + 메인)
                 if (_sampleCount >= 2)
-                    DrawGraphLine(vh, i, gx, gy, gw, gh, GraphColors[i]);
+                {
+                    // 외곽 글로우 (넓고 부드러운)
+                    Color glowCol1 = new Color(GraphColors[i].r, GraphColors[i].g, GraphColors[i].b, 0.06f);
+                    DrawGraphLine(vh, i, gx, gy, gw, gh, glowCol1, lineWidth * 7f);
+                    // 내부 글로우 (중간)
+                    Color glowCol2 = new Color(GraphColors[i].r, GraphColors[i].g, GraphColors[i].b, 0.18f);
+                    DrawGraphLine(vh, i, gx, gy, gw, gh, glowCol2, lineWidth * 3f);
+                    // 메인 라인 (밝은 코어)
+                    DrawGraphLine(vh, i, gx, gy, gw, gh, GraphColors[i], lineWidth);
+                }
+
+                // 현재값 인디케이터 (그래프 우측 끝에 작은 마커)
+                if (_sampleCount > 0)
+                {
+                    int lastIdx = (_writeIndex - 1 + historyLength) % historyLength;
+                    float lastVal = Mathf.Clamp(_history[i][lastIdx], -1f, 1f);
+                    float markerY = gy + (lastVal + 1f) * 0.5f * gh;
+                    float markerX = gx + gw;
+                    // 작은 삼각형 마커
+                    Color mCol = GraphColors[i];
+                    int mi = vh.currentVertCount;
+                    vh.AddVert(new Vector3(markerX, markerY), mCol, Vector2.zero);
+                    vh.AddVert(new Vector3(markerX + 4f, markerY + 3f), mCol, Vector2.zero);
+                    vh.AddVert(new Vector3(markerX + 4f, markerY - 3f), mCol, Vector2.zero);
+                    vh.AddTriangle(mi, mi + 1, mi + 2);
+                }
             }
         }
 
-        void DrawGraphLine(VertexHelper vh, int obsIdx, float gx, float gy, float gw, float gh, Color lineColor)
+        void DrawGraphLine(VertexHelper vh, int obsIdx, float gx, float gy, float gw, float gh, Color lineColor, float width = 0f)
         {
+            if (width <= 0f) width = lineWidth;
             int count = Mathf.Min(_sampleCount, historyLength);
             float stepX = gw / (historyLength - 1);
 
@@ -325,7 +403,7 @@ namespace BoatAttack
                 float y0 = gy + (v0 + 1f) * 0.5f * gh;
                 float y1 = gy + (v1 + 1f) * 0.5f * gh;
 
-                AddLine(vh, x0, y0, x1, y1, lineWidth, lineColor);
+                AddLine(vh, x0, y0, x1, y1, width, lineColor);
             }
         }
 

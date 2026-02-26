@@ -33,6 +33,17 @@ namespace BoatAttack
         [Range(1f, 5f)]
         public float outlineWidth = 2f;
 
+        [Header("=== Effects ===")]
+        [Tooltip("스캔라인 오버레이")]
+        public bool showScanlines = true;
+        [Tooltip("선체 글로우")]
+        public bool showHullGlow = true;
+        [Tooltip("워터라인 표시")]
+        public bool showWaterline = true;
+        public Color scanlineColor = new Color(0.2f, 0.6f, 0.8f, 0.1f);
+        public Color hullGlowColor = new Color(0.2f, 0.7f, 1f, 0.15f);
+        public Color waterlineColor = new Color(0.15f, 0.5f, 0.7f, 0.5f);
+
         [Header("=== Style ===")]
         [Tooltip("true = 적군 스타일 (빨강계), false = 아군 스타일 (파랑계)")]
         public bool isEnemy = false;
@@ -162,6 +173,53 @@ namespace BoatAttack
             // 포신
             float barrelW = outlineWidth * 0.6f;
             DrawFilledRect(vh, cx - barrelW, gunY + gunSize, cx + barrelW, gunY + gunSize + h * 0.05f, hullOutlineColor * 0.7f);
+
+            // ========= 워터라인 (수선 표시) =========
+            if (showWaterline)
+            {
+                float wlY = cy - h * 0.05f;
+                Color wlCol = isEnemy
+                    ? new Color(1f, 0.3f, 0.2f, waterlineColor.a)
+                    : waterlineColor;
+                DrawFilledRect(vh, cx - halfBeam * 0.92f, wlY - 0.5f,
+                    cx + halfBeam * 0.92f, wlY + 0.5f, wlCol);
+                // 수선 아래 음영
+                DrawFilledRect(vh, cx - halfBeam * 0.85f, sternY + h * 0.03f,
+                    cx + halfBeam * 0.85f, wlY,
+                    new Color(0f, 0f, 0f, 0.15f));
+            }
+
+            // ========= 선체 글로우 (외곽 발광) =========
+            if (showHullGlow)
+            {
+                Color glowCol = isEnemy
+                    ? new Color(1f, 0.2f, 0.15f, hullGlowColor.a)
+                    : hullGlowColor;
+                float glowW = outlineWidth * 4f;
+                // 우현 글로우
+                DrawLine(vh, cx + halfBeam * 0.75f, bowEndY, cx + halfBeam, cy - h * 0.02f, glowW, glowCol);
+                DrawLine(vh, cx + halfBeam, cy - h * 0.02f, cx + halfBeam * 0.75f, sternStartY, glowW, glowCol);
+                // 좌현 글로우
+                DrawLine(vh, cx - halfBeam * 0.75f, bowEndY, cx - halfBeam, cy - h * 0.02f, glowW, glowCol);
+                DrawLine(vh, cx - halfBeam, cy - h * 0.02f, cx - halfBeam * 0.75f, sternStartY, glowW, glowCol);
+                // 선수 글로우
+                DrawLine(vh, cx, bowY, cx + halfBeam * 0.75f, bowEndY, glowW, glowCol);
+                DrawLine(vh, cx, bowY, cx - halfBeam * 0.75f, bowEndY, glowW, glowCol);
+            }
+
+            // ========= 스캔라인 오버레이 =========
+            if (showScanlines)
+            {
+                Color slCol = isEnemy
+                    ? new Color(1f, 0.3f, 0.2f, scanlineColor.a)
+                    : scanlineColor;
+                float spacing = h * 0.025f;
+                for (float slY = sternY; slY < bowY; slY += spacing)
+                {
+                    DrawFilledRect(vh, cx - halfBeam * 1.05f, slY,
+                        cx + halfBeam * 1.05f, slY + 1f, slCol);
+                }
+            }
         }
 
         private void DrawOutlineSegments(VertexHelper vh, float cx, float cy,

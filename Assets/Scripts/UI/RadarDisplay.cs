@@ -8,8 +8,9 @@ namespace BoatAttack
     /// CIC 스타일 원형 레이더 (MaskableGraphic 기반)
     /// - 삼각형 선박 마커 (방향 표시)
     /// - 섬 지형 렌더링 (Island 태그) - 공유 버텍스 그리드
-    /// - 범위 밖 선박 자동 숨김
-    /// - 원형 좌표계
+    /// - 스위프 잔상(afterglow) 효과
+    /// - 방위각 눈금 + 거리 링 라벨
+    /// - 적 마커 깜빡임 경고
     /// - 65000 버텍스 제한 준수
     /// </summary>
     [RequireComponent(typeof(CanvasRenderer))]
@@ -38,14 +39,20 @@ namespace BoatAttack
         public Color enemyColor = new Color(1f, 0.25f, 0.2f, 1f);
         public Color mothershipColor = new Color(0.85f, 0.85f, 1f, 1f);
         public Color webLineColor = new Color(0.3f, 1f, 0.5f, 0.6f);
-        public Color ringColor = new Color(0.15f, 0.4f, 0.15f, 0.4f);
-        public Color sweepColor = new Color(0.2f, 1f, 0.3f, 0.25f);
-        public Color gridColor = new Color(0.1f, 0.25f, 0.1f, 0.3f);
-        public Color bgCircleColor = new Color(0.02f, 0.04f, 0.02f, 0.95f);
+        public Color ringColor = new Color(0.15f, 0.55f, 0.2f, 0.6f);
+        public Color sweepColor = new Color(0.2f, 1f, 0.3f, 0.5f);
+        public Color gridColor = new Color(0.1f, 0.3f, 0.12f, 0.4f);
+        public Color bgCircleColor = new Color(0.01f, 0.03f, 0.01f, 0.97f);
         public Color islandColor = new Color(0.12f, 0.25f, 0.1f, 0.7f);
+        public Color bearingTickColor = new Color(0.3f, 0.8f, 0.4f, 0.85f);
+        public Color outerGlowColor = new Color(0.1f, 0.6f, 0.2f, 0.5f);
 
         [Header("=== Sweep ===")]
         public float sweepSpeed = 60f;
+        [Tooltip("스위프 잔상 각도 (도)")]
+        public float sweepTrailAngle = 60f;
+        [Tooltip("잔상 세그먼트 수")]
+        public int sweepTrailSegments = 8;
 
         [Header("=== Range Rings ===")]
         public int ringCount = 4;
@@ -123,26 +130,54 @@ namespace BoatAttack
 
             if (_pixelRadius < 1f) return;
 
-            // 1. 배경 원 (항상 표시)
-            DrawFilledCircle(vh, cx, cy, _pixelRadius, bgCircleColor, 32);
+            // 1. 외곽 글로우 링 (배경 뒤 발광)
+            DrawFilledCircle(vh, cx, cy, _pixelRadius + 6f,
+                new Color(outerGlowColor.r, outerGlowColor.g, outerGlowColor.b, outerGlowColor.a * 0.4f), 48);
+            DrawFilledCircle(vh, cx, cy, _pixelRadius + 3f,
+                new Color(outerGlowColor.r, outerGlowColor.g, outerGlowColor.b, outerGlowColor.a * 0.25f), 48);
 
-            // 2. 격자 (십자선)
-            DrawLine(vh, cx - _pixelRadius * 0.9f, cy, cx + _pixelRadius * 0.9f, cy, 1f, gridColor);
-            DrawLine(vh, cx, cy - _pixelRadius * 0.9f, cx, cy + _pixelRadius * 0.9f, 1f, gridColor);
+            // 2. 배경 원
+            DrawFilledCircle(vh, cx, cy, _pixelRadius, bgCircleColor, 48);
 
-            // 3. 거리 링
+            // 3. 격자 (십자선) - 대시 스타일
+            Color dimGrid = new Color(gridColor.r, gridColor.g, gridColor.b, gridColor.a * 0.5f);
+            DrawDashedLine(vh, cx - _pixelRadius * 0.92f, cy, cx + _pixelRadius * 0.92f, cy, 1f, gridColor, dimGrid);
+            DrawDashedLine(vh, cx, cy - _pixelRadius * 0.92f, cx, cy + _pixelRadius * 0.92f, 1f, gridColor, dimGrid);
+            // 45도 대각선 (더 어둡게)
+            float diag = _pixelRadius * 0.65f;
+            DrawLine(vh, cx - diag, cy - diag, cx + diag, cy + diag, 0.5f, dimGrid);
+            DrawLine(vh, cx - diag, cy + diag, cx + diag, cy - diag, 0.5f, dimGrid);
+
+            // 4. 거리 링 + 라벨 위치 표시
             for (int i = 1; i <= ringCount; i++)
             {
                 float frac = (float)i / (ringCount + 1);
-                DrawCircleOutline(vh, cx, cy, _pixelRadius * frac, 1f, ringColor, 24);
+                float ringR = _pixelRadius * frac;
+                DrawCircleOutline(vh, cx, cy, ringR, 1f, ringColor, 32);
+                // 거리 링 우측에 작은 눈금 표시
+                float labelX = cx + ringR + 2f;
+                float labelY = cy;
+                DrawFilledRect(vh, labelX, labelY - 1f, labelX + 8f, labelY + 1f,
+                    new Color(ringColor.r, ringColor.g, ringColor.b, ringColor.a * 0.8f));
             }
-            DrawCircleOutline(vh, cx, cy, _pixelRadius - 1f, 1.5f, ringColor * 1.5f, 32);
+            // 외곽 링 (이중선 - 더 강조)
+            DrawCircleOutline(vh, cx, cy, _pixelRadius - 1f, 2f, ringColor * 1.8f, 48);
+            DrawCircleOutline(vh, cx, cy, _pixelRadius - 4f, 0.8f,
+                new Color(ringColor.r, ringColor.g, ringColor.b, ringColor.a * 0.3f), 48);
 
-            // 스위프 라인 (항상 표시)
+            // 5. 방위각 눈금 (perimeter bearing marks)
+            DrawBearingTicks(vh, cx, cy);
+
+            // 6. 스위프 잔상 (afterglow) - 부채꼴 그라데이션
+            DrawSweepTrail(vh, cx, cy);
+
+            // 7. 스위프 라인 (메인)
             float sweepRad = _sweepAngle * Mathf.Deg2Rad;
-            float sx = cx + Mathf.Sin(sweepRad) * _pixelRadius * 0.9f;
-            float sy = cy + Mathf.Cos(sweepRad) * _pixelRadius * 0.9f;
-            DrawLine(vh, cx, cy, sx, sy, 2f, sweepColor);
+            float sx = cx + Mathf.Sin(sweepRad) * (_pixelRadius - 5f);
+            float sy = cy + Mathf.Cos(sweepRad) * (_pixelRadius - 5f);
+            DrawLine(vh, cx, cy, sx, sy, 2.5f, sweepColor);
+            // 스위프 끝점 밝은 점
+            DrawFilledCircle(vh, sx, sy, 3f, sweepColor * 1.5f, 8);
 
             if (envController == null) return;
 
@@ -151,31 +186,160 @@ namespace BoatAttack
 
             if (autoFitRange) CalculateAutoRange();
 
-            // 4. 섬 지형 (버텍스 예산 체크 포함)
+            // 8. 섬 지형
             DrawIslands(vh, cx, cy);
 
-            // 5. 웹 라인
+            // 9. 웹 라인 (글로우 효과)
             if (_hasWebLine)
             {
                 float d1 = new Vector2(_webP1.x - cx, _webP1.y - cy).magnitude;
                 float d2 = new Vector2(_webP2.x - cx, _webP2.y - cy).magnitude;
                 if (d1 < _pixelRadius && d2 < _pixelRadius)
-                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 2f, webLineColor);
+                {
+                    // 넓은 글로우
+                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 10f,
+                        new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.1f));
+                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 5f,
+                        new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.25f));
+                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 2.5f, webLineColor);
+                }
             }
 
-            // 6. 선박 마커
+            // 10. 선박 마커 (글로우 + 깜빡임)
+            float blinkAlpha = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 5f);
             foreach (var ship in _shipData)
             {
                 Vector2 rp = WorldToLocal(ship.worldPos, cx, cy);
                 float dist = new Vector2(rp.x - cx, rp.y - cy).magnitude;
-                if (dist > _pixelRadius - 2f) continue;
+                if (dist > _pixelRadius - 5f) continue;
+
+                Color markerCol = ship.markerColor;
+                // 적군 마커 깜빡임 효과
+                if (!ship.isMothership && markerCol.r > 0.5f && markerCol.g < 0.5f)
+                    markerCol.a *= blinkAlpha;
+
+                // 마커 글로우 (2단계 - 더 강하게)
+                Color glowCol1 = new Color(markerCol.r, markerCol.g, markerCol.b, 0.1f);
+                Color glowCol2 = new Color(markerCol.r, markerCol.g, markerCol.b, 0.3f);
+                DrawFilledCircle(vh, rp.x, rp.y, ship.size * 1.2f, glowCol1, 8);
+                DrawFilledCircle(vh, rp.x, rp.y, ship.size * 0.7f, glowCol2, 8);
 
                 if (ship.isMothership)
-                    DrawDiamond(vh, rp.x, rp.y, ship.size, ship.markerColor);
+                {
+                    DrawDiamond(vh, rp.x, rp.y, ship.size, markerCol);
+                    // 모선 주위 보호 링 (이중)
+                    DrawCircleOutline(vh, rp.x, rp.y, ship.size * 1.1f, 1.5f,
+                        new Color(mothershipColor.r, mothershipColor.g, mothershipColor.b, 0.4f), 16);
+                    DrawCircleOutline(vh, rp.x, rp.y, ship.size * 0.7f, 1f,
+                        new Color(mothershipColor.r, mothershipColor.g, mothershipColor.b, 0.2f), 12);
+                }
                 else
-                    DrawTriangleMarker(vh, rp.x, rp.y, ship.heading, ship.size, ship.markerColor);
+                {
+                    DrawTriangleMarker(vh, rp.x, rp.y, ship.heading, ship.size, markerCol);
+                }
+            }
+
+            // 11. 중심 십자 (더 밝고 크게)
+            float crossSize = 6f;
+            Color crossColor = new Color(0.4f, 1f, 0.5f, 0.8f);
+            DrawLine(vh, cx - crossSize, cy, cx + crossSize, cy, 2f, crossColor);
+            DrawLine(vh, cx, cy - crossSize, cx, cy + crossSize, 2f, crossColor);
+            // 중심 밝은 점
+            DrawFilledCircle(vh, cx, cy, 2.5f, crossColor, 8);
+        }
+
+        #region Sweep & Bearing
+
+        /// <summary>스위프 잔상 (부채꼴 그라데이션 - 강한 효과)</summary>
+        void DrawSweepTrail(VertexHelper vh, float cx, float cy)
+        {
+            int segments = Mathf.Clamp(sweepTrailSegments, 2, 12);
+            float trailR = _pixelRadius - 5f;
+
+            for (int i = 0; i < segments; i++)
+            {
+                float t = (float)i / segments;
+                float tNext = (float)(i + 1) / segments;
+                // 강한 잔상 - 시작은 sweepColor.a, 끝은 0으로 선형 감소
+                float alpha = (1f - t) * sweepColor.a * 0.85f;
+                float alphaNext = (1f - tNext) * sweepColor.a * 0.85f;
+
+                float angle1 = (_sweepAngle - sweepTrailAngle * t) * Mathf.Deg2Rad;
+                float angle2 = (_sweepAngle - sweepTrailAngle * tNext) * Mathf.Deg2Rad;
+
+                Color c1 = new Color(sweepColor.r, sweepColor.g, sweepColor.b, alpha);
+                Color c2 = new Color(sweepColor.r, sweepColor.g, sweepColor.b, alphaNext);
+                // 중심은 약간의 빛 (0이 아닌 낮은 알파)
+                Color cCenter = new Color(sweepColor.r, sweepColor.g, sweepColor.b, alpha * 0.15f);
+
+                int idx = vh.currentVertCount;
+                AddVert(vh, cx, cy, cCenter);
+                AddVert(vh, cx + Mathf.Sin(angle1) * trailR, cy + Mathf.Cos(angle1) * trailR, c1);
+                AddVert(vh, cx + Mathf.Sin(angle2) * trailR, cy + Mathf.Cos(angle2) * trailR, c2);
+                vh.AddTriangle(idx, idx + 1, idx + 2);
             }
         }
+
+        /// <summary>방위각 눈금 (36개 = 10도 간격, 주방위 강조)</summary>
+        void DrawBearingTicks(VertexHelper vh, float cx, float cy)
+        {
+            float outerR = _pixelRadius - 2f;
+
+            for (int i = 0; i < 36; i++)
+            {
+                float angle = i * 10f * Mathf.Deg2Rad;
+                bool isMajor = (i % 9 == 0); // 0, 90, 180, 270
+                bool isMid = (i % 3 == 0) && !isMajor; // 30도 단위
+
+                float innerR;
+                float width;
+                Color col;
+
+                if (isMajor)
+                {
+                    innerR = outerR - _pixelRadius * 0.1f;
+                    width = 2f;
+                    col = bearingTickColor;
+                }
+                else if (isMid)
+                {
+                    innerR = outerR - _pixelRadius * 0.06f;
+                    width = 1.2f;
+                    col = new Color(bearingTickColor.r, bearingTickColor.g, bearingTickColor.b, bearingTickColor.a * 0.6f);
+                }
+                else
+                {
+                    innerR = outerR - _pixelRadius * 0.035f;
+                    width = 0.8f;
+                    col = new Color(bearingTickColor.r, bearingTickColor.g, bearingTickColor.b, bearingTickColor.a * 0.3f);
+                }
+
+                float sinA = Mathf.Sin(angle);
+                float cosA = Mathf.Cos(angle);
+                DrawLine(vh,
+                    cx + sinA * innerR, cy + cosA * innerR,
+                    cx + sinA * outerR, cy + cosA * outerR,
+                    width, col);
+            }
+        }
+
+        /// <summary>대시 라인 (세그먼트 교대 색상)</summary>
+        void DrawDashedLine(VertexHelper vh, float x1, float y1, float x2, float y2,
+            float w, Color solidColor, Color gapColor)
+        {
+            int dashCount = 16;
+            float dx = (x2 - x1) / dashCount;
+            float dy = (y2 - y1) / dashCount;
+            for (int i = 0; i < dashCount; i++)
+            {
+                float sx = x1 + dx * i;
+                float sy = y1 + dy * i;
+                Color c = (i % 2 == 0) ? solidColor : gapColor;
+                DrawLine(vh, sx, sy, sx + dx, sy + dy, w, c);
+            }
+        }
+
+        #endregion
 
         #region Data Collection
 

@@ -23,7 +23,10 @@ namespace BoatAttack
         [Tooltip("최대 호출 횟수")]
         public int maxSpawnCount = 3;
 
-        [Tooltip("한 번에 생성 쌍 수 (4쌍=8척)")]
+        [Tooltip("한 번에 생성 최소 쌍 수")]
+        public int minPairsPerSpawn = 1;
+
+        [Tooltip("한 번에 생성 최대 쌍 수")]
         public int maxPairsPerSpawn = 4;
 
         [Tooltip("쌍 간 생성 간격 (초) - 시간차 배치")]
@@ -131,12 +134,23 @@ namespace BoatAttack
 
         private void OnSpawnClicked()
         {
-            if (_isSpawning || envController == null)
+            if (_isSpawning || _onCooldown || envController == null)
+                return;
+            if (_spawnUsed >= maxSpawnCount)
                 return;
 
-            // [테스트] zone 0,1,2,3에 각 1쌍씩 총 4쌍 즉시 생성
-            for (int z = 0; z < 4; z++)
-                envController.SpawnAllyPair(z);
+            int available = envController.GetAvailableAllyPairCount();
+            if (available <= 0) return;
+
+            // 랜덤 쌍 수 결정 (가용 수 이하로 제한)
+            int count = Random.Range(minPairsPerSpawn, maxPairsPerSpawn + 1);
+            count = Mathf.Min(count, available);
+
+            _spawnUsed++;
+            _onCooldown = true;
+            _cooldownTimer = cooldownTime;
+
+            StartCoroutine(SpawnPairsSequentially(count));
         }
 
         /// <summary>
@@ -148,17 +162,25 @@ namespace BoatAttack
             _spawnedThisPress = 0;
             _totalToSpawnThisPress = count;
 
+            // 진수구역 수 파악 (랜덤 배정용)
+            int zoneCount = 4; // 기본값
+            if (envController.launchZoneManager != null &&
+                envController.launchZoneManager.launchZones != null)
+            {
+                zoneCount = envController.launchZoneManager.launchZones.Length;
+            }
+
             for (int i = 0; i < count; i++)
             {
                 if (envController == null) break;
 
-                if (envController.SpawnAllyPair())
+                // 매 쌍마다 랜덤 진수구역 배정
+                int randomZone = Random.Range(0, zoneCount);
+                if (envController.SpawnAllyPair(randomZone))
                 {
                     _spawnedThisPress++;
-                    // Debug.Log($"[AllySpawnUI] 쌍 {_spawnedThisPress}/{count} 배치 완료");
                 }
 
-                // 마지막 쌍이 아니면 대기
                 if (i < count - 1)
                 {
                     yield return new WaitForSeconds(spawnInterval);
@@ -168,26 +190,50 @@ namespace BoatAttack
             _isSpawning = false;
             _spawnedThisPress = 0;
             _totalToSpawnThisPress = 0;
-
-            // Debug.Log($"[AllySpawnUI] 시간차 배치 완료 (남은 횟수: {maxSpawnCount - _spawnUsed})");
         }
 
         private void UpdateButtonState()
         {
             if (_spawnButton == null) return;
 
-            // [테스트] 항상 활성화, 쿨타임/횟수 무시
+            int remaining = maxSpawnCount - _spawnUsed;
             int available = envController != null ? envController.GetAvailableAllyPairCount() : 0;
-            _spawnButton.interactable = !_isSpawning && available > 0;
+            bool exhausted = remaining <= 0 || available <= 0;
+            bool canClick = !_isSpawning && !_onCooldown && !exhausted;
 
+            _spawnButton.interactable = canClick;
+
+            // 버튼 색상
             if (_buttonImage != null)
-                _buttonImage.color = new Color(0.2f, 0.5f, 0.8f, 0.9f);
+            {
+                if (exhausted)
+                    _buttonImage.color = new Color(0.3f, 0.3f, 0.3f, 0.6f);
+                else if (_onCooldown || _isSpawning)
+                    _buttonImage.color = new Color(0.15f, 0.35f, 0.6f, 0.7f);
+                else
+                    _buttonImage.color = new Color(0.2f, 0.5f, 0.8f, 0.9f);
+            }
 
+            // 쿨타임 오버레이
             if (_cooldownOverlay != null)
-                _cooldownOverlay.gameObject.SetActive(false);
+            {
+                _cooldownOverlay.gameObject.SetActive(_onCooldown);
+                if (_onCooldown)
+                    _cooldownOverlay.fillAmount = _cooldownTimer / cooldownTime;
+            }
 
+            // 텍스트 표시
             if (_buttonText != null)
-                _buttonText.text = $"Deploy +1\n(avail: {available})";
+            {
+                if (exhausted)
+                    _buttonText.text = remaining <= 0 ? "NO MORE\nDEPLOY" : "NO PAIRS\nAVAIL";
+                else if (_isSpawning)
+                    _buttonText.text = $"DEPLOYING...\n{_spawnedThisPress}/{_totalToSpawnThisPress}";
+                else if (_onCooldown)
+                    _buttonText.text = $"COOLDOWN\n{_cooldownTimer:F1}s";
+                else
+                    _buttonText.text = $"DEPLOY ({remaining}/{maxSpawnCount})\n{minPairsPerSpawn}~{maxPairsPerSpawn} pairs";
+            }
         }
 
         /// <summary>

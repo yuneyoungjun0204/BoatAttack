@@ -40,27 +40,48 @@ namespace BoatAttack
             Rect rect = rectTransform.rect;
             float left = rect.xMin, right = rect.xMax;
             float bottom = rect.yMin, top = rect.yMax;
+            float w = right - left;
+            float h = top - bottom;
 
             // 배경
             DrawRect(vh, left, bottom, right, top, bgColor);
 
-            // 테두리
+            // 이중 테두리
             float bw = 1f;
-            DrawRect(vh, left, bottom, right, bottom + bw, borderColor);
-            DrawRect(vh, left, top - bw, right, top, borderColor);
-            DrawRect(vh, left, bottom, left + bw, top, borderColor);
-            DrawRect(vh, right - bw, bottom, right, top, borderColor);
+            Color outerBorder = new Color(borderColor.r * 1.5f, borderColor.g * 1.5f, borderColor.b * 1.5f, borderColor.a);
+            DrawRect(vh, left, bottom, right, bottom + bw, outerBorder);
+            DrawRect(vh, left, top - bw, right, top, outerBorder);
+            DrawRect(vh, left, bottom, left + bw, top, outerBorder);
+            DrawRect(vh, right - bw, bottom, right, top, outerBorder);
+            // 내부 테두리 (은은하게)
+            float ibw = 0.5f;
+            float ip = 2f;
+            DrawRect(vh, left + ip, bottom + ip, right - ip, bottom + ip + ibw,
+                new Color(borderColor.r, borderColor.g, borderColor.b, borderColor.a * 0.3f));
+            DrawRect(vh, left + ip, top - ip - ibw, right - ip, top - ip,
+                new Color(borderColor.r, borderColor.g, borderColor.b, borderColor.a * 0.3f));
 
             // 세그먼트 바
             float fill = Mathf.Clamp01(value / maxValue);
             float barL = left + barPadding;
             float barB = bottom + barPadding;
             float barT = top - barPadding;
-            float totalW = right - left - barPadding * 2;
+            float totalW = w - barPadding * 2;
             float segW = totalW / segmentCount;
             float gap = 2f;
             int filledSegs = Mathf.CeilToInt(fill * segmentCount);
 
+            // 빈 세그먼트 (비활성 슬롯 표시)
+            for (int i = filledSegs; i < segmentCount; i++)
+            {
+                float sl = barL + i * segW + gap * 0.5f;
+                float sr = barL + (i + 1) * segW - gap * 0.5f;
+                if (sl >= sr) continue;
+                DrawRect(vh, sl, barB, sr, barT,
+                    new Color(borderColor.r * 0.3f, borderColor.g * 0.3f, borderColor.b * 0.3f, 0.2f));
+            }
+
+            // 활성 세그먼트 (글로우 + 메인)
             for (int i = 0; i < filledSegs; i++)
             {
                 float t = (float)i / segmentCount;
@@ -73,7 +94,33 @@ namespace BoatAttack
                 sr = Mathf.Min(sr, barL + totalW * fill);
                 if (sl >= sr) continue;
 
+                // 글로우 (세그먼트보다 약간 크게 - 강하게)
+                Color glowCol = new Color(segColor.r, segColor.g, segColor.b, 0.25f);
+                DrawRect(vh, sl - 2f, barB - 2f, sr + 2f, barT + 2f, glowCol);
+
+                // 메인 세그먼트
                 DrawRect(vh, sl, barB, sr, barT, segColor);
+
+                // 상단 하이라이트 (반사광 - 더 밝게)
+                float hlH = (barT - barB) * 0.3f;
+                Color hlCol = new Color(1f, 1f, 1f, 0.2f);
+                DrawRect(vh, sl + 1f, barT - hlH, sr - 1f, barT - 1f, hlCol);
+            }
+
+            // 현재값 인디케이터 (삼각형 포인터)
+            if (fill > 0f)
+            {
+                float ptrX = barL + totalW * fill;
+                float ptrSize = h * 0.2f;
+                Color ptrCol = fill < 0.4f ? calmColor :
+                               fill < 0.7f ? moderateColor : stormColor;
+                int pi = vh.currentVertCount;
+                UIVertex pv = UIVertex.simpleVert;
+                pv.color = ptrCol;
+                pv.position = new Vector3(ptrX, top + 1f, 0); vh.AddVert(pv);
+                pv.position = new Vector3(ptrX - ptrSize * 0.5f, top + ptrSize, 0); vh.AddVert(pv);
+                pv.position = new Vector3(ptrX + ptrSize * 0.5f, top + ptrSize, 0); vh.AddVert(pv);
+                vh.AddTriangle(pi, pi + 1, pi + 2);
             }
         }
 

@@ -63,6 +63,8 @@ namespace BoatAttack
         public Color mothershipColor = new Color(0.85f, 0.85f, 1f, 1f);
         public Color webLineColor = new Color(0.3f, 1f, 0.5f, 0.5f);
         public Color fogColor = new Color(0.0f, 0.0f, 0.02f, 0.4f);
+        public Color cornerBracketColor = new Color(0.3f, 0.7f, 1f, 0.8f);
+        public Color threatCircleColor = new Color(1f, 0.3f, 0.2f, 0.25f);
 
         [Header("=== Island ===")]
         public Color islandColor = new Color(0.08f, 0.18f, 0.12f, 0.7f);
@@ -72,6 +74,14 @@ namespace BoatAttack
 
         [Header("=== Zoom UI ===")]
         [HideInInspector] public Text zoomText;
+
+        [Header("=== Ship Trails ===")]
+        [Tooltip("이동 궤적 표시")]
+        public bool showTrails = true;
+        [Tooltip("궤적 기록 간격 (초)")]
+        public float trailInterval = 0.5f;
+        [Tooltip("궤적 최대 포인트 수")]
+        public int trailMaxPoints = 30;
 
         // ── Internal ──
         struct IslandMeshData
@@ -87,11 +97,39 @@ namespace BoatAttack
             public Color markerColor;
             public float size;
             public bool isMothership;
+            public int trailId; // 궤적 추적용 ID (-1 = 없음)
+        }
+
+        // 선박 궤적 데이터
+        class ShipTrail
+        {
+            public Vector3[] positions;
+            public int writeIndex;
+            public int count;
+            public Color trailColor;
+
+            public ShipTrail(int maxPoints, Color color)
+            {
+                positions = new Vector3[maxPoints];
+                writeIndex = 0;
+                count = 0;
+                trailColor = color;
+            }
+
+            public void AddPoint(Vector3 pos)
+            {
+                positions[writeIndex] = pos;
+                writeIndex = (writeIndex + 1) % positions.Length;
+                if (count < positions.Length) count++;
+            }
         }
 
         List<IslandMeshData> _islandCache = new List<IslandMeshData>();
         List<ShipRenderData> _shipData = new List<ShipRenderData>();
+        Dictionary<int, ShipTrail> _trails = new Dictionary<int, ShipTrail>();
         int _totalIslandVerts;
+        float _lastTrailTime;
+        int _nextTrailId;
 
         Vector3 _mapWorldCenter;
         float _halfPixel;       // rect 절반 크기 (px)
@@ -235,42 +273,93 @@ namespace BoatAttack
             // 2. 격자선
             DrawGrid(vh, cx, cy, halfW, halfH);
 
-            // 3. 테두리
+            // 3. 테두리 (이중 선)
             DrawRectOutline(vh, cx - halfW + 1f, cy - halfH + 1f,
                             cx + halfW - 1f, cy + halfH - 1f, 2f, borderColor);
+            DrawRectOutline(vh, cx - halfW + 4f, cy - halfH + 4f,
+                            cx + halfW - 4f, cy + halfH - 4f, 0.8f,
+                            new Color(borderColor.r, borderColor.g, borderColor.b, borderColor.a * 0.3f));
+
+            // 4. 코너 브라켓 (HUD 스타일 - 크고 굵게)
+            float bLen = Mathf.Min(halfW, halfH) * 0.2f;
+            float bw = 3f;
+            float l = cx - halfW + 2f, b = cy - halfH + 2f;
+            float r = cx + halfW - 2f, t = cy + halfH - 2f;
+            // 좌상단
+            DrawLine(vh, l, t, l + bLen, t, bw, cornerBracketColor);
+            DrawLine(vh, l, t, l, t - bLen, bw, cornerBracketColor);
+            // 우상단
+            DrawLine(vh, r, t, r - bLen, t, bw, cornerBracketColor);
+            DrawLine(vh, r, t, r, t - bLen, bw, cornerBracketColor);
+            // 좌하단
+            DrawLine(vh, l, b, l + bLen, b, bw, cornerBracketColor);
+            DrawLine(vh, l, b, l, b + bLen, bw, cornerBracketColor);
+            // 우하단
+            DrawLine(vh, r, b, r - bLen, b, bw, cornerBracketColor);
+            DrawLine(vh, r, b, r, b + bLen, bw, cornerBracketColor);
 
             if (envController == null) return;
 
             if (envController.motherShip != null)
                 _mapWorldCenter = envController.motherShip.transform.position;
 
-            // 4. 섬 지형
+            // 5. 섬 지형
             DrawIslands(vh, cx, cy, halfW, halfH);
 
-            // 5. 레이더 커버리지 원
+            // 6. 레이더 커버리지 원
             if (showRadarCircle)
                 DrawRadarCoverage(vh, cx, cy, halfW, halfH);
 
-            // 6. 웹 라인
+            // 7. 선박 궤적
+            if (showTrails)
+                DrawShipTrails(vh, cx, cy, halfW, halfH);
+
+            // 8. 웹 라인 (3단 글로우 효과)
             if (_hasWebLine)
             {
                 bool p1In = IsInRect(_webP1, cx, cy, halfW, halfH);
                 bool p2In = IsInRect(_webP2, cx, cy, halfW, halfH);
                 if (p1In && p2In)
-                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 2f, webLineColor);
+                {
+                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 12f,
+                        new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.06f));
+                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 5f,
+                        new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.2f));
+                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 2.5f, webLineColor);
+                }
             }
 
-            // 7. 선박 마커
+            // 9. 선박 마커 (글로우 + 깜빡임)
+            float blinkAlpha = 0.6f + 0.4f * Mathf.Sin(Time.unscaledTime * 4f);
             foreach (var ship in _shipData)
             {
                 Vector2 rp = WorldToLocal(ship.worldPos, cx, cy);
 
                 if (IsInRect(rp, cx, cy, halfW - 4f, halfH - 4f))
                 {
+                    Color mc = ship.markerColor;
+                    // 적군 깜빡임
+                    if (!ship.isMothership && mc.r > 0.5f && mc.g < 0.5f)
+                        mc.a *= blinkAlpha;
+
+                    // 마커 글로우 (이중 - 더 강하게)
+                    DrawFilledCircle(vh, rp.x, rp.y, ship.size * 1.2f,
+                        new Color(mc.r, mc.g, mc.b, 0.08f), 8);
+                    DrawFilledCircle(vh, rp.x, rp.y, ship.size * 0.7f,
+                        new Color(mc.r, mc.g, mc.b, 0.25f), 8);
+
                     if (ship.isMothership)
-                        DrawDiamond(vh, rp.x, rp.y, ship.size, ship.markerColor);
+                    {
+                        DrawDiamond(vh, rp.x, rp.y, ship.size, mc);
+                        DrawCircleOutline(vh, rp.x, rp.y, ship.size * 1.0f, 1.5f,
+                            new Color(mc.r, mc.g, mc.b, 0.5f), 16);
+                        DrawCircleOutline(vh, rp.x, rp.y, ship.size * 0.6f, 1f,
+                            new Color(mc.r, mc.g, mc.b, 0.25f), 12);
+                    }
                     else
-                        DrawTriangleMarker(vh, rp.x, rp.y, ship.heading, ship.size, ship.markerColor);
+                    {
+                        DrawTriangleMarker(vh, rp.x, rp.y, ship.heading, ship.size, mc);
+                    }
                 }
                 else
                 {
@@ -279,9 +368,12 @@ namespace BoatAttack
                 }
             }
 
-            // 8. 줌 레벨 표시 (맵 우하단)
+            // 10. 줌 레벨 표시
             if (_zoomLevel != 1f)
                 DrawZoomIndicator(vh, cx + halfW - 60f, cy - halfH + 8f);
+
+            // 11. 스케일 바 (좌하단)
+            DrawScaleBar(vh, cx - halfW + 10f, cy - halfH + 10f);
         }
 
         #region Data Collection
@@ -290,6 +382,9 @@ namespace BoatAttack
         {
             _shipData.Clear();
             _hasWebLine = false;
+
+            bool recordTrail = showTrails && (Time.unscaledTime - _lastTrailTime >= trailInterval);
+            if (recordTrail) _lastTrailTime = Time.unscaledTime;
 
             Rect rect = rectTransform.rect;
             float cx = rect.center.x;
@@ -303,7 +398,8 @@ namespace BoatAttack
                     heading = envController.motherShip.transform.eulerAngles.y,
                     markerColor = mothershipColor,
                     size = mothershipMarkerSize,
-                    isMothership = true
+                    isMothership = true,
+                    trailId = -1
                 });
             }
 
@@ -311,14 +407,12 @@ namespace BoatAttack
             {
                 var activeAgents = envController.launchZoneManager.GetActiveAgents();
                 foreach (var agent in activeAgents)
-                {
-                    AddShipAgent(agent, friendlyColor, friendlyMarkerSize);
-                }
+                    AddShipAgent(agent, friendlyColor, friendlyMarkerSize, recordTrail);
             }
             else
             {
-                AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize);
-                AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize);
+                AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize, recordTrail);
+                AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize, recordTrail);
             }
 
             if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
@@ -333,34 +427,50 @@ namespace BoatAttack
                 foreach (var enemy in envController.enemyShips)
                 {
                     if (enemy != null && enemy.activeInHierarchy)
-                        AddShip(enemy, enemyColor, enemyMarkerSize);
+                        AddShip(enemy, enemyColor, enemyMarkerSize, recordTrail);
                 }
             }
         }
 
-        void AddShipAgent(DefenseAgent agent, Color col, float size)
+        int GetOrCreateTrailId(Object obj, Color col)
+        {
+            int hash = obj.GetInstanceID();
+            if (!_trails.ContainsKey(hash))
+                _trails[hash] = new ShipTrail(trailMaxPoints, new Color(col.r, col.g, col.b, 0.4f));
+            return hash;
+        }
+
+        void AddShipAgent(DefenseAgent agent, Color col, float size, bool recordTrail)
         {
             if (agent == null) return;
+            int tid = showTrails ? GetOrCreateTrailId(agent, col) : -1;
+            if (recordTrail && tid >= 0)
+                _trails[tid].AddPoint(agent.transform.position);
             _shipData.Add(new ShipRenderData
             {
                 worldPos = agent.transform.position,
                 heading = agent.transform.eulerAngles.y,
                 markerColor = col,
                 size = size,
-                isMothership = false
+                isMothership = false,
+                trailId = tid
             });
         }
 
-        void AddShip(GameObject ship, Color col, float size)
+        void AddShip(GameObject ship, Color col, float size, bool recordTrail)
         {
             if (ship == null) return;
+            int tid = showTrails ? GetOrCreateTrailId(ship, col) : -1;
+            if (recordTrail && tid >= 0)
+                _trails[tid].AddPoint(ship.transform.position);
             _shipData.Add(new ShipRenderData
             {
                 worldPos = ship.transform.position,
                 heading = ship.transform.eulerAngles.y,
                 markerColor = col,
                 size = size,
-                isMothership = false
+                isMothership = false,
+                trailId = tid
             });
         }
 
@@ -685,6 +795,73 @@ namespace BoatAttack
             float onePx = x + barW * oneT;
             DrawLine(vh, onePx, y - 1f, onePx, y + barH + 1f, 1.5f,
                 new Color(1f, 1f, 1f, 0.5f));
+        }
+
+        #endregion
+
+        #region Ship Trails
+
+        void DrawShipTrails(VertexHelper vh, float cx, float cy, float halfW, float halfH)
+        {
+            foreach (var ship in _shipData)
+            {
+                if (ship.trailId < 0 || !_trails.ContainsKey(ship.trailId)) continue;
+                var trail = _trails[ship.trailId];
+                if (trail.count < 2) continue;
+
+                int vertBudget = 64000 - vh.currentVertCount;
+                if (vertBudget < trail.count * 4) continue;
+
+                for (int s = 1; s < trail.count; s++)
+                {
+                    int idx0 = (trail.writeIndex - trail.count + s - 1 + trail.positions.Length) % trail.positions.Length;
+                    int idx1 = (trail.writeIndex - trail.count + s + trail.positions.Length) % trail.positions.Length;
+
+                    Vector2 p0 = WorldToLocal(trail.positions[idx0], cx, cy);
+                    Vector2 p1 = WorldToLocal(trail.positions[idx1], cx, cy);
+
+                    if (!IsInRect(p0, cx, cy, halfW, halfH) && !IsInRect(p1, cx, cy, halfW, halfH))
+                        continue;
+
+                    float t = (float)s / trail.count;
+                    Color trailCol = trail.trailColor;
+                    trailCol.a *= t * t; // 끝으로 갈수록 진해짐
+                    float width = 0.5f + t * 1.5f;
+
+                    DrawLine(vh, p0.x, p0.y, p1.x, p1.y, width, trailCol);
+                }
+            }
+        }
+
+        #endregion
+
+        #region Scale Bar
+
+        void DrawScaleBar(VertexHelper vh, float x, float y)
+        {
+            float range = ViewRange;
+            float scale = ViewScale;
+
+            // 적절한 단위 찾기
+            float[] niceValues = { 50f, 100f, 200f, 500f, 1000f, 2000f, 5000f };
+            float barWorldLen = range * 0.2f;
+            float bestVal = niceValues[0];
+            foreach (float v in niceValues)
+            {
+                if (v <= barWorldLen) bestVal = v;
+                else break;
+            }
+
+            float barPx = bestVal * scale;
+            if (barPx < 10f) return;
+
+            Color barCol = new Color(0.5f, 0.7f, 0.9f, 0.5f);
+
+            // 바 본체
+            DrawFilledRect(vh, x, y, x + barPx, y + 3f, barCol);
+            // 좌우 끝 세로선
+            DrawLine(vh, x, y - 1f, x, y + 5f, 1f, barCol);
+            DrawLine(vh, x + barPx, y - 1f, x + barPx, y + 5f, 1f, barCol);
         }
 
         #endregion

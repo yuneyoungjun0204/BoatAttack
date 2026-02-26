@@ -20,6 +20,8 @@ namespace BoatAttack
         public Color arrowColor = new Color(0.3f, 1f, 0.5f, 1f);
         public Color tickColor = new Color(0.4f, 0.6f, 0.4f, 0.8f);
         public Color centerColor = new Color(0.2f, 0.5f, 0.25f, 0.8f);
+        public Color innerRingColor = new Color(0.15f, 0.4f, 0.15f, 0.45f);
+        public Color bgFillColor = new Color(0.02f, 0.06f, 0.03f, 0.75f);
 
         protected override void Start()
         {
@@ -39,35 +41,74 @@ namespace BoatAttack
 
             if (radius < 5f) return;
 
-            // 외곽 원
-            DrawCircleOutline(vh, cx, cy, radius, 1.5f, compassColor, 48);
+            // 배경 원 (은은한 채움)
+            DrawFilledCircle(vh, cx, cy, radius, bgFillColor, 48);
 
-            // 8방향 눈금
-            for (int i = 0; i < 8; i++)
+            // 내부 동심원 (3개)
+            for (int i = 1; i <= 3; i++)
             {
-                float angle = i * 45f * Mathf.Deg2Rad;
-                bool isMajor = (i % 2 == 0);
-                float innerR = radius * (isMajor ? 0.8f : 0.87f);
-                float outerR = radius * 0.98f;
-                float w = isMajor ? 2f : 1f;
+                float r = radius * i * 0.25f;
+                DrawCircleOutline(vh, cx, cy, r, 0.6f, innerRingColor, 24);
+            }
+
+            // 외곽 이중 원
+            DrawCircleOutline(vh, cx, cy, radius, 2f, compassColor, 48);
+            DrawCircleOutline(vh, cx, cy, radius * 0.97f, 0.6f,
+                new Color(compassColor.r, compassColor.g, compassColor.b, compassColor.a * 0.3f), 48);
+
+            // 16방향 눈금 (주방위 4 + 간방위 4 + 세간방위 8)
+            for (int i = 0; i < 16; i++)
+            {
+                float angle = i * 22.5f * Mathf.Deg2Rad;
+                bool isMajor = (i % 4 == 0); // N, E, S, W
+                bool isMid = (i % 2 == 0) && !isMajor; // NE, SE, SW, NW
+
+                float innerR, outerR, w;
+                Color col;
+
+                if (isMajor)
+                {
+                    innerR = radius * 0.75f;
+                    outerR = radius * 0.96f;
+                    w = 2f;
+                    col = tickColor;
+                }
+                else if (isMid)
+                {
+                    innerR = radius * 0.83f;
+                    outerR = radius * 0.96f;
+                    w = 1.2f;
+                    col = new Color(tickColor.r, tickColor.g, tickColor.b, tickColor.a * 0.7f);
+                }
+                else
+                {
+                    innerR = radius * 0.88f;
+                    outerR = radius * 0.96f;
+                    w = 0.7f;
+                    col = new Color(tickColor.r, tickColor.g, tickColor.b, tickColor.a * 0.35f);
+                }
 
                 DrawLine(vh,
                     cx + Mathf.Sin(angle) * innerR, cy + Mathf.Cos(angle) * innerR,
                     cx + Mathf.Sin(angle) * outerR, cy + Mathf.Cos(angle) * outerR,
-                    w, tickColor);
+                    w, col);
             }
 
-            // N 마커 (상단 삼각형)
-            float nY = cy + radius * 0.72f;
-            float nSize = radius * 0.08f;
+            // N 마커 (상단 삼각형, 더 크게)
+            float nY = cy + radius * 0.68f;
+            float nSize = radius * 0.1f;
             int nIdx = vh.currentVertCount;
             AddVert(vh, cx, nY + nSize, arrowColor);
-            AddVert(vh, cx - nSize * 0.6f, nY - nSize * 0.3f, arrowColor);
-            AddVert(vh, cx + nSize * 0.6f, nY - nSize * 0.3f, arrowColor);
+            AddVert(vh, cx - nSize * 0.7f, nY - nSize * 0.3f,
+                new Color(arrowColor.r, arrowColor.g, arrowColor.b, 0.7f));
+            AddVert(vh, cx + nSize * 0.7f, nY - nSize * 0.3f,
+                new Color(arrowColor.r, arrowColor.g, arrowColor.b, 0.7f));
             vh.AddTriangle(nIdx, nIdx + 1, nIdx + 2);
 
-            // 중심 점
-            DrawFilledCircle(vh, cx, cy, 3f, centerColor, 12);
+            // 중심 장식 (이중 원)
+            DrawFilledCircle(vh, cx, cy, 4f, centerColor, 12);
+            DrawCircleOutline(vh, cx, cy, 6f, 1f,
+                new Color(centerColor.r, centerColor.g, centerColor.b, 0.4f), 12);
 
             // 바람 방향 화살표
             float strength01 = Mathf.Clamp01(windStrength / maxStrength);
@@ -77,22 +118,47 @@ namespace BoatAttack
             float tipX = cx + Mathf.Sin(windRad) * arrowLen;
             float tipY = cy + Mathf.Cos(windRad) * arrowLen;
 
+            // 화살표 글로우 (2단계 - 더 밝게)
+            float glowWidth = 8f + strength01 * 6f;
+            DrawLine(vh, cx, cy, tipX, tipY, glowWidth,
+                new Color(arrowColor.r, arrowColor.g, arrowColor.b, 0.08f));
+            DrawLine(vh, cx, cy, tipX, tipY, glowWidth * 0.5f,
+                new Color(arrowColor.r, arrowColor.g, arrowColor.b, 0.2f));
+
             // 화살표 몸통
             float bodyWidth = 2f + strength01 * 2f;
             DrawLine(vh, cx, cy, tipX, tipY, bodyWidth, arrowColor);
 
             // 화살표 머리 (삼각형)
-            float headSize = radius * 0.18f;
+            float headSize = radius * 0.2f;
             float ha1 = windRad + Mathf.PI * 0.85f;
             float ha2 = windRad - Mathf.PI * 0.85f;
 
             int hi = vh.currentVertCount;
             AddVert(vh, tipX, tipY, arrowColor);
             AddVert(vh, tipX + Mathf.Sin(ha1) * headSize, tipY + Mathf.Cos(ha1) * headSize,
-                new Color(arrowColor.r, arrowColor.g, arrowColor.b, 0.6f));
+                new Color(arrowColor.r, arrowColor.g, arrowColor.b, 0.5f));
             AddVert(vh, tipX + Mathf.Sin(ha2) * headSize, tipY + Mathf.Cos(ha2) * headSize,
-                new Color(arrowColor.r, arrowColor.g, arrowColor.b, 0.6f));
+                new Color(arrowColor.r, arrowColor.g, arrowColor.b, 0.5f));
             vh.AddTriangle(hi, hi + 1, hi + 2);
+
+            // 풍속 비례 호 (바람 방향 주위 아크)
+            if (strength01 > 0.1f)
+            {
+                float arcR = radius * 0.55f;
+                float arcSpan = Mathf.PI * 0.3f * strength01; // 풍속에 비례하는 호 크기
+                int arcSegs = 8;
+                Color arcCol = new Color(arrowColor.r, arrowColor.g, arrowColor.b, 0.45f * strength01);
+                for (int i = 0; i < arcSegs; i++)
+                {
+                    float a1 = windRad - arcSpan + arcSpan * 2f * i / arcSegs;
+                    float a2 = windRad - arcSpan + arcSpan * 2f * (i + 1) / arcSegs;
+                    DrawLine(vh,
+                        cx + Mathf.Sin(a1) * arcR, cy + Mathf.Cos(a1) * arcR,
+                        cx + Mathf.Sin(a2) * arcR, cy + Mathf.Cos(a2) * arcR,
+                        2f, arcCol);
+                }
+            }
         }
 
         public void SetWind(float direction, float strength)

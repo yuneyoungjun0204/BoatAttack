@@ -869,7 +869,7 @@ namespace BoatAttack
                     Debug.LogError("[DeploySingle] defenseBoatPrefab이 null! Inspector에서 할당하세요.");
                     return false;
                 }
-
+    
                 pairIdx = _pairPool.Count;
                 pair = SpawnPairFromPrefab(pairIdx, pos1, pos2, rot);
                 if (pair == null) return false;
