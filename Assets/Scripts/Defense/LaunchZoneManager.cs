@@ -163,9 +163,9 @@ namespace BoatAttack
                 return;
             }
 
-            // Y방향은 0으로 고정 (수면 높이)
-            _templateAgent1Y = 0f;
-            _templateAgent2Y = 0f;
+            // Y방향: 수면 위 여유를 두고 배치 (파도에 의해 수면이 0 이상일 수 있음)
+            _templateAgent1Y = 1f;
+            _templateAgent2Y = 1f;
 
             // 풀 빈 상태로 시작 (버튼 클릭 시 프리팹에서 직접 생성)
             _pairPool = new List<DefensePair>();

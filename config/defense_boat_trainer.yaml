@@ -1,6 +1,6 @@
 behaviors:
   Defence:
-    trainer_type: ppo
+    trainer_type: poca
     hyperparameters:
       learning_rate: 0.0003
       learning_rate_schedule: linear
@@ -26,12 +26,11 @@ behaviors:
     checkpoint_interval: 50000
   Commander:
     trainer_type: ppo
-
     hyperparameters:
       learning_rate: 0.0001
       learning_rate_schedule: linear
-      batch_size: 512
-      buffer_size: 5120
+      batch_size: 128
+      buffer_size: 1280
       beta: 0.01
       epsilon: 0.2
       lambd: 0.95
@@ -48,10 +47,10 @@ behaviors:
         gamma: 0.995
         strength: 1.0
     keep_checkpoints: 5
-    max_steps: 10000000
-    time_horizon: 128
-    summary_freq: 10000
-    checkpoint_interval: 50000
+    max_steps: 500000
+    time_horizon: 32
+    summary_freq: 2000
+    checkpoint_interval: 10000
 env_settings:
   env_path: null
   env_args: null
@@ -66,7 +65,7 @@ engine_settings:
   width: 84
   height: 84
   quality_level: 5
-  time_scale: 1
+  time_scale: 10
   target_frame_rate: -1
   capture_frame_rate: 60
   no_graphics: false

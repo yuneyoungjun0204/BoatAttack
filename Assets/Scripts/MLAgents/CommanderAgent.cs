@@ -575,6 +575,7 @@ namespace BoatAttack
                 launchZoneManager.launchZones != null && zoneIndex < launchZoneManager.launchZones.Length
                     ? launchZoneManager.launchZones[zoneIndex].angleDeg : 0f);
             Vector3 zoneWorldPos = motherPos + zoneDir * zoneDist;
+            float zoneDistToMother = Vector3.Distance(zoneWorldPos, motherPos);
 
             float minDist = float.MaxValue;
             int bestIdx = -1;
@@ -585,6 +586,10 @@ namespace BoatAttack
                 if (enemy == null || !enemy.activeSelf || envController.IsEnemyNeutralized(enemy))
                     continue;
                 if (IsEnemyEngaged(i)) continue;
+
+                // 적이 진수구역(아군 배치 위치)보다 모선에서 더 멀면 매칭 불가
+                float enemyDistToMother = Vector3.Distance(enemy.transform.position, motherPos);
+                if (enemyDistToMother > zoneDistToMother) continue;
 
                 float dist = Vector3.Distance(enemy.transform.position, zoneWorldPos);
                 if (dist < minDist)
@@ -602,7 +607,11 @@ namespace BoatAttack
         private int FindClosestUnengagedEnemyForPair(DefensePair pair)
         {
             if (pair.agent1 == null || pair.agent2 == null) return -1;
+            if (envController.motherShip == null) return -1;
+
             Vector3 center = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+            Vector3 motherPos = envController.motherShip.transform.position;
+            float pairDistToMother = Vector3.Distance(center, motherPos);
 
             float minDist = float.MaxValue;
             int bestIdx = -1;
@@ -613,6 +622,10 @@ namespace BoatAttack
                 if (enemy == null || !enemy.activeSelf || envController.IsEnemyNeutralized(enemy))
                     continue;
                 if (IsEnemyEngaged(i)) continue;
+
+                // 적이 아군보다 모선에서 더 멀면 매칭 불가
+                float enemyDistToMother = Vector3.Distance(enemy.transform.position, motherPos);
+                if (enemyDistToMother > pairDistToMother) continue;
 
                 float dist = Vector3.Distance(enemy.transform.position, center);
                 if (dist < minDist)

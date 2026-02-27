@@ -54,11 +54,15 @@ namespace BoatAttack
         public float maxThrottle = 1.0f;
 
         [Range(0f, 1f)]
-        [Tooltip("최소 Throttle (감속 시 최소값)")]
-        public float minThrottle = 0.0f;
+        [Tooltip("최소 Throttle (action=0일 때 최소 전진력)")]
+        public float minThrottle = 0.3f;
 
         [Range(0.1f, 2.0f)]
         public float steeringSensitivity = 1.0f;
+
+        [Range(1f, 50f)]
+        [Tooltip("아군 선박 horsePower 배율 (Engine.horsePower에 곱함)")]
+        public float speedMultiplier = 10f;
 
         [Range(0.01f, 1.0f)]
         [Tooltip("입력 스무스 처리 (1.0 = 즉각 반응)")]
@@ -121,6 +125,8 @@ namespace BoatAttack
             if (TryGetComponent(out _boat))
             {
                 _engine = _boat.engine;
+                if (_engine != null && speedMultiplier > 1f)
+                    _engine.horsePower *= speedMultiplier;
             }
 
             // BufferSensor 자동 찾기 → 없으면 AddComponent → 크기 보정
@@ -213,18 +219,28 @@ namespace BoatAttack
 
         /// <summary>
         /// 배정된 적군 반환 (Commander가 지정한 타겟 or 가장 가까운 적 fallback)
+        /// 조건: 적군이 아군보다 모선에 더 가까워야 매칭 가능 (더 먼 적은 절대 매칭 불가)
         /// </summary>
         public GameObject GetAssignedEnemy()
         {
-            // Commander 배정: 1-indexed
+            Vector3 motherPos = motherShip != null ? motherShip.transform.position : Vector3.zero;
+            float myDistToMother = Vector3.Distance(transform.position, motherPos);
+
+            // Commander 배정: 1-indexed (거리 조건 검증)
             if (assignedTargetIndex > 0 && enemyShips != null)
             {
                 int idx = assignedTargetIndex - 1;
                 if (idx < enemyShips.Length && enemyShips[idx] != null && enemyShips[idx].activeInHierarchy)
-                    return enemyShips[idx];
+                {
+                    float enemyDistToMother = Vector3.Distance(enemyShips[idx].transform.position, motherPos);
+                    if (enemyDistToMother <= myDistToMother)
+                        return enemyShips[idx];
+                    // 적이 아군보다 먼 경우 → 매칭 해제
+                    assignedTargetIndex = -1;
+                }
             }
 
-            // Fallback: 가장 가까운 활성 적군
+            // Fallback: 아군보다 모선에 가까운 적 중 가장 가까운 적
             if (enemyShips == null) return null;
             float minDist = float.MaxValue;
             GameObject closest = null;
@@ -232,6 +248,8 @@ namespace BoatAttack
             foreach (var enemy in enemyShips)
             {
                 if (enemy == null || !enemy.activeInHierarchy) continue;
+                float enemyDistToMother = Vector3.Distance(enemy.transform.position, motherPos);
+                if (enemyDistToMother > myDistToMother) continue; // 아군보다 먼 적은 스킵
                 float dist = Vector3.Distance(myPos, enemy.transform.position);
                 if (dist < minDist) { minDist = dist; closest = enemy; }
             }
@@ -495,21 +513,23 @@ namespace BoatAttack
             if (float.IsNaN(throttleInput) || float.IsInfinity(throttleInput)) throttleInput = 0f;
             if (float.IsNaN(steeringInput) || float.IsInfinity(steeringInput)) steeringInput = 0f;
 
+            throttleInput = Mathf.Clamp(throttleInput, -1f, 1f);
             steeringInput = Mathf.Clamp(steeringInput, -1f, 1f);
 
-            // Throttle Mapping: -1 → minThrottle, +1 → maxThrottle (기본 전진에서 감속 학습)
-            float throttle = Mathf.Lerp(minThrottle, maxThrottle, throttleInput);
+            // Throttle Mapping (simple):
+            //   action [-1,+1] → throttle [minThrottle, maxThrottle]
+            //   -1 → minThrottle(0.3), 0 → mid(0.65), +1 → maxThrottle(1.0)
+            float throttle = minThrottle + (throttleInput + 1f) * 0.5f * (maxThrottle - minThrottle);
 
-            // Steering 감도 적용
+            // Steering
             float steering = Mathf.Clamp(steeringInput * steeringSensitivity, -1f, 1f);
 
-            // 스무딩 (inputSmoothing < 1일 때만)
+            // Smoothing
             if (inputSmoothing < 1f)
             {
                 throttle = Mathf.Lerp(_prevThrottle, throttle, inputSmoothing);
                 steering = Mathf.Lerp(_prevSteering, steering, inputSmoothing);
             }
-            // 명령 변화량 기록 (보상 계산용)
             _throttleDelta = Mathf.Abs(throttle - _prevThrottle);
             _steeringDelta = Mathf.Abs(steering - _prevSteering);
 

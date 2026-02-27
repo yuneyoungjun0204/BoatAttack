@@ -994,6 +994,12 @@ namespace BoatAttack
                 if (_episodeEnding) return;
             }
 
+            // 유효 타겟 없는 아군 쌍 비활성화 (10스텝마다 체크)
+            if (launchZoneManager != null && motherShip != null && _resetTimer % 10 == 0)
+            {
+                DeactivatePairsWithNoValidTarget();
+            }
+
             // 보상 계산 주기 확인
             if (_resetTimer % rewardCalculationInterval != 0)
                 return;
@@ -1709,6 +1715,50 @@ namespace BoatAttack
             if (followCamera == null || pair == null) return;
             if (pair.agent1 != null) followCamera.OnShipNeutralized(pair.agent1.gameObject);
             if (pair.agent2 != null) followCamera.OnShipNeutralized(pair.agent2.gameObject);
+        }
+
+        /// <summary>
+        /// 유효 타겟(아군보다 모선에 가까운 적)이 없는 활성 아군 쌍을 비활성화
+        /// </summary>
+        private void DeactivatePairsWithNoValidTarget()
+        {
+            Vector3 motherPos = motherShip.transform.position;
+            int poolCount = launchZoneManager.GetCurrentPoolCount();
+
+            for (int i = 0; i < poolCount; i++)
+            {
+                DefensePair pair = launchZoneManager.GetPair(i);
+                if (pair == null || !pair.isActive) continue;
+                if (pair.agent1 == null) continue;
+
+                Vector3 pairCenter = pair.agent2 != null
+                    ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f
+                    : pair.agent1.transform.position;
+                float pairDistToMother = Vector3.Distance(pairCenter, motherPos);
+
+                // 아군보다 모선에 가까운 활성 적이 하나라도 있는지 확인
+                bool hasValidTarget = false;
+                if (_enemyPool != null)
+                {
+                    for (int e = 0; e < _enemyPool.Length; e++)
+                    {
+                        if (_enemyPool[e] == null || !_enemyPool[e].activeSelf) continue;
+                        if (IsEnemyNeutralized(_enemyPool[e])) continue;
+                        float enemyDistToMother = Vector3.Distance(_enemyPool[e].transform.position, motherPos);
+                        if (enemyDistToMother <= pairDistToMother)
+                        {
+                            hasValidTarget = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasValidTarget)
+                {
+                    Debug.Log($"[DefenseEnv] Pair {i} 비활성화: 유효 타겟 없음 (모든 적이 아군보다 모선에서 멀리 있음)");
+                    launchZoneManager.ReturnPairToPool(i, m_AgentGroup);
+                }
+            }
         }
 
         /// <summary>

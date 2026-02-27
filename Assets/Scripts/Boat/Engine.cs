@@ -20,7 +20,7 @@ namespace BoatAttack
 
         [Header("Speed Limit")]
         [Tooltip("Max speed in m/s (0 = no limit)")]
-        public float maxSpeed = 30f;
+        public float maxSpeed = 1000f;
 
         [Header("Stabilization")]
         [Tooltip("자세 안정화 토크 강도 (0이면 비활성)")]

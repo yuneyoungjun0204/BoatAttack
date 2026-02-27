@@ -681,7 +681,7 @@ MonoBehaviour:
   agentParameters:
     maxStep: 0
   hasUpgradedFromAgentParameters: 1
-  MaxStep: 5000
+  MaxStep: 120000
   _engine: {fileID: 0}
   enemyShips:
   - {fileID: 0}
@@ -704,8 +704,9 @@ MonoBehaviour:
   maxLinearAcceleration: 5
   maxAngularAcceleration: 45
   maxThrottle: 1
-  minThrottle: 0.5
+  minThrottle: 0
   steeringSensitivity: 0.891
+  speedMultiplier: 10
   inputSmoothing: 0.2
   partnerNormK: 50
   enemyNormK: 250
