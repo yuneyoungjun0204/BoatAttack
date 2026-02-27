@@ -1,6 +1,8 @@
 using UnityEngine;
 using Unity.MLAgents;
+using Unity.MLAgents.Policies;
 using Unity.MLAgents.Sensors;
+using Unity.Barracuda;
 using System.Collections.Generic;
 
 namespace BoatAttack
@@ -365,6 +367,13 @@ namespace BoatAttack
             {
                 pair.agent1.envController = envController;
                 pair.agent2.envController = envController;
+
+                // Stage4: OnEnable 전 InferenceOnly 사전 설정
+                if (envController.IsCommanderStage() && envController.defenseOnnxModel != null)
+                {
+                    SetAgentInferenceOnly(pair.agent1, envController.defenseOnnxModel);
+                    SetAgentInferenceOnly(pair.agent2, envController.defenseOnnxModel);
+                }
             }
 
             // WebCollisionDetector/DynamicWeb 설정
@@ -410,6 +419,20 @@ namespace BoatAttack
             buf.ObservableSize = 4;       // r, f, d, h
             buf.MaxNumObservables = 10;
             agent.enemyBufferSensor = buf;
+        }
+
+        /// <summary>
+        /// DefenseAgent의 BehaviorType을 InferenceOnly로 설정하고 학습된 모델 장착
+        /// </summary>
+        private static void SetAgentInferenceOnly(DefenseAgent agent, NNModel model)
+        {
+            if (agent == null) return;
+            var bp = agent.GetComponent<BehaviorParameters>();
+            if (bp != null)
+            {
+                bp.BehaviorType = BehaviorType.InferenceOnly;
+                bp.Model = model;
+            }
         }
 
         /// <summary>

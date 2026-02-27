@@ -3,6 +3,8 @@ using UnityEngine.InputSystem;
 using Unity.MLAgents;
 using Unity.MLAgents.Sensors;
 using Unity.MLAgents.Actuators;
+using Unity.MLAgents.Policies;
+using Unity.Barracuda;
 using System.Collections.Generic;
 
 namespace BoatAttack
@@ -141,6 +143,18 @@ namespace BoatAttack
 
         protected override void OnEnable()
         {
+            // Stage4: DefenseAgent를 InferenceOnly로 전환 (base.OnEnable → LazyInitialize 전에 설정)
+            if (envController != null && envController.IsCommanderStage()
+                && envController.defenseOnnxModel != null)
+            {
+                var bp = GetComponent<BehaviorParameters>();
+                if (bp != null)
+                {
+                    bp.BehaviorType = BehaviorType.InferenceOnly;
+                    bp.Model = envController.defenseOnnxModel;
+                }
+            }
+
             base.OnEnable();
 
             if (motherShip == null)

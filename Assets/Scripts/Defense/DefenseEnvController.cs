@@ -1,5 +1,6 @@
 using UnityEngine;
 using Unity.MLAgents;
+using Unity.Barracuda;
 using Cinemachine;
 using System.Linq;
 
@@ -223,6 +224,9 @@ namespace BoatAttack
 
         [Tooltip("아군 생성 버튼 UI (없으면 무시)")]
         public AllySpawnButtonUI spawnButtonUI;
+
+        [Tooltip("Stage4: DefenseAgent 학습 완료 모델 (.onnx). InferenceOnly 전환용")]
+        public NNModel defenseOnnxModel;
 
         // 풀 배열 (Start()에서 초기화, 인덱스 기반)
         private GameObject[] _enemyPool;
@@ -995,6 +999,7 @@ namespace BoatAttack
             }
 
             // 유효 타겟 없는 아군 쌍 비활성화 (10스텝마다 체크)
+            // 모든 적이 아군보다 모선에 가까우면 (적이 아군을 지나침) 비활성화
             if (launchZoneManager != null && motherShip != null && _resetTimer % 10 == 0)
             {
                 DeactivatePairsWithNoValidTarget();
@@ -1121,6 +1126,26 @@ namespace BoatAttack
             // 3단계: 에이전트 에피소드 종료
             if (m_AgentGroup != null)
             {
+                // UnregisterAgent로 해제된 에이전트를 다시 등록 (그룹이 비어있으면 EndGroupEpisode 무시됨)
+                if (launchZoneManager != null)
+                {
+                    int poolCount = launchZoneManager.GetCurrentPoolCount();
+                    for (int i = 0; i < poolCount; i++)
+                    {
+                        DefensePair pair = launchZoneManager.GetPair(i);
+                        if (pair == null) continue;
+                        if (pair.agent1 != null && pair.agent1.gameObject.activeInHierarchy)
+                            m_AgentGroup.RegisterAgent(pair.agent1);
+                        if (pair.agent2 != null && pair.agent2.gameObject.activeInHierarchy)
+                            m_AgentGroup.RegisterAgent(pair.agent2);
+                    }
+                }
+                // 레거시 에이전트도 등록 (LaunchZoneManager 없을 때)
+                if (defenseAgent1 != null && defenseAgent1.gameObject.activeInHierarchy)
+                    m_AgentGroup.RegisterAgent(defenseAgent1);
+                if (defenseAgent2 != null && defenseAgent2.gameObject.activeInHierarchy)
+                    m_AgentGroup.RegisterAgent(defenseAgent2);
+
                 m_AgentGroup.EndGroupEpisode();
             }
             else
@@ -1718,7 +1743,7 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 유효 타겟(아군보다 모선에 가까운 적)이 없는 활성 아군 쌍을 비활성화
+        /// 아군이 모든 적보다 모선에서 멀 때 (적이 아군을 지나침) 비활성화
         /// </summary>
         private void DeactivatePairsWithNoValidTarget()
         {
@@ -1736,7 +1761,7 @@ namespace BoatAttack
                     : pair.agent1.transform.position;
                 float pairDistToMother = Vector3.Distance(pairCenter, motherPos);
 
-                // 아군보다 모선에 가까운 활성 적이 하나라도 있는지 확인
+                // 아군보다 모선에서 멀거나 같은 적이 하나라도 있으면 유효 (아직 차단 가능)
                 bool hasValidTarget = false;
                 if (_enemyPool != null)
                 {
@@ -1745,7 +1770,7 @@ namespace BoatAttack
                         if (_enemyPool[e] == null || !_enemyPool[e].activeSelf) continue;
                         if (IsEnemyNeutralized(_enemyPool[e])) continue;
                         float enemyDistToMother = Vector3.Distance(_enemyPool[e].transform.position, motherPos);
-                        if (enemyDistToMother <= pairDistToMother)
+                        if (enemyDistToMother >= pairDistToMother)
                         {
                             hasValidTarget = true;
                             break;
@@ -1755,8 +1780,59 @@ namespace BoatAttack
 
                 if (!hasValidTarget)
                 {
-                    Debug.Log($"[DefenseEnv] Pair {i} 비활성화: 유효 타겟 없음 (모든 적이 아군보다 모선에서 멀리 있음)");
+                    Debug.Log($"[DefenseEnv] Pair {i} 비활성화: 모든 적이 아군보다 모선에 가까움 (차단 불가)");
                     launchZoneManager.ReturnPairToPool(i, m_AgentGroup);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Stage3 1:1 자동 매칭: 각 활성 아군 쌍에 가장 가까운 미배정 적 1대 배정
+        /// enemyShips 배열 기반 (DefenseAgent.GetAssignedEnemy()와 인덱스 일치)
+        /// </summary>
+        private void AutoAssignOneToOneTargets()
+        {
+            if (launchZoneManager == null || enemyShips == null) return;
+
+            int poolCount = launchZoneManager.GetCurrentPoolCount();
+            var assigned = new System.Collections.Generic.HashSet<int>();
+
+            Debug.Log($"[1:1 Assign] poolCount={poolCount}, enemyShips={enemyShips.Length}");
+
+            // 배정 초기화
+            for (int i = 0; i < poolCount; i++)
+            {
+                DefensePair pair = launchZoneManager.GetPair(i);
+                if (pair == null || !pair.isActive) continue;
+                if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
+                if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
+            }
+
+            // Greedy closest: 각 쌍에 가장 가까운 미배정 활성 적 배정
+            for (int i = 0; i < poolCount; i++)
+            {
+                DefensePair pair = launchZoneManager.GetPair(i);
+                if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+
+                Vector3 center = pair.agent2 != null
+                    ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f
+                    : pair.agent1.transform.position;
+
+                float minDist = float.MaxValue;
+                int bestIdx = -1;
+                for (int e = 0; e < enemyShips.Length; e++)
+                {
+                    if (assigned.Contains(e)) continue;
+                    if (enemyShips[e] == null || !enemyShips[e].activeInHierarchy) continue;
+                    float dist = Vector3.Distance(center, enemyShips[e].transform.position);
+                    if (dist < minDist) { minDist = dist; bestIdx = e; }
+                }
+
+                if (bestIdx >= 0)
+                {
+                    launchZoneManager.SetPairTarget(i, bestIdx + 1); // 1-indexed
+                    assigned.Add(bestIdx);
+                    Debug.Log($"[1:1 Assign] Pair {i} → Enemy {bestIdx} (dist={minDist:F1})");
                 }
             }
         }
@@ -2226,6 +2302,10 @@ namespace BoatAttack
                         ? Mathf.Min(launchZoneManager.activePairCount, launchZoneManager.maxPairCount)
                         : 0;
 
+                    Debug.Log($"[DefenseEnv] Stage={currentStage}, activePairCount={launchZoneManager.activePairCount}, " +
+                        $"pairCount={pairCount}, lzmInit={launchZoneManager.IsInitialized}, " +
+                        $"enemyCount={GetActiveEnemyCountForStage()}");
+
                     if (pairCount <= 0)
                     {
                         // activePairCount=0: 모든 쌍 비활성화 + defenseAgent1/2 숨김 (버튼으로만 배치)
@@ -2254,6 +2334,10 @@ namespace BoatAttack
                             float perpDot2 = Vector3.Dot(spawnPos2 - motherPos, _currentPerpendicularDir);
                             _agent1StartsOnLeft = perpDot1 < perpDot2;
                         }
+
+                        // Stage3 (기동 학습): 1:1 자동 매칭
+                        if (currentStage == TrainingStage.Stage3_Tactical)
+                            AutoAssignOneToOneTargets();
                     }
                 }
                 else
@@ -2983,13 +3067,18 @@ namespace BoatAttack
 
         /// <summary>
         /// non-Commander Stage에서 자동 배치할 아군 쌍 수 계산
-        /// 적군 3대당 아군 1쌍 비율, 최소 1쌍
+        /// Stage3: 1:1 (적 1대당 쌍 1개), 기타: 적 3대당 1쌍
         /// </summary>
         private int GetAllyPairCountForStage()
         {
             int enemyCount = GetActiveEnemyCountForStage();
             if (enemyCount <= 0) return 1;
             int maxPairs = launchZoneManager != null ? launchZoneManager.maxPairCount : 6;
+
+            // Stage3 (기동 학습): 1:1 — 적 1대당 아군 쌍 1개
+            if (currentStage == TrainingStage.Stage3_Tactical)
+                return Mathf.Clamp(enemyCount, 1, maxPairs);
+
             return Mathf.Clamp(Mathf.CeilToInt(enemyCount / 3f), 1, maxPairs);
         }
 
