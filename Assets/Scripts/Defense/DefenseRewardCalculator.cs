@@ -38,6 +38,30 @@ namespace BoatAttack
         [Tooltip("충돌 페널티 (아군끼리/모선/거리초과 등)")]
         public float collisionPenalty = -0.5f;
 
+        [Tooltip("아군 Web 충돌 페널티")]
+        public float allyWebCollisionPenalty = -0.3f;
+
+        [Tooltip("적군 방어선 돌파 페널티")]
+        public float enemyBreachPenalty = -1.0f;
+
+        [Header("=== 거리 제한 ===")]
+        [Tooltip("아군 간 최대 허용 거리 (초과 시 쌍 무력화)")]
+        public float maxAllyDistance = 100f;
+
+        [Tooltip("아군 간 최소 허용 거리 (미만 시 쌍 무력화)")]
+        public float minAllyDistance = 4f;
+
+        [Header("=== Phantom 페널티 ===")]
+        [Tooltip("가상 아군쌍 접근 시 최소 허용 거리 (m)")]
+        public float phantomMinDistance = 30f;
+
+        [Tooltip("가상 아군쌍 침범 페널티")]
+        public float phantomViolationPenalty = -0.5f;
+
+        [Header("=== 적 추월 페널티 ===")]
+        [Tooltip("적이 아군보다 모선에 가까울 때 페널티")]
+        public float enemyOvertakePenalty = -1.0f;
+
         // 이전 스텝의 Web-적 거리 (접근 보상 계산용)
         private float _prevWebToEnemyDist = float.MaxValue;
 

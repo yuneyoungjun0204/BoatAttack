@@ -260,9 +260,10 @@ namespace BoatAttack
                 float padX = cellPadding / Mathf.Max(1f, rect.width);
                 float padY = cellPadding / Mathf.Max(1f, rect.height);
 
-                // 라벨 (셀 상단)
+                // 라벨 (셀 상단) — 코드 Labels 배열로 텍스트 자동 설정
                 if (labelTexts != null && i < labelTexts.Length && labelTexts[i] != null)
                 {
+                    labelTexts[i].text = GetLabel(i);
                     var rt = labelTexts[i].rectTransform;
                     rt.anchorMin = new Vector2(xMin + padX, yMax - padY - 0.04f);
                     rt.anchorMax = new Vector2(xMax - padX, yMax - padY);
@@ -377,23 +378,17 @@ namespace BoatAttack
                 AddRect(vh, gx, gy + gh * 0.75f - 0.25f, gw, 0.5f, guideLineColor);
                 AddRect(vh, gx, gy + gh * 0.25f - 0.25f, gw, 0.5f, guideLineColor);
 
-                // ±0.25, ±0.75 미세 보조선
-                Color fineGuide = new Color(guideLineColor.r, guideLineColor.g, guideLineColor.b, 0.15f);
-                AddRect(vh, gx, gy + gh * 0.875f - 0.25f, gw, 0.5f, fineGuide);
-                AddRect(vh, gx, gy + gh * 0.625f - 0.25f, gw, 0.5f, fineGuide);
-                AddRect(vh, gx, gy + gh * 0.375f - 0.25f, gw, 0.5f, fineGuide);
-                AddRect(vh, gx, gy + gh * 0.125f - 0.25f, gw, 0.5f, fineGuide);
+                // ±0.25, ±0.75 미세 보조선 (버텍스 절약을 위해 제거)
 
-                // 그래프 라인 (글로우 + 메인)
+                // 그래프 라인 (버텍스 절약: 글로우 1단계 + 메인만)
                 if (_sampleCount >= 2)
                 {
-                    // 외곽 글로우 (넓고 부드러운)
-                    Color glowCol1 = new Color(indicatorCol.r, indicatorCol.g, indicatorCol.b, 0.06f);
-                    DrawGraphLine(vh, i, gx, gy, gw, gh, glowCol1, lineWidth * 7f);
-                    // 내부 글로우 (중간)
-                    Color glowCol2 = new Color(indicatorCol.r, indicatorCol.g, indicatorCol.b, 0.18f);
-                    DrawGraphLine(vh, i, gx, gy, gw, gh, glowCol2, lineWidth * 3f);
-                    // 메인 라인 (밝은 코어)
+                    // 버텍스 예산 체크: 남은 여유가 있을 때만 글로우
+                    if (vh.currentVertCount < 40000)
+                    {
+                        Color glowCol = new Color(indicatorCol.r, indicatorCol.g, indicatorCol.b, 0.15f);
+                        DrawGraphLine(vh, i, gx, gy, gw, gh, glowCol, lineWidth * 3f);
+                    }
                     DrawGraphLine(vh, i, gx, gy, gw, gh, indicatorCol, lineWidth);
                 }
 

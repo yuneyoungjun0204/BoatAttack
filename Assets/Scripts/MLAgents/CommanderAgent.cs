@@ -83,12 +83,12 @@ namespace BoatAttack
         {
             if (envController == null || !envController.IsCommanderStage())
             {
-                Debug.Log($"[CommanderAgent] Disabling self (stage={envController?.currentStage})");
-                // gameObject.SetActive(false)는 Agent.OnDisable→CleanupSensors NullRef 유발
-                // Agent + BehaviorParameters 비활성화 → trainer 등록 차단
-                enabled = false;
+                Debug.Log($"[CommanderAgent] Setting HeuristicOnly (stage={envController?.currentStage})");
+                // BehaviorType을 HeuristicOnly로 설정 → 트레이너 연결 완전 차단
                 var bp = GetComponent<Unity.MLAgents.Policies.BehaviorParameters>();
-                if (bp != null) bp.enabled = false;
+                if (bp != null)
+                    bp.BehaviorType = Unity.MLAgents.Policies.BehaviorType.HeuristicOnly;
+                base.Awake();
                 return;
             }
             base.Awake();

@@ -457,10 +457,19 @@ namespace BoatAttack
             if (launchZoneManager != null)
                 pairCount = launchZoneManager.GetActivePairCount();
 
-            GUILayout.BeginArea(new Rect(Screen.width - 275, 15, 260, 120), _hudStyle);
+            int capturedCount = 0;
+            int breachedCount = 0;
+            if (envController != null)
+            {
+                capturedCount = envController.GetCapturedEnemyCount();
+                breachedCount = envController.GetBreachedEnemyCount();
+            }
+
+            GUILayout.BeginArea(new Rect(Screen.width - 275, 15, 260, 155), _hudStyle);
 
             GUILayout.Label($"ALLY:  {allyCount} ships  ({pairCount} pairs)", _hudStyleAlly);
             GUILayout.Label($"ENEMY: {enemyCount} ships", _hudStyleEnemy);
+            GUILayout.Label($"  Captured: {capturedCount}  |  Breached: {breachedCount}", _hudStyleTarget);
 
             if (_isTopDown)
             {

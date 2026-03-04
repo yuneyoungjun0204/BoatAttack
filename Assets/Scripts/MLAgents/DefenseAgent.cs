@@ -91,13 +91,37 @@ namespace BoatAttack
         [Header("Ally Pair Observation (좌/우 가장 가까운 아군 쌍)")]
         [Range(1f, 1000f)] public float allyPairNormK = 100f;
 
+        [Header("Phantom Neighbors (1 페어 학습용)")]
+        [Tooltip("가상 아군쌍 간격 (방어선 방향, m)")]
+        [Range(30f, 200f)] public float phantomSpacing = 80f;
+
+        [Tooltip("가상 아군쌍 전진 속도 (m/s, fallback)")]
+        [Range(1f, 20f)] public float phantomSpeed = 8f;
+
+        [Tooltip("가상 아군쌍 속도 배율 (실제 아군 속도 × 배율, 에피소드마다 랜덤)")]
+        [HideInInspector] public float phantomSpeedMult = 1.5f;
+
+        [Tooltip("가상 아군쌍 좌우 노이즈 강도 (m/s)")]
+        [Range(0f, 10f)] public float phantomNoiseStrength = 3f;
+
+        // Phantom 상태 (독립 기동)
+        [HideInInspector] public Vector3 lastPhantomLeft;
+        [HideInInspector] public Vector3 lastPhantomRight;
+        [HideInInspector] public float lastPhantomHeading;
+        [HideInInspector] public bool lastPhantomValid;
+        private Vector3 _phantomLeftPos;
+        private Vector3 _phantomRightPos;
+        private float _phantomLeftSeed;
+        private float _phantomRightSeed;
+        private bool _phantomInitialized;
+
         [Header("Heuristic")]
         [Tooltip("true면 화살표키, false면 WASD (페어 배치 시 자동 설정)")]
         public bool useArrowKeys = false;
 
         [Header("Debug")]
         public bool showRaycasts = true;
-        public bool enableDebugLog = true;
+        public bool enableDebugLog = false;
 
         /// <summary>모니터링용: 마지막 CollectObservations 결과</summary>
         [HideInInspector] public float[] lastObservations;
@@ -211,6 +235,8 @@ namespace BoatAttack
             _prevSteering = 0f;
             _throttleDelta = 0f;
             _steeringDelta = 0f;
+            _phantomInitialized = false;
+            lastPhantomValid = false;
         }
 
         /// <summary>
@@ -390,12 +416,18 @@ namespace BoatAttack
 
         /// <summary>
         /// 좌/우 가장 가까운 아군 쌍 관측 수집 (8개: 좌4 + 우4)
-        /// 내 heading 기준 좌측/우측에서 가장 가까운 다른 쌍의 중심점 정보
-        /// 해당 방향에 쌍이 없으면 (1.0, 0, 0, 0) = "매우 멀고 방향 없음"
+        /// 실제 쌍이 없으면 Phantom Neighbor(가상 방어선 위치) 사용
         /// </summary>
         private void CollectNearbyAllyPairObs(VectorSensor sensor, Vector3 myPos,
             Vector3 myForward, Vector3 myRight, float myAngle, ref int oi)
         {
+            // --- Phantom: UpdatePhantoms()에서 미리 계산된 독립 기동 위치 사용 ---
+            bool phantomValid = lastPhantomValid;
+            Vector3 phantomLeft = lastPhantomLeft;
+            Vector3 phantomRight = lastPhantomRight;
+            float phantomHeading = lastPhantomHeading;
+
+            // --- 실제 아군 쌍 탐색 (기존 로직) ---
             float leftMinDist = float.MaxValue;
             float rightMinDist = float.MaxValue;
             Vector3 leftCenter = Vector3.zero;
@@ -417,18 +449,13 @@ namespace BoatAttack
                     if (pair == null || !pair.isActive) continue;
                     if (pair.agent1 == null || pair.agent2 == null) continue;
 
-                    // 다른 쌍의 중심점
                     Vector3 otherCenter = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
                     Vector3 toOther = otherCenter - myPos;
                     float dist = toOther.magnitude;
-
-                    // 좌/우 판별: myRight와의 내적
                     float rightDot = Vector3.Dot(myRight, toOther);
-
-                    // 쌍의 평균 헤딩
                     float otherHeading = (pair.agent1.transform.eulerAngles.y + pair.agent2.transform.eulerAngles.y) * 0.5f;
 
-                    if (rightDot >= 0f) // 우측
+                    if (rightDot >= 0f)
                     {
                         if (dist < rightMinDist)
                         {
@@ -438,7 +465,7 @@ namespace BoatAttack
                             hasRight = true;
                         }
                     }
-                    else // 좌측
+                    else
                     {
                         if (dist < leftMinDist)
                         {
@@ -451,39 +478,14 @@ namespace BoatAttack
                 }
             }
 
-            // 좌측 쌍 (4개)
+            // --- 좌측 쌍 출력 (4개) ---
             if (hasLeft)
             {
-                Vector3 rel = leftCenter - myPos;
-                float dist = rel.magnitude;
-                float fwdDot = Vector3.Dot(rel, myForward);
-                float rDot = Vector3.Dot(rel, myRight);
-
-                AddObs(sensor, dist / (dist + allyPairNormK), ref oi);
-                AddObs(sensor, dist > 0.1f ? fwdDot / dist : 0f, ref oi);
-                AddObs(sensor, dist > 0.1f ? rDot / dist : 0f, ref oi);
-                AddObs(sensor, NormalizeAngle(myAngle, leftHeading), ref oi);
+                AddAllyPairObs(sensor, leftCenter, leftHeading, myPos, myForward, myRight, myAngle, ref oi);
             }
-            else
+            else if (phantomValid)
             {
-                AddObs(sensor, 1f, ref oi);  // 거리 = 1.0 (매우 멀다)
-                AddObs(sensor, 0f, ref oi);  // 전방 성분 없음
-                AddObs(sensor, 0f, ref oi);  // 측면 성분 없음
-                AddObs(sensor, 0f, ref oi);  // 헤딩 차이 없음
-            }
-
-            // 우측 쌍 (4개)
-            if (hasRight)
-            {
-                Vector3 rel = rightCenter - myPos;
-                float dist = rel.magnitude;
-                float fwdDot = Vector3.Dot(rel, myForward);
-                float rDot = Vector3.Dot(rel, myRight);
-
-                AddObs(sensor, dist / (dist + allyPairNormK), ref oi);
-                AddObs(sensor, dist > 0.1f ? fwdDot / dist : 0f, ref oi);
-                AddObs(sensor, dist > 0.1f ? rDot / dist : 0f, ref oi);
-                AddObs(sensor, NormalizeAngle(myAngle, rightHeading), ref oi);
+                AddAllyPairObs(sensor, phantomLeft, phantomHeading, myPos, myForward, myRight, myAngle, ref oi);
             }
             else
             {
@@ -492,6 +494,112 @@ namespace BoatAttack
                 AddObs(sensor, 0f, ref oi);
                 AddObs(sensor, 0f, ref oi);
             }
+
+            // --- 우측 쌍 출력 (4개) ---
+            if (hasRight)
+            {
+                AddAllyPairObs(sensor, rightCenter, rightHeading, myPos, myForward, myRight, myAngle, ref oi);
+            }
+            else if (phantomValid)
+            {
+                AddAllyPairObs(sensor, phantomRight, phantomHeading, myPos, myForward, myRight, myAngle, ref oi);
+            }
+            else
+            {
+                AddObs(sensor, 1f, ref oi);
+                AddObs(sensor, 0f, ref oi);
+                AddObs(sensor, 0f, ref oi);
+                AddObs(sensor, 0f, ref oi);
+            }
+
+            // Phantom 위치는 UpdatePhantoms()에서 갱신됨 (독립 기동)
+        }
+
+        /// <summary>아군쌍(실제 또는 phantom) 관측 출력 헬퍼 (4개)</summary>
+        private void AddAllyPairObs(VectorSensor sensor, Vector3 center, float heading,
+            Vector3 myPos, Vector3 myForward, Vector3 myRight, float myAngle, ref int oi)
+        {
+            Vector3 rel = center - myPos;
+            float dist = rel.magnitude;
+            AddObs(sensor, dist / (dist + allyPairNormK), ref oi);
+            AddObs(sensor, dist > 0.1f ? Vector3.Dot(rel, myForward) / dist : 0f, ref oi);
+            AddObs(sensor, dist > 0.1f ? Vector3.Dot(rel, myRight) / dist : 0f, ref oi);
+            AddObs(sensor, NormalizeAngle(myAngle, heading), ref oi);
+        }
+
+        /// <summary>
+        /// Phantom 초기 배치: 현재 webCenter 기준으로 방어선 좌/우에 생성
+        /// </summary>
+        public void InitializePhantoms(Vector3 webCenter, Vector3 enemyPos, Vector3 motherPos)
+        {
+            Vector3 enemyDir = enemyPos - motherPos;
+            enemyDir.y = 0f;
+            if (enemyDir.sqrMagnitude < 1f) enemyDir = Vector3.forward;
+            enemyDir.Normalize();
+
+            Vector3 defenseDir = new Vector3(-enemyDir.z, 0f, enemyDir.x);
+            _phantomLeftPos = webCenter - defenseDir * phantomSpacing;
+            _phantomRightPos = webCenter + defenseDir * phantomSpacing;
+            _phantomLeftSeed = Random.Range(0f, 1000f);
+            _phantomRightSeed = Random.Range(0f, 1000f);
+            _phantomInitialized = true;
+
+            lastPhantomLeft = _phantomLeftPos;
+            lastPhantomRight = _phantomRightPos;
+            lastPhantomHeading = Mathf.Atan2(enemyDir.x, enemyDir.z) * Mathf.Rad2Deg;
+            lastPhantomValid = true;
+        }
+
+        /// <summary>
+        /// Phantom 독립 기동 업데이트: 적 방향으로 전진 + Perlin 노이즈 횡이동
+        /// DefenseEnvController.FixedUpdate에서 매 스텝 호출
+        /// </summary>
+        public void UpdatePhantoms(float dt, Vector3 enemyPos, Vector3 motherPos)
+        {
+            if (!_phantomInitialized)
+            {
+                Vector3 pPos = (partnerAgent != null) ? partnerAgent.transform.position : transform.position;
+                Vector3 wc = (transform.position + pPos) * 0.5f;
+                InitializePhantoms(wc, enemyPos, motherPos);
+            }
+
+            // 실제 아군 페어 속도 가져오기
+            float realSpeed = 0f;
+            if (_engine != null && _engine.RB != null)
+            {
+                Vector3 vel = _engine.RB.velocity;
+                vel.y = 0f;
+                realSpeed = vel.magnitude;
+            }
+            if (realSpeed < 0.5f) realSpeed = 0.5f; // 최소 속도
+            realSpeed *= phantomSpeedMult; // phantom은 실제 아군 대비 배율 적용
+
+            float time = Time.time;
+
+            // 헤딩: 적 방향 기준 (관측용)
+            Vector3 enemyDir = enemyPos - motherPos;
+            enemyDir.y = 0f;
+            if (enemyDir.sqrMagnitude < 1f) enemyDir = Vector3.forward;
+            enemyDir.Normalize();
+            lastPhantomHeading = Mathf.Atan2(enemyDir.x, enemyDir.z) * Mathf.Rad2Deg;
+
+            // Left phantom: Perlin 노이즈로 독립 헤딩 → 실제 아군 속도로 이동
+            float headingNoiseL = (Mathf.PerlinNoise(_phantomLeftSeed, time * 0.2f) - 0.5f) * 2f * phantomNoiseStrength * 15f; // ±도
+            float baseAngleL = lastPhantomHeading + headingNoiseL;
+            float radL = baseAngleL * Mathf.Deg2Rad;
+            Vector3 dirL = new Vector3(Mathf.Sin(radL), 0f, Mathf.Cos(radL));
+            _phantomLeftPos += dirL * realSpeed * dt;
+
+            // Right phantom: 다른 seed로 독립 헤딩
+            float headingNoiseR = (Mathf.PerlinNoise(_phantomRightSeed, time * 0.2f) - 0.5f) * 2f * phantomNoiseStrength * 15f;
+            float baseAngleR = lastPhantomHeading + headingNoiseR;
+            float radR = baseAngleR * Mathf.Deg2Rad;
+            Vector3 dirR = new Vector3(Mathf.Sin(radR), 0f, Mathf.Cos(radR));
+            _phantomRightPos += dirR * realSpeed * dt;
+
+            lastPhantomLeft = _phantomLeftPos;
+            lastPhantomRight = _phantomRightPos;
+            lastPhantomValid = true;
         }
 
         /// <summary>관측값 기록 + 센서 추가 헬퍼</summary>

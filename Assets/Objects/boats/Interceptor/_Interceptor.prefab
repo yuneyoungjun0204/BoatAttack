@@ -735,9 +735,16 @@ MonoBehaviour:
   motherFScale: 1
   motherDistScale: 1
   allyPairNormK: 100
+  phantomSpacing: 80
+  phantomSpeed: 8
+  phantomNoiseStrength: 3
+  lastPhantomLeft: {x: 0, y: 0, z: 0}
+  lastPhantomRight: {x: 0, y: 0, z: 0}
+  lastPhantomHeading: 0
+  lastPhantomValid: 0
   useArrowKeys: 0
   showRaycasts: 1
-  enableDebugLog: 1
+  enableDebugLog: 0
   lastObservations: []
   _totalReward: 0
   _lastStepReward: 0
