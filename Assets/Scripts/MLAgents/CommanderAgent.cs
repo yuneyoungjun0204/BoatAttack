@@ -84,7 +84,11 @@ namespace BoatAttack
             if (envController == null || !envController.IsCommanderStage())
             {
                 Debug.Log($"[CommanderAgent] Disabling self (stage={envController?.currentStage})");
-                gameObject.SetActive(false);
+                // gameObject.SetActive(false)는 Agent.OnDisable→CleanupSensors NullRef 유발
+                // Agent + BehaviorParameters 비활성화 → trainer 등록 차단
+                enabled = false;
+                var bp = GetComponent<Unity.MLAgents.Policies.BehaviorParameters>();
+                if (bp != null) bp.enabled = false;
                 return;
             }
             base.Awake();

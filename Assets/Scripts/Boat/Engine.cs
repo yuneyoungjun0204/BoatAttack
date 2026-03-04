@@ -16,7 +16,7 @@ namespace BoatAttack
 
         //engine stats
         public float steeringTorque = 5f;
-        public float horsePower = 5800f;
+        public float horsePower = 1500f;
 
         [Header("Speed Limit")]
         [Tooltip("Max speed in m/s (0 = no limit)")]

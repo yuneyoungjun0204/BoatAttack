@@ -26,6 +26,16 @@ behaviors:
     time_horizon: 128
     summary_freq: 10000
     checkpoint_interval: 500000
+  Commander:
+    trainer_type: ppo
+    max_steps: 1
+    hyperparameters:
+      batch_size: 8
+      buffer_size: 16
+    network_settings:
+      normalize: false
+      hidden_units: 32
+      num_layers: 1
 engine_settings:
   time_scale: 1
   target_frame_rate: -1

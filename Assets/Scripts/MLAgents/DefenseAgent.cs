@@ -237,24 +237,19 @@ namespace BoatAttack
         /// </summary>
         public GameObject GetAssignedEnemy()
         {
-            Vector3 motherPos = motherShip != null ? motherShip.transform.position : Vector3.zero;
-            float myDistToMother = Vector3.Distance(transform.position, motherPos);
-
-            // Commander 배정: 1-indexed (거리 조건 검증)
+            // 배정된 타겟이 있으면 거리 무관하게 반환 (배정은 AutoAssign에서 주기적 갱신)
             if (assignedTargetIndex > 0 && enemyShips != null)
             {
                 int idx = assignedTargetIndex - 1;
                 if (idx < enemyShips.Length && enemyShips[idx] != null && enemyShips[idx].activeInHierarchy)
                 {
-                    float enemyDistToMother = Vector3.Distance(enemyShips[idx].transform.position, motherPos);
-                    if (enemyDistToMother <= myDistToMother)
-                        return enemyShips[idx];
-                    // 적이 아군보다 먼 경우 → 매칭 해제
-                    assignedTargetIndex = -1;
+                    return enemyShips[idx];
                 }
+                // 적이 비활성화된 경우에만 매칭 해제
+                assignedTargetIndex = -1;
             }
 
-            // Fallback: 아군보다 모선에 가까운 적 중 가장 가까운 적
+            // Fallback: 가장 가까운 활성 적
             if (enemyShips == null) return null;
             float minDist = float.MaxValue;
             GameObject closest = null;
@@ -262,8 +257,6 @@ namespace BoatAttack
             foreach (var enemy in enemyShips)
             {
                 if (enemy == null || !enemy.activeInHierarchy) continue;
-                float enemyDistToMother = Vector3.Distance(enemy.transform.position, motherPos);
-                if (enemyDistToMother > myDistToMother) continue; // 아군보다 먼 적은 스킵
                 float dist = Vector3.Distance(myPos, enemy.transform.position);
                 if (dist < minDist) { minDist = dist; closest = enemy; }
             }

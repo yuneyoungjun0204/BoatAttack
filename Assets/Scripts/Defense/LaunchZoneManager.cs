@@ -60,7 +60,7 @@ namespace BoatAttack
     {
         [Header("Launch Zones (진수구역)")]
         [Tooltip("진수구역 개수 (360°를 균등 분할)")]
-        [Range(1, 20)]
+        [Range(1, 40)]
         public int zoneCount = 10;
 
         [Tooltip("쌍의 좌우 펼침 각도 (±도)")]
@@ -78,8 +78,15 @@ namespace BoatAttack
         public int maxPairCount = 15;
 
         [Tooltip("에피소드 시작 시 자동 배치 쌍 수 (0=버튼으로만 배치)")]
-        [Range(0, 10)]
+        [Range(0, 20)]
         public int activePairCount = 0;
+
+        [Tooltip("초기 출동 쌍 수 (나머지는 예비로 대기, 0=activePairCount 전부 출동)")]
+        [Range(0, 20)]
+        public int initialDeployCount = 0;
+
+        [Tooltip("같은 진수구역에서 연속 출동 최소 간격 (스텝)")]
+        public int zoneDeployCooldown = 100;
 
         [Header("Template")]
         [Tooltip("템플릿 쌍 (씬에 이미 배치된 기존 defenseAgent1/2/web). 비어있으면 프리팹에서 자동 생성")]
@@ -126,6 +133,9 @@ namespace BoatAttack
         // 풀 리스트 (지연 생성: 필요할 때만 추가)
         private List<DefensePair> _pairPool;
         private bool _initialized = false;
+
+        // 진수구역별 마지막 출동 스텝 (쿨다운용)
+        private int[] _zoneLastDeployStep;
 
         // 각 쌍의 원래 높이(y) 저장
         private float _templateAgent1Y;
@@ -478,6 +488,9 @@ namespace BoatAttack
             //     $"maxPairCount={maxPairCount}, poolLen={_pairPool.Count}, " +
             //     $"motherPos={motherPos}, agentGroup={agentGroup != null}");
 
+            // 0. 진수구역 쿨다운 리셋
+            ResetZoneCooldowns();
+
             // 1. 모든 쌍 비활성화 + MA-POCA 해제
             // SetPairActive는 에이전트 GameObject를 SetActive(false)하지 않고 멀리 이동시킴
             for (int i = 0; i < _pairPool.Count; i++)
@@ -554,9 +567,17 @@ namespace BoatAttack
                         pair.agent2.enemyShips = enemies;
                     }
 
-                    // 배정된 적 방향으로 ±45° 클램프 회전 (적 없으면 zoneDir 기본)
-                    int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
-                    Quaternion rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
+                    // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 적 방향 ±45° 클램프
+                    Quaternion rot;
+                    if (envController != null && envController.currentStage == TrainingStage.Stage3_Tactical)
+                    {
+                        rot = Quaternion.LookRotation(zoneDir, Vector3.up);
+                    }
+                    else
+                    {
+                        int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
+                        rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
+                    }
 
                     // 에이전트 위치/회전 설정
                     ResetAgent(pair.agent1, pos1, rot);
@@ -566,6 +587,9 @@ namespace BoatAttack
                     pair.deployLateralDir = lateralDir;
                     float dot1 = Vector3.Dot(pos1 - pairCenter, lateralDir);
                     pair.agent1StartsOnLeft = dot1 < 0f;
+
+                    // deployStep 리셋 (이전 에피소드 잔여값 → 유예기간 오작동 방지)
+                    pair.deployStep = -1;
 
                     // 활성화 (에이전트 위치는 위의 ResetAgent에서 이미 설정됨)
                     SetPairActive(pi, true);
@@ -593,10 +617,11 @@ namespace BoatAttack
             float[] diversionaryAngles, int pairCount)
         {
             var assignments = new Dictionary<int, List<int>>();
+            var usedZones = new HashSet<int>();
 
             if (formationType == FormationType.Diversionary && diversionaryAngles != null && diversionaryAngles.Length > 1)
             {
-                // 양동: 각 방향의 가장 가까운 진수구역에 균등 분배
+                // 양동: 각 방향별로 가까운 구역에 분산 배정 (1구역 1쌍)
                 int pairsPerDir = pairCount / diversionaryAngles.Length;
                 int pairRemainder = pairCount % diversionaryAngles.Length;
                 int pairIdx = 0;
@@ -604,32 +629,67 @@ namespace BoatAttack
                 for (int d = 0; d < diversionaryAngles.Length; d++)
                 {
                     float dirAngleDeg = diversionaryAngles[d] * Mathf.Rad2Deg;
-                    int bestZone = FindClosestZone(dirAngleDeg);
-
-                    if (!assignments.ContainsKey(bestZone))
-                        assignments[bestZone] = new List<int>();
-
                     int count = pairsPerDir + (d < pairRemainder ? 1 : 0);
-                    for (int i = 0; i < count && pairIdx < pairCount; i++)
+
+                    // 이 방향 기준 가까운 순 정렬
+                    var sorted = GetZonesSortedByAngle(dirAngleDeg);
+
+                    for (int j = 0; j < count && pairIdx < pairCount; j++)
                     {
-                        assignments[bestZone].Add(pairIdx);
-                        pairIdx++;
+                        // 미사용 구역 중 가장 가까운 것 (±90° 이내만)
+                        bool found = false;
+                        foreach (int zoneIdx in sorted)
+                        {
+                            if (usedZones.Contains(zoneIdx)) continue;
+                            float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAngleDeg, launchZones[zoneIdx].angleDeg));
+                            if (angleDiff > 90f) break;
+                            usedZones.Add(zoneIdx);
+                            assignments[zoneIdx] = new List<int> { pairIdx };
+                            pairIdx++;
+                            found = true;
+                            break;
+                        }
+                        if (!found) break; // 해당 방향에 사용 가능 구역 없음
                     }
                 }
             }
             else
             {
-                // Concentrated / Wave: 적 접근 방향의 가장 가까운 진수구역에 모든 쌍 집중
-                int bestZone = FindClosestZone(approachAngleDeg);
+                // Concentrated / Wave: 적 접근 방향 ±90° 이내 구역만 사용 (1구역 1쌍)
+                var sorted = GetZonesSortedByAngle(approachAngleDeg);
 
-                assignments[bestZone] = new List<int>();
-                for (int i = 0; i < pairCount; i++)
+                int pairIdx = 0;
+                foreach (int zoneIdx in sorted)
                 {
-                    assignments[bestZone].Add(i);
+                    if (pairIdx >= pairCount) break;
+                    // 반대편 구역 제외 (적 방향과 90° 이상 차이)
+                    float angleDiff = Mathf.Abs(Mathf.DeltaAngle(approachAngleDeg, launchZones[zoneIdx].angleDeg));
+                    if (angleDiff > 90f) break; // 정렬되어 있으므로 이후도 전부 90° 초과
+                    assignments[zoneIdx] = new List<int> { pairIdx };
+                    pairIdx++;
                 }
             }
 
             return assignments;
+        }
+
+        /// <summary>
+        /// 주어진 각도에 가까운 순서로 진수구역 인덱스 정렬 반환
+        /// </summary>
+        private List<int> GetZonesSortedByAngle(float angleDeg)
+        {
+            var sorted = new List<int>();
+            for (int i = 0; i < launchZones.Length; i++)
+                sorted.Add(i);
+
+            sorted.Sort((a, b) =>
+            {
+                float diffA = Mathf.Abs(Mathf.DeltaAngle(angleDeg, launchZones[a].angleDeg));
+                float diffB = Mathf.Abs(Mathf.DeltaAngle(angleDeg, launchZones[b].angleDeg));
+                return diffA.CompareTo(diffB);
+            });
+
+            return sorted;
         }
 
         /// <summary>
@@ -896,8 +956,30 @@ namespace BoatAttack
             if (!_initialized || _pairPool == null) return false;
             if (_pairPool.Count >= maxPairCount && GetInactivePairCount() == 0) return false;
 
-            // 1. 스폰 위치 계산
-            int zoneIdx = (forceZoneIdx >= 0) ? forceZoneIdx : FindClosestZone(approachAngleDeg);
+            // 1. 스폰 위치 계산 (쿨다운 중인 구역은 다음 가까운 구역으로)
+            int currentStep = envController != null ? envController.CurrentStep : 0;
+            int zoneIdx;
+            if (forceZoneIdx >= 0)
+            {
+                zoneIdx = forceZoneIdx;
+            }
+            else
+            {
+                // 가장 가까운 구역부터 탐색 (±90° 이내 + 쿨다운 아닌 구역)
+                var sorted = GetZonesSortedByAngle(approachAngleDeg);
+                zoneIdx = -1;
+                foreach (int zi in sorted)
+                {
+                    float angleDiff = Mathf.Abs(Mathf.DeltaAngle(approachAngleDeg, launchZones[zi].angleDeg));
+                    if (angleDiff > 90f) break; // 정렬 순서상 이후 전부 90° 초과
+                    if (!IsZoneOnCooldown(zi, currentStep))
+                    {
+                        zoneIdx = zi;
+                        break;
+                    }
+                }
+                if (zoneIdx < 0) return false; // 적 방향 ±90° 내 사용 가능 구역 없음
+            }
             if (zoneIdx >= launchZones.Length) zoneIdx = 0;
             LaunchZone zone = launchZones[zoneIdx];
 
@@ -956,9 +1038,16 @@ namespace BoatAttack
                 pair.agent2.enemyShips = enemies;
             }
 
-            // 배정된 적 방향으로 ±45° 클램프 회전
-            int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
-            rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
+            // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 적 방향 ±45° 클램프
+            if (envController != null && envController.currentStage == TrainingStage.Stage3_Tactical)
+            {
+                rot = Quaternion.LookRotation(zoneDir, Vector3.up);
+            }
+            else
+            {
+                int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
+                rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
+            }
             ResetAgent(pair.agent1, pos1, rot);
             ResetAgent(pair.agent2, pos2, rot);
 
@@ -979,7 +1068,11 @@ namespace BoatAttack
 
             _deployedPairCount++;
 
-            Debug.LogWarning($"[DeploySingle] pair={pairIdx}, zone={zoneIdx}, " +
+            // 해당 진수구역 쿨다운 기록
+            if (_zoneLastDeployStep != null && zoneIdx >= 0 && zoneIdx < _zoneLastDeployStep.Length)
+                _zoneLastDeployStep[zoneIdx] = currentStep;
+
+            Debug.LogWarning($"[DeploySingle] pair={pairIdx}, zone={zoneIdx}, cooldown={zoneDeployCooldown}, " +
                 $"a1={pair.agent1?.name} engine={pair.agent1?._engine != null} RB={pair.agent1?._engine?.RB != null}, " +
                 $"a2={pair.agent2?.name} engine={pair.agent2?._engine != null} RB={pair.agent2?._engine?.RB != null}");
             return true;
@@ -1114,6 +1207,27 @@ namespace BoatAttack
             // 아직 생성되지 않은 쌍도 "사용 가능"에 포함
             int canCreate = Mathf.Max(0, maxPairCount - _pairPool.Count);
             return existingInactive + canCreate;
+        }
+
+        /// <summary>
+        /// 예비 쌍 배치 가능 여부 (총 예산 내에서 비활성 쌍이 있는지)
+        /// totalBudget: 이 에피소드에서 사용 가능한 총 쌍 수 (activePairCount)
+        /// </summary>
+        public bool HasReservePairs()
+        {
+            int active = GetActivePairCount();
+            int budget = Mathf.Min(activePairCount, maxPairCount);
+            return active < budget && GetInactivePairCount() > 0;
+        }
+
+        /// <summary>
+        /// 현재 활성 쌍이 총 예산(activePairCount) 기준으로 몇 개 예비인지
+        /// </summary>
+        public int GetReserveCount()
+        {
+            int active = GetActivePairCount();
+            int budget = Mathf.Min(activePairCount, maxPairCount);
+            return Mathf.Max(0, budget - active);
         }
 
         #region Commander 쿼리 메서드
@@ -1417,7 +1531,30 @@ namespace BoatAttack
                     angleJitter = this.angleJitter,
                 };
             }
+            // 진수구역별 쿨다운 배열 초기화
+            _zoneLastDeployStep = new int[zoneCount];
+            ResetZoneCooldowns();
             // Debug.Log($"[LaunchZoneManager] {zoneCount}개 진수구역 생성 (간격 {angleStep:F1}°)");
+        }
+
+        /// <summary>
+        /// 진수구역 쿨다운 전체 리셋 (에피소드 시작 시 호출)
+        /// </summary>
+        public void ResetZoneCooldowns()
+        {
+            if (_zoneLastDeployStep == null) return;
+            for (int i = 0; i < _zoneLastDeployStep.Length; i++)
+                _zoneLastDeployStep[i] = -9999;
+        }
+
+        /// <summary>
+        /// 해당 진수구역이 쿨다운 중인지 확인
+        /// </summary>
+        public bool IsZoneOnCooldown(int zoneIdx, int currentStep)
+        {
+            if (_zoneLastDeployStep == null || zoneIdx < 0 || zoneIdx >= _zoneLastDeployStep.Length)
+                return false;
+            return (currentStep - _zoneLastDeployStep[zoneIdx]) < zoneDeployCooldown;
         }
 
         /// <summary>

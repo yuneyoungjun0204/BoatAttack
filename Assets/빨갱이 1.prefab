@@ -5129,6 +5129,7 @@ MonoBehaviour:
   waterSound: {fileID: 8494342078711061309}
   steeringTorque: 5
   horsePower: 30
+  maxSpeed: 1000
   stabilizationTorque: 5
   stabilizationDamping: 2
   maxTiltAngle: 100
@@ -34788,8 +34789,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7205157340779662337}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: -0.21297963, z: -0, w: 0.9770566}
-  m_LocalPosition: {x: 379.07202, y: 0, z: -841.99585}
+  m_LocalRotation: {x: 0, y: 0.9958503, z: 0, w: 0.091006465}
+  m_LocalPosition: {x: -263.80878, y: 0, z: 1230.1605}
   m_LocalScale: {x: 2, y: 3, z: 1.4}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -34910,7 +34911,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7205157340779662337}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5151718a2d3be6b4f94d00f05b1efc1d, type: 3}
   m_Name: 

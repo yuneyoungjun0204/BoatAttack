@@ -623,6 +623,18 @@ PrefabInstance:
       insertIndex: -1
       addedObject: {fileID: 7411346295538081491}
   m_SourcePrefab: {fileID: 100100000, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
+--- !u!114 &5019066133126118482 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+    type: 3}
+  m_PrefabInstance: {fileID: 9085269829827428123}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 01c46922a8ed04b0081de10e51b3762f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!4 &9080735299852188497 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 4534809148113994, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
@@ -681,8 +693,8 @@ MonoBehaviour:
   agentParameters:
     maxStep: 0
   hasUpgradedFromAgentParameters: 1
-  MaxStep: 120000
-  _engine: {fileID: 0}
+  MaxStep: 100000
+  _engine: {fileID: 5019066133126118482}
   enemyShips:
   - {fileID: 0}
   - {fileID: 0}
@@ -703,10 +715,10 @@ MonoBehaviour:
   angularVelocityControlGain: 1
   maxLinearAcceleration: 5
   maxAngularAcceleration: 45
-  maxThrottle: 1
+  maxThrottle: 1.061
   minThrottle: 0
   steeringSensitivity: 0.891
-  speedMultiplier: 10
+  speedMultiplier: 2.5
   inputSmoothing: 0.2
   partnerNormK: 50
   enemyNormK: 250

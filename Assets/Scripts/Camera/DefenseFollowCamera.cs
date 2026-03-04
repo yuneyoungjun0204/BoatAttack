@@ -8,6 +8,7 @@ namespace BoatAttack
     /// 방어 훈련용 추적 카메라
     /// - 활성 아군 선박 우선 추적, 아군 전멸 시 적군 선박 추적
     /// - C키로 수동 전환 (아군 선박들 순환)
+    /// - 우클릭으로 전지적 시점(탑다운) 토글, 좌클릭 드래그로 이동
     /// - 선박 무력화 시 자동으로 다음 활성 선박으로 전환
     /// - OnGUI로 아군/적군 생존 수 HUD 표시
     /// </summary>
@@ -52,6 +53,22 @@ namespace BoatAttack
         [Tooltip("회전 추적 속도")]
         public float rotationSpeed = 4f;
 
+        [Header("Top-Down View")]
+        [Tooltip("탑다운 카메라 높이")]
+        public float topDownHeight = 300f;
+
+        [Tooltip("탑다운 드래그 이동 속도")]
+        public float topDownDragSpeed = 1.5f;
+
+        [Tooltip("탑다운 줌 속도 (스크롤)")]
+        public float topDownZoomSpeed = 30f;
+
+        [Tooltip("탑다운 최소 높이")]
+        public float topDownMinHeight = 100f;
+
+        [Tooltip("탑다운 최대 높이")]
+        public float topDownMaxHeight = 800f;
+
         [Header("HUD")]
         [Tooltip("게임 화면에 아군/적군 생존 수 표시")]
         public bool showShipCountHUD = true;
@@ -71,6 +88,12 @@ namespace BoatAttack
 
         // InputAction 기반 C키 (Keyboard.current 폴링보다 안정적)
         private InputAction _switchAction;
+
+        // 탑다운 모드
+        private bool _isTopDown = false;
+        private Vector3 _topDownPosition;
+        private Vector3 _lastMousePos;
+        private bool _isDragging = false;
 
         // OnGUI 스타일 캐시
         private GUIStyle _hudStyle;
@@ -110,6 +133,18 @@ namespace BoatAttack
                 _switchCooldown--;
 
             HandleInput();
+            HandleTopDownInput();
+
+            if (_isTopDown)
+            {
+                UpdateTopDownCamera();
+
+                // Inspector 디버그
+                _debugCurrentTarget = "[Top-Down]";
+                _debugAllyCount = GetAliveAllies().Count;
+                _debugEnemyCount = GetAliveEnemies().Count;
+                return;
+            }
 
             // C키 직후 3프레임은 자동 전환 건너뜀
             if (_switchCooldown <= 0 && !IsTargetAlive())
@@ -125,6 +160,65 @@ namespace BoatAttack
             _debugAllyCount = GetAliveAllies().Count;
             _debugEnemyCount = GetAliveEnemies().Count;
         }
+
+        #region Top-Down View
+
+        private void HandleTopDownInput()
+        {
+            var mouse = Mouse.current;
+            if (mouse == null) return;
+
+            // 우클릭 → Follow ↔ Top-Down 토글
+            if (mouse.rightButton.wasPressedThisFrame)
+            {
+                _isTopDown = !_isTopDown;
+                if (_isTopDown)
+                {
+                    _topDownPosition = transform.position;
+                    _topDownPosition.y = 0f;
+                    _isDragging = false;
+                }
+            }
+
+            if (!_isTopDown) return;
+
+            // 좌클릭 드래그 → 카메라 XZ 이동
+            if (mouse.leftButton.wasPressedThisFrame)
+            {
+                _isDragging = true;
+                _lastMousePos = mouse.position.ReadValue();
+            }
+            if (mouse.leftButton.wasReleasedThisFrame)
+            {
+                _isDragging = false;
+            }
+
+            if (_isDragging)
+            {
+                Vector3 currentMousePos = mouse.position.ReadValue();
+                Vector3 delta = currentMousePos - _lastMousePos;
+                float scale = topDownDragSpeed * (topDownHeight / 300f);
+                _topDownPosition -= new Vector3(delta.x, 0f, delta.y) * scale * Time.unscaledDeltaTime;
+                _lastMousePos = currentMousePos;
+            }
+
+            // 스크롤 → 줌 인/아웃
+            float scroll = mouse.scroll.ReadValue().y;
+            if (Mathf.Abs(scroll) > 0.01f)
+            {
+                topDownHeight -= scroll * topDownZoomSpeed;
+                topDownHeight = Mathf.Clamp(topDownHeight, topDownMinHeight, topDownMaxHeight);
+            }
+        }
+
+        private void UpdateTopDownCamera()
+        {
+            Vector3 desiredPos = _topDownPosition + Vector3.up * topDownHeight;
+            transform.position = Vector3.Lerp(transform.position, desiredPos, 10f * Time.unscaledDeltaTime);
+            transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+        }
+
+        #endregion
 
         private bool IsTargetAlive()
         {
@@ -154,6 +248,9 @@ namespace BoatAttack
 
         private void HandleInput()
         {
+            // 탑다운 모드에서는 C키 무시
+            if (_isTopDown) return;
+
             // InputAction 기반 (가장 안정적)
             bool pressed = _switchAction != null && _switchAction.WasPressedThisFrame();
 
@@ -311,6 +408,7 @@ namespace BoatAttack
             _followingAllies = true;
             _currentTarget = null;
             _switchCooldown = 0;
+            // 탑다운 모드 유지 (에피소드 리셋 시에도)
         }
 
         public DefenseAgent CurrentDefenseAgent
@@ -359,19 +457,26 @@ namespace BoatAttack
             if (launchZoneManager != null)
                 pairCount = launchZoneManager.GetActivePairCount();
 
-            GUILayout.BeginArea(new Rect(Screen.width - 275, 15, 260, 100), _hudStyle);
+            GUILayout.BeginArea(new Rect(Screen.width - 275, 15, 260, 120), _hudStyle);
 
             GUILayout.Label($"ALLY:  {allyCount} ships  ({pairCount} pairs)", _hudStyleAlly);
             GUILayout.Label($"ENEMY: {enemyCount} ships", _hudStyleEnemy);
 
-            if (_currentTarget != null)
+            if (_isTopDown)
+            {
+                GUILayout.Label($"CAM: [Top-Down]  [RClick=follow]", _hudStyleTarget);
+                GUILayout.Label($"  Drag=move  Scroll=zoom", _hudStyleTarget);
+            }
+            else if (_currentTarget != null)
             {
                 string prefix = _followingAllies ? "[Ally]" : "[Enemy]";
                 GUILayout.Label($"CAM: {prefix} {_currentTarget.name}  [C=switch]", _hudStyleTarget);
+                GUILayout.Label($"  [RClick=top-down]", _hudStyleTarget);
             }
             else
             {
                 GUILayout.Label("CAM: No target  [C=switch]", _hudStyleTarget);
+                GUILayout.Label($"  [RClick=top-down]", _hudStyleTarget);
             }
 
             GUILayout.EndArea();
