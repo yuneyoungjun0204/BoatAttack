@@ -1563,6 +1563,13 @@ namespace BoatAttack
         /// a = 전후(fore/aft) 반경, b = 좌우(beam) 반경
         /// θ=0°/180° → a (전후), θ=90°/270° → b (좌우)
         /// </summary>
+        public float GetZoneAngleDeg(int zoneIndex)
+        {
+            if (launchZones == null || zoneIndex < 0 || zoneIndex >= launchZones.Length)
+                return 0f;
+            return launchZones[zoneIndex].angleDeg;
+        }
+
         public float GetEllipseDistance(float angleDeg)
         {
             float angleRad = angleDeg * Mathf.Deg2Rad;

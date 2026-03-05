@@ -33,6 +33,11 @@ namespace BoatAttack
         [Tooltip("아군 쌍 가변 관측용 BufferSensor (Inspector에서 할당, obsSize=3, max=10)")]
         public BufferSensorComponent pairBufferSensor;
 
+        [Header("Deployment Limits")]
+        [Tooltip("한 결정당 최대 배치 쌍 수 (Branch1 마스킹에 사용)")]
+        [Range(1, 10)]
+        public int maxDeployPerDecision = 5;
+
         [Header("Observation NormK")]
         [Tooltip("거리 정규화 감도 (dist/(dist+k))")]
         [Range(50f, 1000f)]
@@ -45,11 +50,17 @@ namespace BoatAttack
         [Tooltip("시간 페널티 (매 스텝)")]
         public float timePenalty = -0.00005f;
 
-        [Tooltip("배치 적정비율 보상 계수 (coeff / (|enemies/3 - deployed| + 1))")]
+        [Tooltip("배치 균형 보상 계수 (coeff / (|활성적군 - 활성아군쌍| + 1))")]
         public float deployEfficiencyCoeff = 0.3f;
 
         [Tooltip("중복 타겟 배정 페널티 계수")]
         public float duplicateTargetPenalty = -0.1f;
+
+        [Tooltip("아군쌍이 배정 적군을 향하는 헤딩 보상 (매 스텝, 쌍당)")]
+        public float headingAlignmentReward = 0.0005f;
+
+        [Tooltip("스폰 위치 정확도 보상 (zone-적 방향 일치도, 배치 시)")]
+        public float spawnAccuracyReward = 0.2f;
 
         [Tooltip("모선 도달 적 페널티 계수 (에피소드 종료 시)")]
         public float breachedPenaltyCoeff = 0.5f;
@@ -62,6 +73,15 @@ namespace BoatAttack
 
         [Tooltip("전승 보너스 (에피소드 종료 시 적 전멸)")]
         public float victoryBonus = 2.0f;
+
+        [Tooltip("빠른 포획 보상 (포획 시 남은 진행도 비례, captureSpeed × (1-progress))")]
+        public float captureSpeedReward = 0.5f;
+
+        [Header("Decision Control (DecisionRequester 대체)")]
+        [Tooltip("몇 FixedUpdate마다 결정할지 (DecisionRequester 제거 후 사용)")]
+        [Range(1, 200)]
+        public int decisionPeriod = 50;
+        private int _stepCount = 0;
 
         [Header("Debug (Read Only)")]
         [SerializeField] private float _cumulativeReward = 0f;
@@ -92,6 +112,24 @@ namespace BoatAttack
                 return;
             }
             base.Awake();
+
+            // DecisionRequester 컴포넌트가 남아있으면 자동 제거
+            var dr = GetComponent<Unity.MLAgents.DecisionRequester>();
+            if (dr != null)
+            {
+                Debug.Log("[CommanderAgent] DecisionRequester 제거 → 코드 제어로 전환");
+                Destroy(dr);
+            }
+        }
+
+        private void FixedUpdate()
+        {
+            if (_episodeEnded || envController == null || !envController.IsCommanderStage())
+                return;
+
+            _stepCount++;
+            if (_stepCount % decisionPeriod == 0)
+                RequestDecision();
         }
 
         public override void OnEpisodeBegin()
@@ -101,6 +139,7 @@ namespace BoatAttack
             _deployCount = 0;
             _totalDeployed = 0;
             _capturedEnemies = 0;
+            _stepCount = 0;
         }
 
         /// <summary>
@@ -126,6 +165,13 @@ namespace BoatAttack
         public void OnEnemyCaptured()
         {
             _capturedEnemies++;
+
+            // 빠른 포획 보상: 에피소드 초반일수록 높은 보상
+            if (captureSpeedReward > 0f && envController != null && envController.maxEnvironmentSteps > 0)
+            {
+                float progress = envController.CurrentStep / (float)envController.maxEnvironmentSteps;
+                AddReward(captureSpeedReward * (1f - progress));
+            }
         }
 
         #endregion
@@ -294,10 +340,34 @@ namespace BoatAttack
                 // 나머지 쌍: 자동 매칭 (가장 가까운 미교전 적)
                 AutoAssignUnmatchedPairs();
 
-                // 배치 결정 보상: coeff / (|totalEnemies/3 - deployedNow| + 1)
+                // 스폰 위치 정확도 보상: zone 방향과 타겟 적 방향의 일치도
+                if (spawnAccuracyReward > 0f && targetAction < 10 && envController.motherShip != null)
+                {
+                    GameObject targetEnemy = envController.GetPooledEnemy(targetAction);
+                    if (targetEnemy != null && targetEnemy.activeSelf)
+                    {
+                        Vector3 motherPos = envController.motherShip.transform.position;
+
+                        // zone 방향 (모선 기준)
+                        float zoneAngle = launchZoneManager.GetZoneAngleDeg(zoneAction) * Mathf.Deg2Rad;
+                        Vector3 zoneDir = new Vector3(Mathf.Sin(zoneAngle), 0f, Mathf.Cos(zoneAngle)).normalized;
+
+                        // 적 방향 (모선 기준)
+                        Vector3 enemyDir = (targetEnemy.transform.position - motherPos);
+                        enemyDir.y = 0f;
+                        enemyDir.Normalize();
+
+                        // dot: 1이면 완벽 일치, -1이면 정반대
+                        float dot = Mathf.Max(0f, Vector3.Dot(zoneDir, enemyDir));
+                        AddReward(spawnAccuracyReward * dot);
+                    }
+                }
+
+                // 배치 균형 보상: coeff / (|활성적군 - 활성아군쌍| + 1)
+                // 적군 수와 아군쌍 수가 동일할수록 높은 보상
                 int activeEnemies = envController.GetActiveEnemyCount();
-                float idealDeploy = activeEnemies / 3f;
-                float deployReward = deployEfficiencyCoeff / (Mathf.Abs(idealDeploy - deployed) + 1f);
+                int activePairs = launchZoneManager.GetActivePairCount();
+                float deployReward = deployEfficiencyCoeff / (Mathf.Abs(activeEnemies - activePairs) + 1f);
                 AddReward(deployReward);
             }
         }
@@ -332,8 +402,8 @@ namespace BoatAttack
             }
 
             // === Branch 1: 배치 수 (0-5) ===
-            // 가용 쌍/빈 zone 수를 초과하는 값 마스킹
-            int maxDeployable = Mathf.Min(availablePairs, availableZones);
+            // 가용 쌍/빈 zone 수/Inspector 상한을 초과하는 값 마스킹
+            int maxDeployable = Mathf.Min(availablePairs, Mathf.Min(availableZones, maxDeployPerDecision));
             for (int c = 1; c <= 5; c++)
             {
                 if (c > maxDeployable)
@@ -431,6 +501,32 @@ namespace BoatAttack
                     float dist = Vector3.Distance(enemy.transform.position, motherPos);
                     float normalizedDist = dist / (dist + distNormK);
                     reward += unengagedApproachPenalty * (1f - normalizedDist);
+                }
+            }
+
+            // 헤딩 정렬 보상: 각 활성 쌍이 배정 적군을 바라보는 정도
+            if (headingAlignmentReward > 0f && launchZoneManager != null)
+            {
+                int poolCount = launchZoneManager.GetCurrentPoolCount();
+                for (int i = 0; i < poolCount; i++)
+                {
+                    DefensePair pair = launchZoneManager.GetPair(i);
+                    if (pair == null || !pair.isActive) continue;
+                    if (pair.agent1 == null || pair.agent2 == null) continue;
+
+                    int targetIdx = pair.agent1.assignedTargetIndex;
+                    if (targetIdx <= 0) continue; // 미배정
+
+                    GameObject enemy = envController.GetPooledEnemy(targetIdx - 1);
+                    if (enemy == null || !enemy.activeSelf) continue;
+
+                    // 쌍 중심 → 적 방향과 쌍 전방 벡터의 dot product
+                    Vector3 pairCenter = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+                    Vector3 pairForward = (pair.agent1.transform.forward + pair.agent2.transform.forward).normalized;
+                    Vector3 toEnemy = (enemy.transform.position - pairCenter).normalized;
+
+                    float dot = Mathf.Max(0f, Vector3.Dot(pairForward, toEnemy));
+                    reward += headingAlignmentReward * dot;
                 }
             }
 
@@ -563,50 +659,57 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 가장 가까운 미교전 적 (zone 기준, 0-indexed 반환, -1=없음)
+        /// zone 정면으로 다가오는 적 우선 매칭 (거리 제한 없음, 0-indexed 반환, -1=없음)
+        /// 스코어 = dot(zone방향, 적방향) * 0.7 + (1 - 정규화거리) * 0.3
+        /// 미교전 적 우선, 없으면 교전 중 적도 매칭
         /// </summary>
         private int FindClosestUnengagedEnemy(int zoneIndex)
         {
             if (envController.motherShip == null) return -1;
 
             Vector3 motherPos = envController.motherShip.transform.position;
-            float zoneAngleRad = 0f;
-            if (launchZoneManager.launchZones != null && zoneIndex < launchZoneManager.launchZones.Length)
-                zoneAngleRad = launchZoneManager.launchZones[zoneIndex].angleDeg * Mathf.Deg2Rad;
+            float zoneAngleRad = launchZoneManager.GetZoneAngleDeg(zoneIndex) * Mathf.Deg2Rad;
+            Vector3 zoneDir = new Vector3(Mathf.Sin(zoneAngleRad), 0f, Mathf.Cos(zoneAngleRad)).normalized;
 
-            Vector3 zoneDir = new Vector3(Mathf.Sin(zoneAngleRad), 0f, Mathf.Cos(zoneAngleRad));
-            float zoneDist = launchZoneManager.GetEllipseDistance(
-                launchZoneManager.launchZones != null && zoneIndex < launchZoneManager.launchZones.Length
-                    ? launchZoneManager.launchZones[zoneIndex].angleDeg : 0f);
-            Vector3 zoneWorldPos = motherPos + zoneDir * zoneDist;
-            float zoneDistToMother = Vector3.Distance(zoneWorldPos, motherPos);
-
-            float minDist = float.MaxValue;
+            float bestScore = -1f;
             int bestIdx = -1;
+            float bestScoreEngaged = -1f;
+            int bestIdxEngaged = -1;
 
             for (int i = 0; i < envController.poolSize; i++)
             {
                 GameObject enemy = envController.GetPooledEnemy(i);
                 if (enemy == null || !enemy.activeSelf || envController.IsEnemyNeutralized(enemy))
                     continue;
-                if (IsEnemyEngaged(i)) continue;
 
-                // 적이 진수구역(아군 배치 위치)보다 모선에서 더 멀면 매칭 불가
-                float enemyDistToMother = Vector3.Distance(enemy.transform.position, motherPos);
-                if (enemyDistToMother > zoneDistToMother) continue;
+                // 적 방향 (모선 기준)
+                Vector3 toEnemy = enemy.transform.position - motherPos;
+                toEnemy.y = 0f;
+                float dist = toEnemy.magnitude;
+                Vector3 enemyDir = dist > 0.01f ? toEnemy / dist : Vector3.forward;
 
-                float dist = Vector3.Distance(enemy.transform.position, zoneWorldPos);
-                if (dist < minDist)
+                // 스코어: 방향 일치 70% + 거리 근접 30%
+                float dot = Mathf.Max(0f, Vector3.Dot(zoneDir, enemyDir));
+                float distScore = 1f - dist / (dist + distNormK);
+                float score = dot * 0.7f + distScore * 0.3f;
+
+                if (IsEnemyEngaged(i))
                 {
-                    minDist = dist;
-                    bestIdx = i;
+                    if (score > bestScoreEngaged) { bestScoreEngaged = score; bestIdxEngaged = i; }
+                }
+                else
+                {
+                    if (score > bestScore) { bestScore = score; bestIdx = i; }
                 }
             }
-            return bestIdx;
+
+            // 미교전 적 우선, 없으면 교전 중 적이라도 반환
+            return bestIdx >= 0 ? bestIdx : bestIdxEngaged;
         }
 
         /// <summary>
-        /// 쌍 위치 기준 가장 가까운 미교전 적 (0-indexed 반환, -1=없음)
+        /// 쌍 정면으로 다가오는 적 우선 매칭 (거리 제한 없음, 0-indexed 반환, -1=없음)
+        /// 미교전 적 우선, 없으면 교전 중 적도 매칭
         /// </summary>
         private int FindClosestUnengagedEnemyForPair(DefensePair pair)
         {
@@ -614,31 +717,42 @@ namespace BoatAttack
             if (envController.motherShip == null) return -1;
 
             Vector3 center = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+            Vector3 pairForward = (pair.agent1.transform.forward + pair.agent2.transform.forward).normalized;
             Vector3 motherPos = envController.motherShip.transform.position;
-            float pairDistToMother = Vector3.Distance(center, motherPos);
 
-            float minDist = float.MaxValue;
+            float bestScore = -1f;
             int bestIdx = -1;
+            float bestScoreEngaged = -1f;
+            int bestIdxEngaged = -1;
 
             for (int i = 0; i < envController.poolSize; i++)
             {
                 GameObject enemy = envController.GetPooledEnemy(i);
                 if (enemy == null || !enemy.activeSelf || envController.IsEnemyNeutralized(enemy))
                     continue;
-                if (IsEnemyEngaged(i)) continue;
 
-                // 적이 아군보다 모선에서 더 멀면 매칭 불가
-                float enemyDistToMother = Vector3.Distance(enemy.transform.position, motherPos);
-                if (enemyDistToMother > pairDistToMother) continue;
+                // 스코어: 정면 방향 일치 70% + 거리 근접 30%
+                Vector3 toEnemy = enemy.transform.position - center;
+                toEnemy.y = 0f;
+                float dist = toEnemy.magnitude;
+                Vector3 enemyDir = dist > 0.01f ? toEnemy / dist : Vector3.forward;
 
-                float dist = Vector3.Distance(enemy.transform.position, center);
-                if (dist < minDist)
+                float dot = Mathf.Max(0f, Vector3.Dot(pairForward, enemyDir));
+                float distScore = 1f - dist / (dist + distNormK);
+                float score = dot * 0.7f + distScore * 0.3f;
+
+                if (IsEnemyEngaged(i))
                 {
-                    minDist = dist;
-                    bestIdx = i;
+                    if (score > bestScoreEngaged) { bestScoreEngaged = score; bestIdxEngaged = i; }
+                }
+                else
+                {
+                    if (score > bestScore) { bestScore = score; bestIdx = i; }
                 }
             }
-            return bestIdx;
+
+            // 미교전 적 우선, 없으면 교전 중 적이라도 반환
+            return bestIdx >= 0 ? bestIdx : bestIdxEngaged;
         }
 
         /// <summary>

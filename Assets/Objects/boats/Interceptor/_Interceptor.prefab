@@ -622,6 +622,10 @@ PrefabInstance:
         type: 3}
       insertIndex: -1
       addedObject: {fileID: 7411346295538081491}
+    - targetCorrespondingSourceObject: {fileID: 1553288845585282, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 4675157200228389168}
   m_SourcePrefab: {fileID: 100100000, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
 --- !u!114 &5019066133126118482 stripped
 MonoBehaviour:
@@ -669,7 +673,7 @@ MonoBehaviour:
     VectorActionDescriptions: []
     VectorActionSpaceType: 1
     hasUpgradedBrainParametersWithActionSpec: 1
-  m_Model: {fileID: 0}
+  m_Model: {fileID: 5022602860645237092, guid: 21265319296f94449acdfe46a07b9fcb, type: 3}
   m_InferenceDevice: 0
   m_BehaviorType: 0
   m_BehaviorName: Defence
@@ -717,8 +721,8 @@ MonoBehaviour:
   maxAngularAcceleration: 45
   maxThrottle: 1.061
   minThrottle: 0
-  steeringSensitivity: 0.891
-  speedMultiplier: 2.5
+  steeringSensitivity: 1.112
+  speedMultiplier: 4.4
   inputSmoothing: 0.2
   partnerNormK: 50
   enemyNormK: 250
@@ -737,6 +741,7 @@ MonoBehaviour:
   allyPairNormK: 100
   phantomSpacing: 80
   phantomSpeed: 8
+  phantomSpeedMult: 1.5
   phantomNoiseStrength: 3
   lastPhantomLeft: {x: 0, y: 0, z: 0}
   lastPhantomRight: {x: 0, y: 0, z: 0}
@@ -762,3 +767,18 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   DecisionPeriod: 5
   TakeActionsBetweenDecisions: 1
+--- !u!114 &4675157200228389168
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9083998436884223129}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dd8012d5925524537b27131fef517017, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_SensorName: BufferSensor
+  m_ObservableSize: 4
+  m_MaxNumObservables: 10

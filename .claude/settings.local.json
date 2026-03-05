@@ -31,7 +31,15 @@
       "Bash(xxd:*)",
       "Bash(\"C:/Users/ANSL/anaconda3/envs/mlagents-gpu/python.exe\" -c \"import sys; print\\(''Default encoding:'', sys.getdefaultencoding\\(\\)\\); import locale; print\\(''Preferred encoding:'', locale.getpreferredencoding\\(\\)\\); print\\(''PYTHONUTF8:'', __import__\\(''os''\\).environ.get\\(''PYTHONUTF8'', ''not set''\\)\\); print\\(''Python UTF8 mode:'', sys.flags.utf8_mode\\)\")",
       "Bash(\"C:/Users/ANSL/anaconda3/envs/mlagents-gpu/python.exe\" -c:*)",
-      "Bash(\"C:/Users/ANSL/anaconda3/envs/mlagents-gpu/python.exe\" -c \":*)"
+      "Bash(\"C:/Users/ANSL/anaconda3/envs/mlagents-gpu/python.exe\" -c \":*)",
+      "WebFetch(domain:www.elsevier.com)",
+      "WebFetch(domain:www.sciencedirect.com)",
+      "WebFetch(domain:www.kimst.or.kr)",
+      "WebFetch(domain:support.stmdocs.in)",
+      "WebFetch(domain:scispace.com)",
+      "WebFetch(domain:www.scribd.com)",
+      "WebFetch(domain:www.jsnak.org)",
+      "WebFetch(domain:snak.jams.or.kr)"
     ]
   }
 }
