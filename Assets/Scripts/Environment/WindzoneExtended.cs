@@ -1,4 +1,6 @@
 using UnityEngine;
+using WaterSystem;
+using WaterSystem.Data;
 
 [ExecuteAlways]
 public class WindzoneExtended : MonoBehaviour
@@ -105,28 +107,49 @@ public class WindzoneExtended : MonoBehaviour
     /// </summary>
     public static void RandomizeWind()
     {
+        // 매 에피소드 방향/속도 랜덤화
+        float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
+        WindDirection = new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle));
+        WindSpeed = Random.Range(5f, 15f);
+
+        // WindZone이 있으면 동기화 (비주얼용)
         var wz = FindObjectOfType<WindZone>();
         if (wz != null)
         {
-            WindSpeed = wz.windMain;
-            var forward = wz.transform.forward;
-            forward.y = 0f;
-            forward.Normalize();
-            if (forward.sqrMagnitude > 0.01f)
-                WindDirection = forward;
+            wz.windMain = WindSpeed;
+            wz.transform.forward = WindDirection;
         }
-        else
-        {
-            float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
-            WindDirection = new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle));
-            WindSpeed = Random.Range(5f, 15f);
-        }
-        Initialized = true; // RandomizeWind 후에도 Initialized 보장
+        Initialized = true;
 
-        if (!_debugLogged)
+        // 파도 랜덤화
+        RandomizeWaves();
+
+        Debug.Log($"[Wind] RandomizeWind: dir={WindDirection}, speed={WindSpeed:F2} m/s, Water={Water.Instance != null}");
+    }
+
+    // 파도 랜덤화 범위
+    [Header("Wave Randomization")]
+    public float waveAmplitudeMin = 0.1f;
+    public float waveAmplitudeMax = 1.5f;
+    public float waveWavelengthMin = 2f;
+    public float waveWavelengthMax = 10f;
+
+    /// <summary>
+    /// 에피소드마다 파도 방향/높이/파장 랜덤화 (Water.cs에서 GPU/CPU 모두 처리)
+    /// </summary>
+    public static void RandomizeWaves()
+    {
+        if (Water.Instance == null) return;
+
+        float ampMin = 0.1f, ampMax = 1.5f, lenMin = 2f, lenMax = 10f;
+        if (_instance != null)
         {
-            Debug.Log($"[Wind] RandomizeWind: dir={WindDirection}, speed={WindSpeed:F2} m/s");
-            _debugLogged = true;
+            ampMin = _instance.waveAmplitudeMin;
+            ampMax = _instance.waveAmplitudeMax;
+            lenMin = _instance.waveWavelengthMin;
+            lenMax = _instance.waveWavelengthMax;
         }
+
+        Water.Instance.RandomizeWaves(ampMin, ampMax, lenMin, lenMax);
     }
 }

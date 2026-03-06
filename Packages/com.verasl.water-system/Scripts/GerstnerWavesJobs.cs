@@ -48,6 +48,18 @@ namespace WaterSystem
             Initialized = true;
         }
 
+        /// <summary>
+        /// 런타임에 wave data 갱신 (에피소드 랜덤화용)
+        /// </summary>
+        public static void UpdateWaveData()
+        {
+            if (!Initialized || !_waveData.IsCreated) return;
+            for (var i = 0; i < _waveData.Length && i < Water.Instance._waves.Length; i++)
+            {
+                _waveData[i] = Water.Instance._waves[i];
+            }
+        }
+
         public static void Cleanup()
         {
             if(Debug.isDebugBuild)

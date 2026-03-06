@@ -549,16 +549,6 @@ namespace BoatAttack
                     float lateralOffset = startOffset + j * lateralSpacing;
                     Vector3 pairCenter = motherPos + zoneDir * zoneDist + lateralDir * lateralOffset;
 
-                    // 2대 좌우 배치 (쌍 내)
-                    float spreadRad = zone.pairSpreadDeg * Mathf.Deg2Rad;
-                    Vector3 dir1 = RotateXZ(zoneDir, -spreadRad);
-                    Vector3 dir2 = RotateXZ(zoneDir, spreadRad);
-
-                    Vector3 pos1 = pairCenter + lateralDir * (-pairWidth * 0.5f);
-                    pos1.y = _templateAgent1Y;
-                    Vector3 pos2 = pairCenter + lateralDir * (pairWidth * 0.5f);
-                    pos2.y = _templateAgent2Y;
-
                     // 적군 배열 전달 (회전 계산 전에 설정)
                     GameObject[] enemies = envController != null ? envController.enemyShips : null;
                     if (enemies != null)
@@ -567,7 +557,7 @@ namespace BoatAttack
                         pair.agent2.enemyShips = enemies;
                     }
 
-                    // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 적 방향 ±45° 클램프
+                    // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 적 방향 ±75° 클램프
                     Quaternion rot;
                     if (envController != null && (envController.currentStage == TrainingStage.Stage3_Tactical || envController.currentStage == TrainingStage.Stage7_FleetManeuver))
                     {
@@ -578,6 +568,15 @@ namespace BoatAttack
                         int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
                         rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
                     }
+
+                    // 2대 좌우 배치: 스폰 방향(rot)에 수직으로 배치 → 그물이 펴짐
+                    Vector3 spawnForward = rot * Vector3.forward;
+                    Vector3 webLateral = new Vector3(-spawnForward.z, 0f, spawnForward.x); // 수직 (XZ 평면)
+
+                    Vector3 pos1 = pairCenter + webLateral * (-pairWidth * 0.5f);
+                    pos1.y = _templateAgent1Y;
+                    Vector3 pos2 = pairCenter + webLateral * (pairWidth * 0.5f);
+                    pos2.y = _templateAgent2Y;
 
                     // 에이전트 위치/회전 설정
                     ResetAgent(pair.agent1, pos1, rot);
@@ -1009,17 +1008,10 @@ namespace BoatAttack
             Vector3 zoneDir = new Vector3(Mathf.Sin(zoneAngleRad), 0f, Mathf.Cos(zoneAngleRad));
             float zoneDist = GetEllipseDistance(zoneAngleDeg);
 
-            Vector3 lateralDir = new Vector3(zoneDir.z, 0f, -zoneDir.x);
             float pairSpacing = 10f; // 쌍 내 2선박 간격 (m)
             Vector3 pairCenter = motherPos + zoneDir * zoneDist;
 
-            Vector3 pos1 = pairCenter + lateralDir * (-pairSpacing * 0.5f);
-            pos1.y = _templateAgent1Y;
-            Vector3 pos2 = pairCenter + lateralDir * (pairSpacing * 0.5f);
-            pos2.y = _templateAgent2Y;
-
             // 2. 기존 비활성 쌍 재사용 또는 프리팹에서 새로 생성
-            // (적군 참조를 먼저 설정한 뒤 회전 계산)
             int pairIdx;
             DefensePair pair;
             GameObject[] enemies = envController != null ? envController.enemyShips : null;
@@ -1027,16 +1019,21 @@ namespace BoatAttack
             // 임시로 zoneDir 기본 회전 사용 (후에 적 방향으로 보정)
             Quaternion rot = Quaternion.LookRotation(zoneDir, Vector3.up);
 
+            // 임시 위치 (회전 계산 후 재설정)
+            Vector3 tempLateral = new Vector3(zoneDir.z, 0f, -zoneDir.x);
+            Vector3 pos1 = pairCenter + tempLateral * (-pairSpacing * 0.5f);
+            pos1.y = _templateAgent1Y;
+            Vector3 pos2 = pairCenter + tempLateral * (pairSpacing * 0.5f);
+            pos2.y = _templateAgent2Y;
+
             int existingInactive = FindInactivePairIndex();
             if (existingInactive >= 0)
             {
-                // 기존 비활성 쌍 재사용
                 pairIdx = existingInactive;
                 pair = _pairPool[pairIdx];
             }
             else
             {
-                // 프리팹에서 직접 올바른 위치에 Instantiate
                 if (defenseBoatPrefab == null)
                 {
                     Debug.LogError("[DeploySingle] defenseBoatPrefab이 null! Inspector에서 할당하세요.");
@@ -1059,7 +1056,7 @@ namespace BoatAttack
                 pair.agent2.enemyShips = enemies;
             }
 
-            // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 적 방향 ±45° 클램프
+            // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 적 방향 ±75° 클램프
             if (envController != null && envController.currentStage == TrainingStage.Stage3_Tactical)
             {
                 rot = Quaternion.LookRotation(zoneDir, Vector3.up);
@@ -1069,6 +1066,15 @@ namespace BoatAttack
                 int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
                 rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
             }
+
+            // 스폰 방향에 수직으로 agent1/2 배치 → 그물이 펴짐
+            Vector3 spawnFwd = rot * Vector3.forward;
+            Vector3 lateralDir = new Vector3(-spawnFwd.z, 0f, spawnFwd.x);
+            pos1 = pairCenter + lateralDir * (-pairSpacing * 0.5f);
+            pos1.y = _templateAgent1Y;
+            pos2 = pairCenter + lateralDir * (pairSpacing * 0.5f);
+            pos2.y = _templateAgent2Y;
+
             ResetAgent(pair.agent1, pos1, rot);
             ResetAgent(pair.agent2, pos2, rot);
 
@@ -1616,11 +1622,11 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// zoneDir(모선→바깥) 기본 방향에서, 배정된 적 방향으로 최대 ±45° 회전하여 스폰 방향 계산.
-        /// 적이 없거나 enemyShips가 null이면 기본 zoneDir 그대로 사용.
+        /// 적군 방향을 직접 바라보는 스폰 회전 계산 (head-on 인터셉트).
+        /// 적이 없으면 기본 zoneDir 사용.
         /// </summary>
         private Quaternion ComputeSpawnRotation(Vector3 zoneDir, Vector3 pairCenter,
-            GameObject[] enemies, int assignedTargetIndex, float maxAngleDeg = 45f)
+            GameObject[] enemies, int assignedTargetIndex)
         {
             Vector3 targetDir = Vector3.zero;
             bool hasTarget = false;
@@ -1659,13 +1665,9 @@ namespace BoatAttack
             if (!hasTarget)
                 return Quaternion.LookRotation(zoneDir, Vector3.up);
 
-            // 3. zoneDir과 targetDir 사이의 각도를 ±maxAngleDeg로 클램프
+            // 적군 방향을 직접 바라봄 (클램프 없음 → head-on 인터셉트)
             targetDir.Normalize();
-            float angleBetween = Vector3.SignedAngle(zoneDir, targetDir, Vector3.up);
-            float clampedAngle = Mathf.Clamp(angleBetween, -maxAngleDeg, maxAngleDeg);
-            Vector3 finalDir = RotateXZ(zoneDir, clampedAngle * Mathf.Deg2Rad);
-
-            return Quaternion.LookRotation(finalDir, Vector3.up);
+            return Quaternion.LookRotation(targetDir, Vector3.up);
         }
 
         #region Zone Cylinder Visuals

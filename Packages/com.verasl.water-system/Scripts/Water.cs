@@ -297,6 +297,51 @@ namespace WaterSystem
             }
         }
 
+        /// <summary>
+        /// 에피소드마다 파도 파라미터 랜덤화 (방향/높이/파장)
+        /// GPU/CPU 양쪽 반영
+        /// </summary>
+        public void RandomizeWaves(float ampMin, float ampMax, float lenMin, float lenMax)
+        {
+            if (_waves == null || _waves.Length == 0) return;
+
+            float baseDir = Random.Range(0f, 360f);
+            var r = 1f / _waves.Length;
+
+            for (int i = 0; i < _waves.Length; i++)
+            {
+                var p = Mathf.Lerp(0.5f, 1.5f, i * r);
+                _waves[i] = new Wave(
+                    p * Random.Range(ampMin, ampMax),
+                    (baseDir + Random.Range(-90f, 90f)) * Mathf.Deg2Rad,
+                    p * Random.Range(lenMin, lenMax),
+                    _waves[i].origin,
+                    _waves[i].onmiDir > 0.5f
+                );
+            }
+
+            // GPU 반영
+            if (_useComputeBuffer && waveBuffer != null)
+            {
+                waveBuffer.SetData(_waves);
+            }
+            else
+            {
+                Shader.SetGlobalVectorArray(WaveData, GetWaveData());
+            }
+
+            // CPU 반영
+            if (GerstnerWavesJobs.Initialized)
+                GerstnerWavesJobs.UpdateWaveData();
+
+            // 인스펙터 실시간 갱신
+#if UNITY_EDITOR
+            UnityEditor.EditorUtility.SetDirty(this);
+#endif
+
+            Debug.Log($"[Water] RandomizeWaves: amp={_waves[0].amplitude:F2}, dir={_waves[0].direction:F2}, len={_waves[0].wavelength:F2}, count={_waves.Length}");
+        }
+
         private void GenerateColorRamp()
         {
             if(_rampTexture == null)
