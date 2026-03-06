@@ -664,7 +664,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 19
+    VectorObservationSize: 11
     NumStackedVectorObservations: 3
     m_ActionSpec:
       m_NumContinuousActions: 2
@@ -673,7 +673,7 @@ MonoBehaviour:
     VectorActionDescriptions: []
     VectorActionSpaceType: 1
     hasUpgradedBrainParametersWithActionSpec: 1
-  m_Model: {fileID: 5022602860645237092, guid: 21265319296f94449acdfe46a07b9fcb, type: 3}
+  m_Model: {fileID: 0}
   m_InferenceDevice: 0
   m_BehaviorType: 0
   m_BehaviorName: Defence
@@ -713,16 +713,17 @@ MonoBehaviour:
   assignedTargetIndex: -1
   envController: {fileID: 0}
   enemyBufferSensor: {fileID: 0}
+  allyBufferSensor: {fileID: 0}
   maxLinearVelocity: 20
   maxAngularVelocity: 90
   velocityControlGain: 1
   angularVelocityControlGain: 1
   maxLinearAcceleration: 5
   maxAngularAcceleration: 45
-  maxThrottle: 1.061
+  maxThrottle: 1
   minThrottle: 0
   steeringSensitivity: 1.112
-  speedMultiplier: 4.4
+  speedMultiplier: 1
   inputSmoothing: 0.2
   partnerNormK: 50
   enemyNormK: 250
@@ -740,13 +741,12 @@ MonoBehaviour:
   motherDistScale: 1
   allyPairNormK: 100
   phantomSpacing: 80
-  phantomSpeed: 8
+  phantomSpeed: 50
   phantomSpeedMult: 1.5
   phantomNoiseStrength: 3
-  lastPhantomLeft: {x: 0, y: 0, z: 0}
-  lastPhantomRight: {x: 0, y: 0, z: 0}
-  lastPhantomHeading: 0
-  lastPhantomValid: 0
+  phantomWebHalfWidth: 25
+  phantomPairs: []
+  phantomsInitialized: 0
   useArrowKeys: 0
   showRaycasts: 1
   enableDebugLog: 0

@@ -24,14 +24,25 @@ namespace BoatAttack
 
         [Header("Stabilization")]
         [Tooltip("자세 안정화 토크 강도 (0이면 비활성)")]
-        public float stabilizationTorque = 5f;
+        public float stabilizationTorque = 2f;
         [Tooltip("안정화 감쇠력 (흔들림 방지)")]
-        public float stabilizationDamping = 2f;
+        public float stabilizationDamping = 0.8f;
+        [Tooltip("안정화 데드존 (도) - 이 각도 미만은 파도 흔들림 허용")]
+        public float stabilizationDeadZone = 10f;
         [Tooltip("최대 허용 기울기 (도) - 이 각도 초과 시 강제 복원")]
         [Range(10f, 80f)]
-        public float maxTiltAngle = 100f;
+        public float maxTiltAngle = 45f;
         [Tooltip("무게중심 오프셋 (로컬 좌표, Y를 낮추면 안정적)")]
         public Vector3 centerOfMassOffset = new Vector3(0f, -1f, 0f);
+
+        [Header("Wind")]
+        [Tooltip("바람이 선박에 미치는 힘 계수")]
+        public float windForceMultiplier = 8000f;
+
+        [Header("Environment Response")]
+        [Tooltip("파도/바람 민감도 (-1=자동감지, 1.0=아군 강한 영향, 0.2=적군 약한 영향)")]
+        public float environmentSensitivity = -1f;
+        private float _envSens = 1f; // 런타임 민감도
         private NativeArray<float3> _point; // engine submerged check
         private float3[] _heights = new float3[1]; // engine submerged check
         private float3[] _normals = new float3[1]; // engine submerged check
@@ -47,7 +58,10 @@ namespace BoatAttack
         #pragma warning disable CS0414
         private int _skipHeightCheckFrames = 0;
         #pragma warning restore CS0414
-        private const int SKIP_FRAMES_ON_RESET = 5;  // 5프레임 동안 조건 무시
+        private const int SKIP_FRAMES_ON_RESET = 50; // 50프레임 동안 waterFactor=1
+        private int _stabilizeFrames = 0;
+        private const int STABILIZE_FRAMES_ON_RESET = 50; // 50프레임 동안 y축 속도 억제
+        private bool _windDebugLogged = false;
 
         private void Awake()
         {
@@ -111,20 +125,41 @@ namespace BoatAttack
                 }
             }
             
-            // 자세 안정화: 뒤집힘 방지 (timeScale에 비례해 강화)
+            // 리셋 직후 안정화: y축 속도 제거 + 회전 제거 + 자세 강제 복원
+            if (_stabilizeFrames > 0)
+            {
+                _stabilizeFrames--;
+                // y축 속도 완전 제거
+                Vector3 v = RB.velocity;
+                v.y = 0f;
+                RB.velocity = v;
+                // 회전 속도 완전 제거
+                RB.angularVelocity = Vector3.zero;
+                // pitch/roll 강제 0으로 (yaw만 유지)
+                Vector3 euler = RB.rotation.eulerAngles;
+                RB.MoveRotation(Quaternion.Euler(0f, euler.y, 0f));
+            }
+
+            // 자세 안정화: 민감도에 따라 강도 조절 (아군=약, 적군=강)
             if (stabilizationTorque > 0f)
             {
-                float timeScaleMul = Mathf.Max(1f, Time.timeScale);
+                float timeScaleMul = Mathf.Max(1f, Mathf.Sqrt(Time.timeScale));
+                float stabScale = 1f / Mathf.Max(0.1f, _envSens); // 아군(1.0)=1x, 적군(0.2)=5x
                 Vector3 correctionAxis = Vector3.Cross(RB.transform.up, Vector3.up);
                 float tiltAngle = Vector3.Angle(RB.transform.up, Vector3.up);
+                float effectiveDeadZone = stabilizationDeadZone * _envSens; // 아군=10°, 적군=2°
 
-                // 기울기가 maxTiltAngle 초과 시 강제 복원 (비례적으로 더 강한 힘)
-                float urgency = (tiltAngle > maxTiltAngle)
-                    ? 1f + (tiltAngle - maxTiltAngle) / 15f
-                    : 1f;
+                // 소프트 데드존: 데드존 내에서도 약간의 안정화
+                float urgency;
+                if (tiltAngle > maxTiltAngle)
+                    urgency = 1f + (tiltAngle - maxTiltAngle) / 15f;
+                else if (tiltAngle > effectiveDeadZone)
+                    urgency = (tiltAngle - effectiveDeadZone) / Mathf.Max(1f, maxTiltAngle - effectiveDeadZone);
+                else
+                    urgency = (tiltAngle / Mathf.Max(1f, effectiveDeadZone)) * 0.15f;
 
-                float torque = stabilizationTorque * urgency * timeScaleMul;
-                float damping = stabilizationDamping * timeScaleMul;
+                float torque = stabilizationTorque * urgency * timeScaleMul * stabScale;
+                float damping = stabilizationDamping * Mathf.Max(urgency, 0.1f) * timeScaleMul * stabScale;
                 RB.AddTorque(correctionAxis * torque - RB.angularVelocity * damping, ForceMode.Acceleration);
 
                 // 극단적 기울기(거의 뒤집힘) 시 회전 직접 보정
@@ -137,6 +172,42 @@ namespace BoatAttack
                     pitch = Mathf.Clamp(pitch, -maxTiltAngle, maxTiltAngle);
                     RB.MoveRotation(Quaternion.Euler(pitch, euler.y, roll));
                     RB.angularVelocity = Vector3.Scale(RB.angularVelocity, new Vector3(0.3f, 1f, 0.3f));
+                }
+            }
+
+            // 파도 저항: 기울기에 비례하여 속도 감쇄 (민감도에 비례)
+            {
+                float tiltAngle = Vector3.Angle(RB.transform.up, Vector3.up);
+                if (tiltAngle > 2f)
+                {
+                    float waveDragFactor = Mathf.Clamp01(tiltAngle / 30f) * 0.02f * _envSens;
+                    RB.velocity *= 1f - waveDragFactor;
+                }
+            }
+
+            // 바람 물리: 민감도에 비례하여 풍력 적용
+            if (windForceMultiplier > 0f)
+            {
+                if (!WindzoneExtended.Initialized)
+                    WindzoneExtended.EnsureInitialized();
+
+                float windSpeed = WindzoneExtended.WindSpeed;
+                if (windSpeed > 0f)
+                {
+                    Vector3 windDir = WindzoneExtended.WindDirection;
+                    Vector3 windForce = windDir * windSpeed * windForceMultiplier * _envSens;
+                    RB.AddForce(windForce, ForceMode.Force);
+
+                    // 디버그: 첫 프레임에만 풍력 정보 출력
+                    if (!_windDebugLogged)
+                    {
+                        _windDebugLogged = true;
+                        float forceMag = windForce.magnitude;
+                        float accel = RB.mass > 0f ? forceMag / RB.mass : 0f;
+                        Debug.Log($"[Wind] {gameObject.name}: force={forceMag:F1}N, accel={accel:F3}m/s², " +
+                            $"multiplier={windForceMultiplier}, windSpeed={windSpeed:F2}, sens={_envSens}, " +
+                            $"mass={RB.mass}, kinematic={RB.isKinematic}");
+                    }
                 }
             }
 
@@ -188,6 +259,34 @@ namespace BoatAttack
             {
                 RB = GetComponentInParent<Rigidbody>();
             }
+            // 직렬화 값 마이그레이션: 이전 기본값이 직렬화된 프리팹/인스턴스 보정
+            if (windForceMultiplier <= 2000f)
+                windForceMultiplier = 3500f;
+            // 환경 민감도 자동 감지
+            InitEnvironmentSensitivity();
+            // WindzoneExtended가 씬에 없어도 바람 데이터 초기화
+            WindzoneExtended.EnsureInitialized();
+            // 디버그 로그 리셋 (에피소드마다 한 번 출력)
+            _windDebugLogged = false;
+        }
+
+        private void InitEnvironmentSensitivity()
+        {
+            if (environmentSensitivity >= 0f)
+            {
+                _envSens = environmentSensitivity;
+                return;
+            }
+            // 자동 감지: DefenseAgent가 있으면 아군(1.0), 없으면 적군(0.2)
+            foreach (var comp in GetComponentsInParent<MonoBehaviour>(true))
+            {
+                if (comp.GetType().Name == "DefenseAgent")
+                {
+                    _envSens = 1.0f;
+                    return;
+                }
+            }
+            _envSens = 0.2f;
         }
 
         private void OnDisable()
@@ -209,11 +308,12 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 에피소드 리셋 시 호출 - 몇 프레임 동안 _yHeight 조건 무시
+        /// 에피소드 리셋 시 호출 - 몇 프레임 동안 waterFactor=1 + y축 속도 억제
         /// </summary>
         public void OnEpisodeReset()
         {
             _skipHeightCheckFrames = SKIP_FRAMES_ON_RESET;
+            _stabilizeFrames = STABILIZE_FRAMES_ON_RESET;
             _yHeight = 0f;  // 수면 위로 가정
         }
 
@@ -231,8 +331,19 @@ namespace BoatAttack
             
             modifier = Mathf.Clamp(modifier, 0f, 1f); // clamp for reasonable values
 
-            // ⚠️ _yHeight 조건 완전 무시 (학습 안정성 테스트)
-            // 원래 조건: if (_yHeight > -0.1f && RB != null)
+            // _yHeight 기반 수면 감쇄: 엔진이 수면 위로 크게 나오면 추진력 감소
+            // _yHeight ≥ -0.5: 100% 추진 (정상 파도 범위), _yHeight ≤ -1.5: 0% 추진 (공중)
+            // 리셋 직후 몇 프레임은 waterFactor=1 (Gerstner 파도 안정화 대기)
+            float waterFactor;
+            if (_skipHeightCheckFrames > 0)
+            {
+                waterFactor = 1f;
+                _skipHeightCheckFrames--;
+            }
+            else
+            {
+                waterFactor = Mathf.Clamp01((_yHeight + 1.5f) / 1.0f);
+            }
             if (RB != null)
             {
                 var forward = RB.transform.forward;
@@ -245,8 +356,8 @@ namespace BoatAttack
                     forward = Vector3.forward;
                 }
 
-                RB.AddForce(horsePower * modifier * forward, ForceMode.Acceleration); // add force forward based on input and horsepower
-                RB.AddRelativeTorque(-Vector3.right * modifier, ForceMode.Acceleration);
+                RB.AddForce(horsePower * modifier * waterFactor * forward, ForceMode.Acceleration);
+                RB.AddRelativeTorque(-Vector3.right * modifier * waterFactor, ForceMode.Acceleration);
             }
         }
 
@@ -264,13 +375,13 @@ namespace BoatAttack
             
             modifier = Mathf.Clamp(modifier, -1f, 1f); // clamp for reasonable values
 
-            // ⚠️ _yHeight 조건 완전 무시 (학습 안정성 테스트)
-            // 원래 조건: if (_yHeight > -0.1f && RB != null)
+            // _yHeight 기반 수면 감쇄 (리셋 직후는 Accelerate에서 카운트다운)
+            float turnWaterFactor = (_skipHeightCheckFrames > 0) ? 1f : Mathf.Clamp01((_yHeight + 1.5f) / 1.0f);
             if (RB != null)
             {
                 // ⚠️ NaN 방지: torque 벡터 검증
                 // Z축 Roll 제거: 선회 시 기울어지지 않아 직진 성능 유지
-                Vector3 torque = new Vector3(0f, steeringTorque, 0f) * modifier;
+                Vector3 torque = new Vector3(0f, steeringTorque, 0f) * modifier * turnWaterFactor;
                 if (float.IsNaN(torque.x) || float.IsNaN(torque.y) || float.IsNaN(torque.z))
                 {
                     torque = Vector3.zero;

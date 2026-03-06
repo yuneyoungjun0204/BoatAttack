@@ -569,7 +569,7 @@ namespace BoatAttack
 
                     // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 적 방향 ±45° 클램프
                     Quaternion rot;
-                    if (envController != null && envController.currentStage == TrainingStage.Stage3_Tactical)
+                    if (envController != null && (envController.currentStage == TrainingStage.Stage3_Tactical || envController.currentStage == TrainingStage.Stage7_FleetManeuver))
                     {
                         rot = Quaternion.LookRotation(zoneDir, Vector3.up);
                     }
@@ -619,9 +619,11 @@ namespace BoatAttack
             var assignments = new Dictionary<int, List<int>>();
             var usedZones = new HashSet<int>();
 
+            bool isFleet = envController != null && envController.currentStage == TrainingStage.Stage7_FleetManeuver;
+
             if (formationType == FormationType.Diversionary && diversionaryAngles != null && diversionaryAngles.Length > 1)
             {
-                // 양동: 각 방향별로 가까운 구역에 분산 배정 (1구역 1쌍)
+                // 양동: 각 방향별로 가까운 구역에 분산 배정
                 int pairsPerDir = pairCount / diversionaryAngles.Length;
                 int pairRemainder = pairCount % diversionaryAngles.Length;
                 int pairIdx = 0;
@@ -634,39 +636,58 @@ namespace BoatAttack
                     // 이 방향 기준 가까운 순 정렬
                     var sorted = GetZonesSortedByAngle(dirAngleDeg);
 
+                    // Stage7: 구역 재사용 허용 (1구역에 여러 쌍)
+                    // 기타: 1구역 1쌍
+                    int zoneSlot = 0;
                     for (int j = 0; j < count && pairIdx < pairCount; j++)
                     {
-                        // 미사용 구역 중 가장 가까운 것 (±90° 이내만)
                         bool found = false;
-                        foreach (int zoneIdx in sorted)
+                        while (zoneSlot < sorted.Count)
                         {
-                            if (usedZones.Contains(zoneIdx)) continue;
+                            int zoneIdx = sorted[zoneSlot];
                             float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAngleDeg, launchZones[zoneIdx].angleDeg));
                             if (angleDiff > 90f) break;
+
+                            if (!isFleet && usedZones.Contains(zoneIdx))
+                            {
+                                zoneSlot++;
+                                continue;
+                            }
                             usedZones.Add(zoneIdx);
-                            assignments[zoneIdx] = new List<int> { pairIdx };
+                            if (!assignments.ContainsKey(zoneIdx))
+                                assignments[zoneIdx] = new List<int>();
+                            assignments[zoneIdx].Add(pairIdx);
                             pairIdx++;
+                            if (!isFleet) zoneSlot++; // 기존: 다음 구역으로
                             found = true;
                             break;
                         }
-                        if (!found) break; // 해당 방향에 사용 가능 구역 없음
+                        if (!found) break;
                     }
                 }
             }
             else
             {
-                // Concentrated / Wave: 적 접근 방향 ±90° 이내 구역만 사용 (1구역 1쌍)
+                // Concentrated / Wave: 적 접근 방향 ±90° 이내 구역 사용
                 var sorted = GetZonesSortedByAngle(approachAngleDeg);
 
                 int pairIdx = 0;
-                foreach (int zoneIdx in sorted)
+                int zoneSlot = 0;
+                while (pairIdx < pairCount && zoneSlot < sorted.Count)
                 {
-                    if (pairIdx >= pairCount) break;
-                    // 반대편 구역 제외 (적 방향과 90° 이상 차이)
+                    int zoneIdx = sorted[zoneSlot];
                     float angleDiff = Mathf.Abs(Mathf.DeltaAngle(approachAngleDeg, launchZones[zoneIdx].angleDeg));
-                    if (angleDiff > 90f) break; // 정렬되어 있으므로 이후도 전부 90° 초과
-                    assignments[zoneIdx] = new List<int> { pairIdx };
+                    if (angleDiff > 90f) break;
+
+                    if (!assignments.ContainsKey(zoneIdx))
+                        assignments[zoneIdx] = new List<int>();
+                    assignments[zoneIdx].Add(pairIdx);
                     pairIdx++;
+
+                    if (!isFleet)
+                        zoneSlot++; // 기존: 1구역 1쌍 → 다음 구역
+                    else if (assignments[zoneIdx].Count >= 3)
+                        zoneSlot++; // Stage7: 1구역 최대 3쌍 → 다음 구역으로 넘어감
                 }
             }
 

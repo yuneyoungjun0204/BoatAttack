@@ -39,7 +39,9 @@
       "WebFetch(domain:scispace.com)",
       "WebFetch(domain:www.scribd.com)",
       "WebFetch(domain:www.jsnak.org)",
-      "WebFetch(domain:snak.jams.or.kr)"
+      "WebFetch(domain:snak.jams.or.kr)",
+      "Bash(start \"\" \"c:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\paper\\\\presentation\\\\index.html\")",
+      "Bash(start \"\" \"C:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\paper\\\\presentation\\\\USV_TRAP_Presentation.pptx\")"
     ]
   }
 }
