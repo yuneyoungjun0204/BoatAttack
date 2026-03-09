@@ -126,9 +126,25 @@ namespace BoatAttack
         [Tooltip("원통 색상")]
         public Color cylinderColor = new Color(0.2f, 0.5f, 1f, 0.25f);
 
+        [Header("Web Settings (DynamicWeb 생성 시 적용)")]
+        [Tooltip("Web 높이")]
+        public float webHeight = 15f;
+
+        [Tooltip("Web 두께")]
+        public float webThickness = 0.5f;
+
+        [Tooltip("Web 색상")]
+        public Color webColor = new Color(1f, 0.2f, 0.6f, 0.7f); // 핑크
+
+        [Tooltip("Web 시각화 활성화")]
+        public bool webShowVisual = true;
+
         [Header("Debug")]
         [SerializeField] private int _deployedPairCount = 0;
         [SerializeField] private string _lastDeploymentInfo = "";
+
+        /// <summary>에피소드 동안 배치된 총 페어 수 (초기 배치 + 추가 배치 누적)</summary>
+        [SerializeField] private int _totalPairsDeployed = 0;
 
         // 풀 리스트 (지연 생성: 필요할 때만 추가)
         private List<DefensePair> _pairPool;
@@ -266,8 +282,8 @@ namespace BoatAttack
             templatePair.agent1 = da1;
             templatePair.agent2 = da2;
             templatePair.webObject = webObj;
-            da1.useArrowKeys = false;
-            da2.useArrowKeys = true;
+            da1.useArrowKeys = true;
+            da2.useArrowKeys = false;
 
             // DefenseEnvController에도 참조 설정
             if (envController != null)
@@ -304,11 +320,11 @@ namespace BoatAttack
             col.isTrigger = true;
 
             var dw = webObj.AddComponent<DynamicWeb>();
-            dw.webHeight = 5f;
-            dw.webThickness = 0.5f;
-            dw.webColor = new Color(0f, 1f, 1f, 0.3f);
+            dw.webHeight = webHeight;
+            dw.webThickness = webThickness;
+            dw.webColor = webColor;
             dw.isTrigger = true;
-            dw.showVisual = true;
+            dw.showVisual = webShowVisual;
 
             webObj.AddComponent<WebCollisionDetector>();
             webObj.SetActive(false);
@@ -361,9 +377,9 @@ namespace BoatAttack
             pair.agent1.webObject = pair.webObject;
             pair.agent2.webObject = pair.webObject;
 
-            // Heuristic 키 분리: agent1=WASD, agent2=화살표
-            pair.agent1.useArrowKeys = false;
-            pair.agent2.useArrowKeys = true;
+            // Heuristic 키 분리: agent1=화살표, agent2=WASD
+            pair.agent1.useArrowKeys = true;
+            pair.agent2.useArrowKeys = false;
 
             // 모선 참조
             if (motherShip != null)
@@ -509,8 +525,11 @@ namespace BoatAttack
             Dictionary<int, List<int>> zoneAssignments = AssignPairsToZones(
                 formationType, approachAngleDeg, diversionaryAngles, pairCount);
 
-            // 3. 각 진수구역에 배정된 쌍 배치
-            int pairIdx = 0;
+            // 3. 각 진수구역에 배정된 쌍 배치 (2단계: 위치 결정 → Voronoi 배정)
+            GameObject[] enemies = envController != null ? envController.enemyShips : null;
+
+            // 3-1. 1단계: 모든 쌍의 pairCenter + zoneDir 먼저 계산
+            var spawnInfos = new List<(int poolIdx, Vector3 pairCenter, Vector3 zoneDir, float pairWidth, int zoneIdx)>();
             foreach (var kvp in zoneAssignments)
             {
                 int zoneIdx = kvp.Key;
@@ -538,69 +557,84 @@ namespace BoatAttack
 
                 for (int j = 0; j < pairIndices.Count; j++)
                 {
-                    // 지연 생성: 비활성 쌍을 찾거나 새로 생성
                     int pi = GetOrCreateInactivePair();
-                    if (pi < 0) break; // maxPairCount 도달
+                    if (pi < 0) break;
 
-                    DefensePair pair = _pairPool[pi];
-                    pair.assignedZoneIndex = zoneIdx;
-
-                    // 모선에서 타원 거리, 횡대열로 나란히 배치
                     float lateralOffset = startOffset + j * lateralSpacing;
                     Vector3 pairCenter = motherPos + zoneDir * zoneDist + lateralDir * lateralOffset;
 
-                    // 적군 배열 전달 (회전 계산 전에 설정)
-                    GameObject[] enemies = envController != null ? envController.enemyShips : null;
-                    if (enemies != null)
-                    {
-                        pair.agent1.enemyShips = enemies;
-                        pair.agent2.enemyShips = enemies;
-                    }
+                    spawnInfos.Add((pi, pairCenter, zoneDir, pairWidth, zoneIdx));
+                }
+            }
 
-                    // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 적 방향 ±75° 클램프
-                    Quaternion rot;
-                    if (envController != null && (envController.currentStage == TrainingStage.Stage3_Tactical || envController.currentStage == TrainingStage.Stage7_FleetManeuver))
-                    {
-                        rot = Quaternion.LookRotation(zoneDir, Vector3.up);
-                    }
-                    else
-                    {
-                        int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
-                        rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
-                    }
+            // 3-2. 2단계: 모든 pairCenter 확정 → Voronoi 배정 + 배치
+            Vector3[] allCenters = new Vector3[spawnInfos.Count];
+            for (int i = 0; i < spawnInfos.Count; i++)
+                allCenters[i] = spawnInfos[i].pairCenter;
 
-                    // 2대 좌우 배치: 스폰 방향(rot)에 수직으로 배치 → 그물이 펴짐
-                    Vector3 spawnForward = rot * Vector3.forward;
-                    Vector3 webLateral = new Vector3(-spawnForward.z, 0f, spawnForward.x); // 수직 (XZ 평면)
+            for (int i = 0; i < spawnInfos.Count; i++)
+            {
+                var (pi, pairCenter, zoneDir, pairWidth, zoneIdx) = spawnInfos[i];
+                DefensePair pair = _pairPool[pi];
+                pair.assignedZoneIndex = zoneIdx;
 
-                    Vector3 pos1 = pairCenter + webLateral * (-pairWidth * 0.5f);
-                    pos1.y = _templateAgent1Y;
-                    Vector3 pos2 = pairCenter + webLateral * (pairWidth * 0.5f);
-                    pos2.y = _templateAgent2Y;
+                // 적군 배열 전달
+                if (enemies != null)
+                {
+                    pair.agent1.enemyShips = enemies;
+                    pair.agent2.enemyShips = enemies;
+                }
 
-                    // 에이전트 위치/회전 설정
-                    ResetAgent(pair.agent1, pos1, rot);
-                    ResetAgent(pair.agent2, pos2, rot);
+                // Voronoi 배정: 이 쌍이 담당하는 적 중 가장 가까운 것
+                int bestEnemyIdx = GetClosestResponsibleEnemyForSpawn(
+                    pairCenter, allCenters, i, enemies);
+                if (bestEnemyIdx >= 0)
+                {
+                    if (pair.agent1 != null) pair.agent1.assignedTargetIndex = bestEnemyIdx + 1;
+                    if (pair.agent2 != null) pair.agent2.assignedTargetIndex = bestEnemyIdx + 1;
+                }
 
-                    // 좌/우 교차 체크용 초기값 기록
-                    pair.deployLateralDir = lateralDir;
-                    float dot1 = Vector3.Dot(pos1 - pairCenter, lateralDir);
-                    pair.agent1StartsOnLeft = dot1 < 0f;
+                // Stage3/7: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
+                Quaternion rot;
+                if (envController != null && (envController.currentStage == TrainingStage.Stage3_Tactical || envController.currentStage == TrainingStage.Stage7_FleetManeuver))
+                {
+                    rot = Quaternion.LookRotation(zoneDir, Vector3.up);
+                }
+                else
+                {
+                    int targetIdx = bestEnemyIdx >= 0 ? bestEnemyIdx + 1 : -1;
+                    rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
+                }
 
-                    // deployStep 리셋 (이전 에피소드 잔여값 → 유예기간 오작동 방지)
-                    pair.deployStep = -1;
+                // 2대 좌우 배치: 스폰 방향(rot)에 수직으로 배치 → 그물이 펴짐
+                Vector3 spawnForward = rot * Vector3.forward;
+                Vector3 webLateral = new Vector3(-spawnForward.z, 0f, spawnForward.x);
 
-                    // 활성화 (에이전트 위치는 위의 ResetAgent에서 이미 설정됨)
-                    SetPairActive(pi, true);
+                Vector3 pos1 = pairCenter + webLateral * (-pairWidth * 0.5f);
+                pos1.y = _templateAgent1Y;
+                Vector3 pos2 = pairCenter + webLateral * (pairWidth * 0.5f);
+                pos2.y = _templateAgent2Y;
 
-                    // MA-POCA 등록
-                    if (agentGroup != null)
-                    {
-                        agentGroup.RegisterAgent(pair.agent1);
-                        agentGroup.RegisterAgent(pair.agent2);
-                    }
+                // 에이전트 위치/회전 설정
+                ResetAgent(pair.agent1, pos1, rot);
+                ResetAgent(pair.agent2, pos2, rot);
 
-                    pairIdx++;
+                // 좌/우 교차 체크용 초기값 기록
+                pair.deployLateralDir = webLateral;
+                float dot1 = Vector3.Dot(pos1 - pairCenter, webLateral);
+                pair.agent1StartsOnLeft = dot1 < 0f;
+
+                pair.deployStep = -1;
+
+                // 활성화
+                SetPairActive(pi, true);
+                _totalPairsDeployed++;
+
+                // MA-POCA 등록
+                if (agentGroup != null)
+                {
+                    agentGroup.RegisterAgent(pair.agent1);
+                    agentGroup.RegisterAgent(pair.agent2);
                 }
             }
 
@@ -932,6 +966,12 @@ namespace BoatAttack
         /// </summary>
         public int GetDeployedPairCount() => _deployedPairCount;
 
+        /// <summary>에피소드 동안 배치된 총 페어 수 반환</summary>
+        public int GetTotalPairsDeployed() => _totalPairsDeployed;
+
+        /// <summary>총 배치 카운터 리셋 (에피소드 시작 시 호출)</summary>
+        public void ResetTotalPairsDeployed() => _totalPairsDeployed = 0;
+
         /// <summary>
         /// 풀 초기화 여부
         /// </summary>
@@ -1056,14 +1096,36 @@ namespace BoatAttack
                 pair.agent2.enemyShips = enemies;
             }
 
-            // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 적 방향 ±75° 클램프
+            // 미배정 적 Greedy 배정: 기존 배정 현황 수집 후 가장 가까운 미배정 적 선택
+            var singleAssigned = new HashSet<int>();
+            if (_pairPool != null)
+            {
+                for (int si = 0; si < _pairPool.Count; si++)
+                {
+                    if (!_pairPool[si].isActive || _pairPool[si].agent1 == null) continue;
+                    int existIdx = _pairPool[si].agent1.assignedTargetIndex;
+                    if (existIdx > 0) singleAssigned.Add(existIdx - 1);
+                }
+            }
+            int bestEnemy = FindClosestUnassignedEnemy(
+                pairCenter, enemies, singleAssigned,
+                zoneDir, motherPos, filterByDirection: true);
+            if (bestEnemy < 0)
+                bestEnemy = FindClosestUnassignedEnemy(pairCenter, enemies, singleAssigned);
+            if (bestEnemy >= 0)
+            {
+                if (pair.agent1 != null) pair.agent1.assignedTargetIndex = bestEnemy + 1;
+                if (pair.agent2 != null) pair.agent2.assignedTargetIndex = bestEnemy + 1;
+            }
+
+            // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
             if (envController != null && envController.currentStage == TrainingStage.Stage3_Tactical)
             {
                 rot = Quaternion.LookRotation(zoneDir, Vector3.up);
             }
             else
             {
-                int targetIdx = pair.agent1 != null ? pair.agent1.assignedTargetIndex : -1;
+                int targetIdx = bestEnemy >= 0 ? bestEnemy + 1 : -1;
                 rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
             }
 
@@ -1078,13 +1140,14 @@ namespace BoatAttack
             ResetAgent(pair.agent1, pos1, rot);
             ResetAgent(pair.agent2, pos2, rot);
 
-            // 좌/우 교차 체크용 초기값 기록
+            // 좌/우 교차 체크용 초기값 기록 (실제 agent1→agent2 방향)
             pair.deployLateralDir = lateralDir;
             float dotSingle = Vector3.Dot(pos1 - pairCenter, lateralDir);
             pair.agent1StartsOnLeft = dotSingle < 0f;
 
             // 4. 활성화
             SetPairActive(pairIdx, true);
+            _totalPairsDeployed++;
 
             // 5. MA-POCA 등록
             if (agentGroup != null)
@@ -1155,8 +1218,8 @@ namespace BoatAttack
             a2.partnerAgent = a1;
             a1.webObject = webObj;
             a2.webObject = webObj;
-            a1.useArrowKeys = false;
-            a2.useArrowKeys = true;
+            a1.useArrowKeys = true;
+            a2.useArrowKeys = false;
 
             if (motherShip != null)
             {
@@ -1622,6 +1685,104 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// Voronoi 배정: 해당 쌍이 담당하는 적 중 가장 가까운 적의 인덱스를 반환.
+        /// "담당" = 이 적에 대해 모든 활성 쌍 중 이 쌍의 Web 중심이 가장 가까운 경우.
+        /// 담당 적이 없으면 -1 반환.
+        /// </summary>
+        /// <param name="pairIdx">쌍 인덱스 (-1이면 webCenter 직접 사용)</param>
+        /// <param name="webCenter">pairIdx=-1일 때 사용할 Web 중심 위치</param>
+        /// <param name="enemies">적군 배열</param>
+        /// <returns>담당 적 중 가장 가까운 적의 인덱스 (0-based), 없으면 -1</returns>
+        public int GetClosestResponsibleEnemy(int pairIdx, Vector3 webCenter, GameObject[] enemies)
+        {
+            if (enemies == null || _pairPool == null) return -1;
+
+            // pairIdx가 유효하면 Web 중심 계산
+            if (pairIdx >= 0 && pairIdx < _pairPool.Count)
+            {
+                var pair = _pairPool[pairIdx];
+                if (pair.agent1 != null && pair.agent2 != null)
+                    webCenter = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+            }
+
+            int bestIdx = -1;
+            float bestDist = float.MaxValue;
+
+            for (int ei = 0; ei < enemies.Length; ei++)
+            {
+                if (enemies[ei] == null || !enemies[ei].activeInHierarchy) continue;
+
+                float myDist = Vector3.Distance(webCenter, enemies[ei].transform.position);
+
+                // 다른 활성 쌍이 더 가까우면 담당 아님
+                bool isResponsible = true;
+                for (int pi = 0; pi < _pairPool.Count; pi++)
+                {
+                    if (pi == pairIdx) continue;
+                    var other = _pairPool[pi];
+                    if (!other.isActive || other.agent1 == null || other.agent2 == null) continue;
+                    Vector3 otherWeb = (other.agent1.transform.position + other.agent2.transform.position) * 0.5f;
+                    if (Vector3.Distance(otherWeb, enemies[ei].transform.position) < myDist)
+                    {
+                        isResponsible = false;
+                        break;
+                    }
+                }
+
+                if (!isResponsible) continue;
+
+                // 담당 적 중 가장 가까운 것
+                if (myDist < bestDist)
+                {
+                    bestDist = myDist;
+                    bestIdx = ei;
+                }
+            }
+
+            return bestIdx;
+        }
+
+        /// <summary>
+        /// 스폰용 Voronoi: pairCenter 기준으로 담당 적 계산 (아직 활성화 전이라 pairCenters 배열 사용)
+        /// </summary>
+        public int GetClosestResponsibleEnemyForSpawn(Vector3 myCenter, Vector3[] allCenters, int myIndex, GameObject[] enemies)
+        {
+            if (enemies == null || allCenters == null) return -1;
+
+            int bestIdx = -1;
+            float bestDist = float.MaxValue;
+
+            for (int ei = 0; ei < enemies.Length; ei++)
+            {
+                if (enemies[ei] == null || !enemies[ei].activeInHierarchy) continue;
+
+                float myDist = Vector3.Distance(myCenter, enemies[ei].transform.position);
+
+                // 다른 쌍 중심이 더 가까우면 담당 아님
+                bool isResponsible = true;
+                for (int pi = 0; pi < allCenters.Length; pi++)
+                {
+                    if (pi == myIndex) continue;
+                    if (Vector3.Distance(allCenters[pi], enemies[ei].transform.position) < myDist)
+                    {
+                        isResponsible = false;
+                        break;
+                    }
+                }
+
+                if (!isResponsible) continue;
+
+                if (myDist < bestDist)
+                {
+                    bestDist = myDist;
+                    bestIdx = ei;
+                }
+            }
+
+            return bestIdx;
+        }
+
+        /// <summary>
         /// 적군 방향을 직접 바라보는 스폰 회전 계산 (head-on 인터셉트).
         /// 적이 없으면 기본 zoneDir 사용.
         /// </summary>
@@ -1668,6 +1829,44 @@ namespace BoatAttack
             // 적군 방향을 직접 바라봄 (클램프 없음 → head-on 인터셉트)
             targetDir.Normalize();
             return Quaternion.LookRotation(targetDir, Vector3.up);
+        }
+
+        /// <summary>
+        /// 미배정 적 중 가장 가까운 적 인덱스 반환 (-1 = 없음)
+        /// zoneDir이 주어지면 해당 방향 ±90° 이내의 적만 후보 (양동 대응)
+        /// </summary>
+        private int FindClosestUnassignedEnemy(Vector3 pairCenter, GameObject[] enemies,
+            HashSet<int> assigned, Vector3 zoneDir = default, Vector3 motherPos = default, bool filterByDirection = false)
+        {
+            if (enemies == null) return -1;
+
+            float closestDist = float.MaxValue;
+            int bestIdx = -1;
+            for (int i = 0; i < enemies.Length; i++)
+            {
+                if (assigned.Contains(i)) continue;
+                if (enemies[i] == null || !enemies[i].activeInHierarchy) continue;
+
+                // 방향 필터: 진수구역 방향과 적의 모선 기준 방향 비교
+                if (filterByDirection)
+                {
+                    Vector3 enemyDir = enemies[i].transform.position - motherPos;
+                    enemyDir.y = 0f;
+                    if (enemyDir.sqrMagnitude > 1f)
+                    {
+                        float angle = Vector3.Angle(zoneDir, enemyDir.normalized);
+                        if (angle > 90f) continue; // 이 진수구역 방향이 아닌 적은 제외
+                    }
+                }
+
+                float dist = Vector3.Distance(pairCenter, enemies[i].transform.position);
+                if (dist < closestDist)
+                {
+                    closestDist = dist;
+                    bestIdx = i;
+                }
+            }
+            return bestIdx;
         }
 
         #region Zone Cylinder Visuals

@@ -110,9 +110,12 @@ namespace BoatAttack
         [Range(0f, 5f)] public float enemyFScale = 1f;
         [Range(0f, 5f)] public float enemyDistScale = 1f;
         [Range(0f, 5f)] public float enemyHdgScale = 1f;
-        [Range(0f, 5f)] public float motherRScale = 1f;
-        [Range(0f, 5f)] public float motherFScale = 1f;
         [Range(0f, 5f)] public float motherDistScale = 1f;
+
+        [Header("Self State (자기 기동 상태)")]
+        [Range(1f, 50f)] public float speedNormK = 10f;
+        [Range(0f, 5f)] public float forwardSpeedScale = 1f;
+        [Range(0f, 5f)] public float driftSpeedScale = 1f;
 
         [Header("Ally Pair Observation (좌/우 가장 가까운 아군 쌍)")]
         [Range(1f, 1000f)] public float allyPairNormK = 100f;
@@ -150,8 +153,12 @@ namespace BoatAttack
         public bool showRaycasts = true;
         public bool enableDebugLog = false;
 
-        /// <summary>모니터링용: 마지막 CollectObservations 결과</summary>
+        /// <summary>모니터링용: 전체 관측값 (VectorSensor + EnemyBuffer + AllyBuffer)</summary>
         [HideInInspector] public float[] lastObservations;
+        /// <summary>모니터링용: 적군 버퍼 관측 임시 저장</summary>
+        [HideInInspector] public List<float> lastEnemyBufferObs = new List<float>();
+        /// <summary>모니터링용: 아군 버퍼 관측 임시 저장</summary>
+        [HideInInspector] public List<float> lastAllyBufferObs = new List<float>();
 
         [Header("Reward Display")]
         #pragma warning disable CS0414
@@ -188,16 +195,18 @@ namespace BoatAttack
                 enemyBufferSensor = GetComponent<BufferSensorComponent>();
             if (enemyBufferSensor == null)
                 enemyBufferSensor = gameObject.AddComponent<BufferSensorComponent>();
-            enemyBufferSensor.ObservableSize = 4;   // r, f, d, h
-            enemyBufferSensor.MaxNumObservables = 10;
+            enemyBufferSensor.SensorName = "EnemyBufferSensor";
+            enemyBufferSensor.ObservableSize = 5;   // r, f, d, h, threat (responsible는 VectorSensor로 이동)
+            enemyBufferSensor.MaxNumObservables = 3; // 가장 가까운 3개만
 
             // 아군 쌍 BufferSensor: 가변 개수 (실제 쌍 + phantom, 최대 PHANTOM_MAX+6)
             var buffers = GetComponents<BufferSensorComponent>();
             allyBufferSensor = buffers.Length > 1 ? buffers[1] : null;
             if (allyBufferSensor == null)
                 allyBufferSensor = gameObject.AddComponent<BufferSensorComponent>();
+            allyBufferSensor.SensorName = "AllyBufferSensor";
             allyBufferSensor.ObservableSize = 5;   // dist, fwd, right, hdg, webLength
-            allyBufferSensor.MaxNumObservables = PHANTOM_MAX + 6; // phantom + 실제 쌍
+            allyBufferSensor.MaxNumObservables = 3; // 가장 가까운 3쌍만
         }
 
         protected override void OnEnable()
@@ -324,15 +333,16 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 관측 수집 (VectorSensor 11개 + AllyBufferSensor 가변 + EnemyBufferSensor 가변)
-        /// VectorSensor: 파트너(4) + 배정타겟(4) + 모선(3) = 11
-        /// AllyBufferSensor: 아군 쌍 각 5개 (dist, fwd, right, hdg, webLength) — 가변 개수
-        /// EnemyBufferSensor: 나머지 적군 각 4개 (R, F, Dist, Hdg)
+        /// 관측 수집 (VectorSensor 13개 + AllyBufferSensor 최대3 + EnemyBufferSensor 최대3)
+        /// VectorSensor: 파트너(4) + 모선거리(1) + 자기상태(4) + 담당적(4) = 13
+        /// AllyBufferSensor: 가까운 아군 쌍 최대 3개, 각 5개 (dist, fwd, right, hdg, webLength)
+        /// EnemyBufferSensor: 가까운 적군 최대 3개, 각 5개 (R, F, Dist, Hdg, Threat)
         /// </summary>
         public override void CollectObservations(VectorSensor sensor)
         {
-            const int VECTOR_OBS_COUNT = 4 + 4 + 3;  // 11
-            if (lastObservations == null || lastObservations.Length != VECTOR_OBS_COUNT)
+            // 13: 파트너(4) + 모선거리(1) + 자기상태(4) + 담당적(4: R,F,Dist,Threat)
+            const int VECTOR_OBS_COUNT = 4 + 1 + 4 + 4;
+            if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
                 lastObservations = new float[VECTOR_OBS_COUNT];
             int oi = 0;
 
@@ -362,60 +372,87 @@ namespace BoatAttack
                 for (int i = 0; i < 4; i++) AddObs(sensor, 0f, ref oi);
             }
 
-            // 2. 배정 타겟 (4: R, F, Dist, Hdg)
-            // Stage7/Stage8: 타겟 배정 없음 → 0으로 채움 (모든 적은 BufferSensor로)
-            bool isFleetStage = envController != null &&
-                (envController.currentStage == TrainingStage.Stage7_FleetManeuver ||
-                 envController.currentStage == TrainingStage.Stage8_TacticalFullObs);
-            GameObject assignedEnemy = isFleetStage ? null : GetAssignedEnemy();
-            if (assignedEnemy != null)
-            {
-                AddDirectionDistanceObs(sensor, assignedEnemy.transform, myPos, myForward, myRight, myAngle,
-                    enemyRScale, enemyFScale, enemyDistScale, enemyHdgScale, enemyNormK, ref oi);
-            }
-            else
-            {
-                for (int i = 0; i < 4; i++) AddObs(sensor, 0f, ref oi);
-            }
-
-            // 3. 모선 (3: R, F, Dist)
+            // 2. 모선 거리 (1: Dist만)
             if (motherShip != null)
             {
-                Vector3 rel = motherShip.transform.position - myPos;
-                float dist = rel.magnitude;
-                float rightDot = Vector3.Dot(rel, myRight);
-                float fwdDot = Vector3.Dot(rel, myForward);
-
-                if (dist > 0.1f)
-                {
-                    AddObs(sensor, (rightDot / dist) * motherRScale, ref oi);
-                    AddObs(sensor, (fwdDot / dist) * motherFScale, ref oi);
-                }
-                else
-                {
-                    AddObs(sensor, 0f, ref oi);
-                    AddObs(sensor, 0f, ref oi);
-                }
+                float dist = Vector3.Distance(motherShip.transform.position, myPos);
                 AddObs(sensor, NormalizePosition(dist, motherNormK) * motherDistScale, ref oi);
             }
             else
             {
-                for (int i = 0; i < 3; i++) AddObs(sensor, 0f, ref oi);
+                AddObs(sensor, 0f, ref oi);
             }
 
-            // 4. AllyBufferSensor: 아군 쌍 가변 관측 (실제 + phantom)
+            // 3. 자기 기동 상태 (4: prevThrottle, prevSteering, driftSpeed, forwardSpeed)
+            AddObs(sensor, _prevThrottle, ref oi);
+            AddObs(sensor, _prevSteering, ref oi);
+            AddObs(sensor, NormalizePosition(_engine.DriftSpeed, speedNormK) * driftSpeedScale, ref oi);
+            float forwardSpeed = Vector3.Dot(_engine.RB.velocity, myForward);
+            AddObs(sensor, NormalizePosition(forwardSpeed, speedNormK) * forwardSpeedScale, ref oi);
+
+            // === 공용 변수 (담당적 + EnemyBuffer 공유) ===
+            Vector3 myWebCenter = (partnerAgent != null)
+                ? (myPos + partnerAgent.transform.position) * 0.5f
+                : myPos;
+            var lzm = envController != null ? envController.launchZoneManager : null;
+            int poolCount = lzm != null ? lzm.GetCurrentPoolCount() : 0;
+            float spawnDist = envController != null ? envController.enemySpawnDistance : 1000f;
+            Vector3 motherPos = motherShip != null ? motherShip.transform.position : Vector3.zero;
+
+            // 4. 담당 적 (Voronoi responsible) → VectorSensor (4: R, F, Dist, Threat)
+            {
+                int respIdx = -1;
+                if (lzm != null && enemyShips != null)
+                {
+                    int myPairIdx = lzm.FindPairIndex(this);
+                    respIdx = lzm.GetClosestResponsibleEnemy(myPairIdx, myWebCenter, enemyShips);
+                }
+
+                if (respIdx >= 0 && enemyShips[respIdx] != null && enemyShips[respIdx].activeInHierarchy)
+                {
+                    var respEnemy = enemyShips[respIdx];
+                    Vector3 rel = respEnemy.transform.position - myPos;
+                    float dist = rel.magnitude;
+                    float rightDot = Vector3.Dot(rel, myRight);
+                    float fwdDot = Vector3.Dot(rel, myForward);
+
+                    AddObs(sensor, (dist > 0.1f) ? (rightDot / dist) * enemyRScale : 0f, ref oi);
+                    AddObs(sensor, (dist > 0.1f) ? (fwdDot / dist) * enemyFScale : 0f, ref oi);
+                    AddObs(sensor, NormalizePosition(dist, enemyNormK) * enemyDistScale, ref oi);
+
+                    float enemyDistToMother = motherShip != null
+                        ? Vector3.Distance(respEnemy.transform.position, motherPos) : spawnDist;
+                    float threat = 1f - Mathf.Clamp01(enemyDistToMother / Mathf.Max(1f, spawnDist));
+                    AddObs(sensor, threat, ref oi);
+                }
+                else
+                {
+                    for (int i = 0; i < 4; i++) AddObs(sensor, 0f, ref oi);
+                }
+            }
+
+            // 5. AllyBufferSensor: 가까운 아군 쌍 최대 3개
             CollectAllyPairBufferObs(myPos, myForward, myRight, myAngle);
 
-            // 5. EnemyBufferSensor: 적군 가변 관측
-            // Stage7: 모든 적군 포함 (타겟 배정 없음)
-            // 기타: 배정 타겟 제외 (VectorSensor에서 이미 관측)
+            // 6. EnemyBufferSensor: 가까운 적군 최대 3개 (5개/적: R, F, Dist, Hdg, Threat)
+            lastEnemyBufferObs.Clear();
             if (enemyBufferSensor != null && enemyShips != null)
             {
-                foreach (var enemy in enemyShips)
+                // 활성 적군을 거리순 정렬
+                var enemyByDist = new List<(int idx, float dist)>();
+                for (int i = 0; i < enemyShips.Length; i++)
                 {
-                    if (enemy == null || !enemy.activeInHierarchy) continue;
-                    if (!isFleetStage && enemy == assignedEnemy) continue;
+                    if (enemyShips[i] == null || !enemyShips[i].activeInHierarchy) continue;
+                    float d = Vector3.Distance(myPos, enemyShips[i].transform.position);
+                    enemyByDist.Add((i, d));
+                }
+                enemyByDist.Sort((a, b) => a.dist.CompareTo(b.dist));
 
+                // 가까운 3개만 Buffer에 추가
+                int count = Mathf.Min(enemyByDist.Count, 3);
+                for (int ei = 0; ei < count; ei++)
+                {
+                    var enemy = enemyShips[enemyByDist[ei].idx];
                     Vector3 rel = enemy.transform.position - myPos;
                     float dist = rel.magnitude;
                     float rightDot = Vector3.Dot(rel, myRight);
@@ -426,9 +463,26 @@ namespace BoatAttack
                     float d = NormalizePosition(dist, enemyNormK) * enemyDistScale;
                     float h = NormalizeAngle(myAngle, enemy.transform.eulerAngles.y) * enemyHdgScale;
 
-                    enemyBufferSensor.AppendObservation(new float[] { r, f, d, h });
+                    float enemyDistToMother = motherShip != null
+                        ? Vector3.Distance(enemy.transform.position, motherPos) : spawnDist;
+                    float threat = 1f - Mathf.Clamp01(enemyDistToMother / Mathf.Max(1f, spawnDist));
+
+                    enemyBufferSensor.AppendObservation(new float[] { r, f, d, h, threat });
+                    lastEnemyBufferObs.Add(r); lastEnemyBufferObs.Add(f);
+                    lastEnemyBufferObs.Add(d); lastEnemyBufferObs.Add(h);
+                    lastEnemyBufferObs.Add(threat);
                 }
             }
+
+            // 전체 관측을 lastObservations에 병합 (VectorSensor + EnemyBuffer + AllyBuffer)
+            int totalObs = oi + lastEnemyBufferObs.Count + lastAllyBufferObs.Count;
+            if (lastObservations == null || lastObservations.Length != totalObs)
+                lastObservations = new float[totalObs];
+            for (int bi = 0; bi < lastEnemyBufferObs.Count; bi++)
+                lastObservations[oi + bi] = lastEnemyBufferObs[bi];
+            int allyStart = oi + lastEnemyBufferObs.Count;
+            for (int bi = 0; bi < lastAllyBufferObs.Count; bi++)
+                lastObservations[allyStart + bi] = lastAllyBufferObs[bi];
         }
 
         /// <summary>대상의 방향(R,F) + 거리 + 헤딩차이를 VectorSensor에 추가 (4개)</summary>
@@ -456,14 +510,18 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 아군 쌍 BufferSensor 관측 (가변 개수: 실제 쌍 + phantom)
+        /// 아군 쌍 BufferSensor 관측 (거리순 정렬, 가까운 3쌍만)
         /// 각 쌍: dist, fwd, right, hdg, webLength = 5개
         /// </summary>
         private void CollectAllyPairBufferObs(Vector3 myPos, Vector3 myForward, Vector3 myRight, float myAngle)
         {
             if (allyBufferSensor == null) return;
+            lastAllyBufferObs.Clear();
 
-            // 1. 실제 아군 쌍 수집
+            // 후보 수집 (실제 쌍 + phantom) → 거리순 정렬 → 상위 3개만
+            var candidates = new List<(Vector3 center, float heading, float webLen, float dist)>();
+
+            // 1. 실제 아군 쌍
             var lzm = envController != null ? envController.launchZoneManager : null;
             if (lzm != null && lzm.IsInitialized)
             {
@@ -474,14 +532,19 @@ namespace BoatAttack
                 {
                     if (i == myPairIdx) continue;
                     DefensePair pair = lzm.GetPair(i);
-                    if (pair == null || !pair.isActive) continue;
+                    if (pair == null) continue;
                     if (pair.agent1 == null || pair.agent2 == null) continue;
 
-                    Vector3 otherCenter = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
-                    float wLen = Vector3.Distance(pair.agent1.transform.position, pair.agent2.transform.position);
-                    float otherHeading = (pair.agent1.transform.eulerAngles.y + pair.agent2.transform.eulerAngles.y) * 0.5f;
+                    Vector3 a1Pos = pair.agent1.transform.position;
+                    Vector3 a2Pos = pair.agent2.transform.position;
+                    if (a1Pos.y < -100f || a2Pos.y < -100f) continue;
 
-                    AppendAllyPairObs(myPos, myForward, myRight, myAngle, otherCenter, otherHeading, wLen);
+                    Vector3 otherCenter = (a1Pos + a2Pos) * 0.5f;
+                    float wLen = Vector3.Distance(a1Pos, a2Pos);
+                    float otherHeading = (pair.agent1.transform.eulerAngles.y + pair.agent2.transform.eulerAngles.y) * 0.5f;
+                    float d = Vector3.Distance(myPos, otherCenter);
+
+                    candidates.Add((otherCenter, otherHeading, wLen, d));
                 }
             }
 
@@ -491,9 +554,19 @@ namespace BoatAttack
                 for (int i = 0; i < phantomCount; i++)
                 {
                     if (!phantomPairs[i].isValid) continue;
-                    AppendAllyPairObs(myPos, myForward, myRight, myAngle,
-                        phantomPairs[i].WebCenter, phantomPairs[i].heading, phantomPairs[i].WebLength);
+                    Vector3 pc = phantomPairs[i].WebCenter;
+                    float d = Vector3.Distance(myPos, pc);
+                    candidates.Add((pc, phantomPairs[i].heading, phantomPairs[i].WebLength, d));
                 }
+            }
+
+            // 거리순 정렬 → 가까운 3쌍만
+            candidates.Sort((a, b) => a.dist.CompareTo(b.dist));
+            int count = Mathf.Min(candidates.Count, 3);
+            for (int i = 0; i < count; i++)
+            {
+                var c = candidates[i];
+                AppendAllyPairObs(myPos, myForward, myRight, myAngle, c.center, c.heading, c.webLen);
             }
         }
 
@@ -510,6 +583,9 @@ namespace BoatAttack
             float wLen = webLength / (webLength + allyPairNormK);
 
             allyBufferSensor.AppendObservation(new float[] { normDist, fwd, right, hdg, wLen });
+            lastAllyBufferObs.Add(normDist); lastAllyBufferObs.Add(fwd);
+            lastAllyBufferObs.Add(right); lastAllyBufferObs.Add(hdg);
+            lastAllyBufferObs.Add(wLen);
         }
 
         /// <summary>

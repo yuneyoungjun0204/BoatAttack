@@ -22,8 +22,8 @@ namespace BoatAttack
         [Tooltip("적 접근 보상 (Web-적 거리 1m 감소당)")]
         public float approachRewardPerMeter = 0.001f;
 
-        [Tooltip("헤딩 정렬 보상 (에이전트가 적을 향할수록)")]
-        public float headingAlignmentReward = 0.0005f;
+        [Tooltip("헤딩 정렬 보상 (0=비활성화, 적 돌진 유발 방지)")]
+        public float headingAlignmentReward = 0f;
 
         [Tooltip("시간 페널티 (매 스텝)")]
         public float timePenalty = -0.0001f;
@@ -31,6 +31,12 @@ namespace BoatAttack
         [Header("=== 이벤트 보상 ===")]
         [Tooltip("포획 성공 (적이 Web에 충돌)")]
         public float captureReward = 1.0f;
+
+        [Tooltip("포획 거리 보너스 최대값 (모선에서 멀리 잡을수록)")]
+        public float captureDistanceBonus = 0.5f;
+
+        [Tooltip("연속 포획 보너스 계수 (n번째 포획: 기본보상 × (1 + (n-1) × 계수))")]
+        public float sequentialCaptureBonus = 0.1f;
 
         [Tooltip("모선 충돌 페널티 (적이 모선에 충돌)")]
         public float motherShipHitPenalty = -1.0f;
@@ -43,6 +49,16 @@ namespace BoatAttack
 
         [Tooltip("적군 방어선 돌파 페널티")]
         public float enemyBreachPenalty = -1.0f;
+
+        [Tooltip("에피소드 종료 시 사용된 페어 수 × 이 계수 = 페널티 (음수)")]
+        public float pairUsagePenaltyCoeff = -0.05f;
+
+        [Tooltip("NoPairsLeft 종료 시 남은 적군 1대당 페널티 (음수)")]
+        public float remainingEnemyPenalty = -0.5f;
+
+        [Header("=== 커버리지 보상 ===")]
+        [Tooltip("적군 커버리지 거리 감소 1m당 그룹 보상")]
+        public float coverageRewardPerMeter = 0.001f;
 
         [Header("=== 거리 제한 ===")]
         [Tooltip("아군 간 최대 허용 거리 (초과 시 쌍 무력화)")]
@@ -78,8 +94,9 @@ namespace BoatAttack
         /// <summary>
         /// 매 스텝 보상 계산: 대형 유지 + 적 접근 + 시간 페널티
         /// </summary>
+        /// <param name="responsibleEnemyDist">담당 적까지 거리 (Voronoi 배정, 없으면 float.MaxValue)</param>
         public float CalculateStepReward(AgentState agent1, AgentState agent2,
-            GameObject[] enemyShips, GameObject webObject)
+            GameObject[] enemyShips, GameObject webObject, float responsibleEnemyDist = float.MaxValue)
         {
             float reward = 0f;
 
@@ -91,20 +108,23 @@ namespace BoatAttack
                 reward += formationReward * (1f - error / distanceTolerance);
             }
 
-            // 2. 적 접근: Web과 가장 가까운 적 사이 거리가 줄었으면 보상
-            if (webObject != null && enemyShips != null)
+            // 2. 적 접근: Web↔담당 적 거리가 줄었으면 보상 (Voronoi 기준)
+            float currentDist = responsibleEnemyDist;
+            // fallback: 담당 적 정보가 없으면 기존 방식 (가장 가까운 적)
+            if (currentDist >= float.MaxValue && webObject != null && enemyShips != null)
             {
-                float closestDist = GetClosestEnemyDistance(webObject.transform.position, enemyShips);
-                if (closestDist < float.MaxValue && _prevWebToEnemyDist < float.MaxValue)
-                {
-                    float delta = _prevWebToEnemyDist - closestDist;
-                    if (delta > 0f)
-                    {
-                        reward += approachRewardPerMeter * delta;
-                    }
-                }
-                _prevWebToEnemyDist = closestDist;
+                currentDist = GetClosestEnemyDistance(webObject.transform.position, enemyShips);
             }
+
+            if (currentDist < float.MaxValue && _prevWebToEnemyDist < float.MaxValue)
+            {
+                float delta = _prevWebToEnemyDist - currentDist;
+                if (delta > 0f)
+                {
+                    reward += approachRewardPerMeter * delta;
+                }
+            }
+            _prevWebToEnemyDist = currentDist;
 
             // 3. 시간 페널티
             reward += timePenalty;

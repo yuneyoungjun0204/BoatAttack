@@ -27,13 +27,17 @@ namespace BoatAttack
 
         [Header("Web Settings")]
         [Tooltip("Web 높이")]
-        public float webHeight = 5f;
+        public float webHeight = 40f;
 
         [Tooltip("Web 두께")]
         public float webThickness = 0.5f;
 
         [Tooltip("Web 색상")]
         public Color webColor = new Color(0f, 1f, 1f, 0.3f); // 반투명 청록색
+
+        [Tooltip("충돌 판정용 두께 배율 (비주얼보다 두껍게)")]
+        [Range(1f, 20f)]
+        public float colliderThicknessMultiplier = 10f;
 
         [Header("Collision")]
         [Tooltip("Trigger 충돌 사용")]
@@ -72,6 +76,24 @@ namespace BoatAttack
 
         private void Start()
         {
+            Initialize();
+        }
+
+        private void OnEnable()
+        {
+            // SetActive(true) 시 WebVisual이 없으면 재생성 (풀 재활성화 대응)
+            if (_initialized && showVisual && _visualObject == null)
+            {
+                CreateVisual();
+            }
+        }
+
+        private bool _initialized = false;
+
+        private void Initialize()
+        {
+            if (_initialized) return;
+
             // BoxCollider 설정
             _collider = gameObject.GetComponent<BoxCollider>();
             if (_collider == null)
@@ -95,6 +117,8 @@ namespace BoatAttack
                 Transform envRoot = transform.parent != null ? transform.parent : transform;
                 envController = envRoot.GetComponentInChildren<DefenseEnvController>();
             }
+
+            _initialized = true;
         }
 
         private void Update()
@@ -138,11 +162,13 @@ namespace BoatAttack
 
             if (_collider != null)
             {
-                _collider.size = new Vector3(webThickness, webHeight, distance);
+                // 충돌 판정용: 두께를 넓혀 고속 적군 tunneling 방지
+                _collider.size = new Vector3(webThickness * colliderThicknessMultiplier, webHeight, distance);
             }
 
             if (_visualObject != null)
             {
+                // 비주얼은 원래 두께 유지
                 _visualObject.transform.localScale = new Vector3(webThickness, webHeight, distance);
             }
         }
@@ -172,18 +198,26 @@ namespace BoatAttack
                 }
                 else
                 {
-                    Shader standardShader = Shader.Find("Standard");
-                    if (standardShader != null)
+                    // URP 호환: Standard 셰이더는 URP에서 null → 핑크 머티리얼 발생
+                    Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+                    if (shader == null)
+                        shader = Shader.Find("Universal Render Pipeline/Unlit");
+                    if (shader == null)
+                        shader = Shader.Find("Standard");
+
+                    if (shader != null)
                     {
-                        mat = new Material(standardShader);
+                        mat = new Material(shader);
                         mat.color = webColor;
-                        mat.SetFloat("_Mode", 3);
+
+                        // URP 반투명 설정
+                        mat.SetFloat("_Surface", 1); // 0=Opaque, 1=Transparent
+                        mat.SetFloat("_Blend", 0);   // 0=Alpha
                         mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
                         mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
                         mat.SetInt("_ZWrite", 0);
-                        mat.DisableKeyword("_ALPHATEST_ON");
-                        mat.EnableKeyword("_ALPHABLEND_ON");
-                        mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                        mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                        mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
                         mat.renderQueue = 3000;
                     }
                     else if (_renderer.sharedMaterial != null)
@@ -236,6 +270,17 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// Trigger 내부 머무름 (매 프레임 체크 — tunneling 보완)
+        /// </summary>
+        private void OnTriggerStay(Collider other)
+        {
+            if (other.CompareTag("attack_boat"))
+            {
+                HandleAttackBoatCollision(other.gameObject);
+            }
+        }
+
+        /// <summary>
         /// 다른 페어의 아군 선박인지 확인 (자기 페어는 제외)
         /// </summary>
         private bool IsOtherPairDefenseShip(GameObject obj)
@@ -243,7 +288,7 @@ namespace BoatAttack
             if (obj == null)
                 return false;
 
-            // 자기 페어의 에이전트는 무시 (웹을 잡고 있는 본인들)
+            // 자기 페어의 에이전트는 무시
             if (defenseShip1 != null && obj.transform == defenseShip1)
                 return false;
             if (defenseShip2 != null && obj.transform == defenseShip2)

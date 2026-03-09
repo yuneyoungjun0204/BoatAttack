@@ -11,6 +11,11 @@ namespace BoatAttack
         [NonSerialized] public Rigidbody RB; // The rigid body attatched to the boat
         [NonSerialized] public float VelocityMag; // Boats velocity
 
+        /// <summary>횡류(drift): 선박 우측 방향 속도 성분 (양수=우측, 음수=좌측)</summary>
+        [NonSerialized] public float DriftSpeed;
+        /// <summary>추진효율: 수면 감쇄 계수 0~1</summary>
+        [NonSerialized] public float WaterFactor = 1f;
+
         public AudioSource engineSound; // Engine sound clip
         public AudioSource waterSound; // Water sound clip
 
@@ -223,6 +228,8 @@ namespace BoatAttack
             }
 
             VelocityMag = RB != null ? RB.velocity.sqrMagnitude : 0f; // get the sqr mag
+            if (RB != null)
+                DriftSpeed = Vector3.Dot(RB.velocity, transform.right);
             if (engineSound != null)
             {
                 engineSound.pitch = Mathf.Max(VelocityMag * 0.01f, 0.3f); // use some magice numbers to control the pitch of the engine sound
@@ -282,7 +289,7 @@ namespace BoatAttack
             {
                 if (comp.GetType().Name == "DefenseAgent")
                 {
-                    _envSens = 1.0f;
+                    _envSens = 0.4f;
                     return;
                 }
             }
@@ -344,6 +351,7 @@ namespace BoatAttack
             {
                 waterFactor = Mathf.Clamp01((_yHeight + 1.5f) / 1.0f);
             }
+            WaterFactor = waterFactor;
             if (RB != null)
             {
                 var forward = RB.transform.forward;

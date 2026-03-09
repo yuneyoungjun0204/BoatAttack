@@ -110,7 +110,14 @@ public class WindzoneExtended : MonoBehaviour
         // 매 에피소드 방향/속도 랜덤화
         float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
         WindDirection = new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle));
-        WindSpeed = Random.Range(5f, 15f);
+
+        float spdMin = 3f, spdMax = 10f;
+        if (_instance != null)
+        {
+            spdMin = _instance.windSpeedMin;
+            spdMax = _instance.windSpeedMax;
+        }
+        WindSpeed = Random.Range(spdMin, spdMax);
 
         // WindZone이 있으면 동기화 (비주얼용)
         var wz = FindObjectOfType<WindZone>();
@@ -127,7 +134,10 @@ public class WindzoneExtended : MonoBehaviour
         Debug.Log($"[Wind] RandomizeWind: dir={WindDirection}, speed={WindSpeed:F2} m/s, Water={Water.Instance != null}");
     }
 
-    // 파도 랜덤화 범위
+    [Header("Wind Randomization")]
+    public float windSpeedMin = 5f;
+    public float windSpeedMax = 15f;
+
     [Header("Wave Randomization")]
     public float waveAmplitudeMin = 0.1f;
     public float waveAmplitudeMax = 1.5f;

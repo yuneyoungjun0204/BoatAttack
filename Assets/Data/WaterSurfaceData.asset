@@ -117,12 +117,12 @@ MonoBehaviour:
       y: 0
     onmiDir: 1
   _customWaves: 0
-  randomSeed: 41580
+  randomSeed: 90090
   _basicWaveSettings:
-    numWaves: 8
-    amplitude: 0.45
-    direction: -177
-    wavelength: 5
+    numWaves: 10
+    amplitude: 18.35
+    direction: -143
+    wavelength: 108.1
   _foamSettings:
     foamType: 0
     basicFoam:

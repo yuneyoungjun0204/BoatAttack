@@ -669,7 +669,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 11
+    VectorObservationSize: 13
     NumStackedVectorObservations: 3
     m_ActionSpec:
       m_NumContinuousActions: 2
@@ -731,7 +731,7 @@ MonoBehaviour:
   speedMultiplier: 1
   inputSmoothing: 0.2
   partnerNormK: 50
-  enemyNormK: 250
+  enemyNormK: 300
   motherNormK: 500
   partnerRScale: 1
   partnerFScale: 1
@@ -741,9 +741,10 @@ MonoBehaviour:
   enemyFScale: 1
   enemyDistScale: 1
   enemyHdgScale: 1
-  motherRScale: 1
-  motherFScale: 1
   motherDistScale: 1
+  speedNormK: 10
+  forwardSpeedScale: 1
+  driftSpeedScale: 1
   allyPairNormK: 100
   phantomSpacing: 80
   phantomSpeed: 50
@@ -757,6 +758,8 @@ MonoBehaviour:
   showRaycasts: 1
   enableDebugLog: 0
   lastObservations: []
+  lastEnemyBufferObs: []
+  lastAllyBufferObs: []
   _totalReward: 0
   _lastStepReward: 0
 --- !u!114 &7411346295538081491

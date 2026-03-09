@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using System.Collections.Generic;
 
@@ -51,14 +52,19 @@ namespace BoatAttack
         private int _cachedColumns = -1;
         private DefenseAgent _prevAgent; // 타겟 변경 감지용
 
+        // VectorSensor 13개: Partner(4) + MotherDist(1) + Self(4) + Responsible(4)
         private static readonly string[] Labels =
         {
             "Partner R", "Partner F", "Partner Dist", "Partner Hdg",
-            "Target R", "Target F", "Target Dist", "Target Hdg",
-            "Mother R", "Mother F", "Mother Dist",
-            "L-Pair Dist", "L-Pair Fwd", "L-Pair Side", "L-Pair Hdg",
-            "R-Pair Dist", "R-Pair Fwd", "R-Pair Side", "R-Pair Hdg"
+            "Mother Dist",
+            "Throttle", "Steering", "Drift Spd", "Fwd Spd",
+            "Resp R", "Resp F", "Resp Dist", "Resp Threat"
         };
+
+        // EnemyBuffer: 5개씩 (R, F, Dist, Hdg, Threat)
+        private static readonly string[] EnemyObsSuffix = { "R", "F", "Dist", "Hdg", "Threat" };
+        // AllyBuffer: 5개씩 (Dist, Fwd, Side, Hdg, Web)
+        private static readonly string[] AllyObsSuffix = { "Dist", "Fwd", "Side", "Hdg", "Web" };
 
         private static readonly Color[] GraphColors =
         {
@@ -66,22 +72,19 @@ namespace BoatAttack
             new Color(1f, 0.6f, 0.1f),      // Partner F
             new Color(0.85f, 0.5f, 0.1f),   // Partner Dist
             new Color(0.9f, 0.4f, 0.1f),    // Partner Hdg
-            new Color(1f, 0.3f, 0.3f),      // Target R
-            new Color(0.9f, 0.2f, 0.5f),    // Target F
-            new Color(0.8f, 0.2f, 0.6f),    // Target Dist
-            new Color(0.7f, 0.2f, 0.7f),    // Target Hdg
-            new Color(0.5f, 0.5f, 1f),      // Mother R
-            new Color(0.4f, 0.8f, 1f),      // Mother F
             new Color(0.3f, 0.7f, 0.9f),    // Mother Dist
-            new Color(0.2f, 0.9f, 0.4f),    // L-Pair Dist
-            new Color(0.3f, 0.8f, 0.3f),    // L-Pair Fwd
-            new Color(0.4f, 0.7f, 0.2f),    // L-Pair Side
-            new Color(0.5f, 0.6f, 0.2f),    // L-Pair Hdg
-            new Color(0.2f, 0.6f, 0.9f),    // R-Pair Dist
-            new Color(0.3f, 0.5f, 0.8f),    // R-Pair Fwd
-            new Color(0.4f, 0.4f, 0.7f),    // R-Pair Side
-            new Color(0.5f, 0.3f, 0.6f),    // R-Pair Hdg
+            new Color(0.6f, 0.8f, 0.3f),    // Throttle
+            new Color(0.5f, 0.7f, 0.4f),    // Steering
+            new Color(0.4f, 0.9f, 0.5f),    // Drift Spd
+            new Color(0.3f, 0.85f, 0.6f),   // Fwd Spd
+            new Color(1f, 0.3f, 0.3f),      // Resp R
+            new Color(0.9f, 0.2f, 0.5f),    // Resp F
+            new Color(0.8f, 0.2f, 0.6f),    // Resp Dist
+            new Color(0.7f, 0.2f, 0.7f),    // Resp Threat
         };
+
+        // P키 포커스 모드: -1=전체, 0~N=해당 인덱스만 확대
+        private int _focusIndex = -1;
 
         /// <summary>현재 표시 중인 관측 수 (targetAgent에서 동적 결정)</summary>
         private int _obsCount = Labels.Length;
@@ -167,6 +170,20 @@ namespace BoatAttack
         {
             if (!_initialized) InitHistory();
 
+            // P키: 포커스 모드 토글 (한 관측값만 확대)
+            if (Keyboard.current != null && Keyboard.current.pKey.wasPressedThisFrame)
+            {
+                _focusIndex++;
+                if (_focusIndex >= _obsCount) _focusIndex = -1; // 전체로 복귀
+                RepositionLabels();
+            }
+            // ESC키: 포커스 해제
+            if (_focusIndex >= 0 && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+            {
+                _focusIndex = -1;
+                RepositionLabels();
+            }
+
             // 카메라 시점 대상과 자동 연동
             if (followCamera != null)
             {
@@ -210,7 +227,50 @@ namespace BoatAttack
                 for (int i = 0; i < Mathf.Min(valueTexts.Length, count); i++)
                 {
                     if (valueTexts[i] != null)
-                        valueTexts[i].text = _history[i][prevIdx].ToString("F3");
+                    {
+                        // 포커스 모드: 포커스 대상만 표시, 나머지 숨김
+                        if (_focusIndex >= 0)
+                        {
+                            valueTexts[i].gameObject.SetActive(i == _focusIndex);
+                            if (i == _focusIndex)
+                                valueTexts[i].text = _history[i][prevIdx].ToString("F4");
+                        }
+                        else
+                        {
+                            valueTexts[i].gameObject.SetActive(true);
+                            valueTexts[i].text = _history[i][prevIdx].ToString("F3");
+                        }
+                    }
+                }
+            }
+
+            // 라벨 텍스트 포커스 모드 처리
+            if (labelTexts != null)
+            {
+                for (int i = 0; i < Mathf.Min(labelTexts.Length, _obsCount); i++)
+                {
+                    if (labelTexts[i] == null) continue;
+                    if (_focusIndex >= 0)
+                    {
+                        labelTexts[i].gameObject.SetActive(i == _focusIndex);
+                        if (i == _focusIndex)
+                            labelTexts[i].text = $"[{_focusIndex + 1}/{_obsCount}] {GetDynamicLabel(i)}  (P:next / ESC:back)";
+                    }
+                    else
+                    {
+                        labelTexts[i].gameObject.SetActive(true);
+                        labelTexts[i].text = GetDynamicLabel(i);
+                    }
+                }
+            }
+
+            // 범위 텍스트 포커스 모드 처리
+            if (rangeTexts != null)
+            {
+                for (int i = 0; i < Mathf.Min(rangeTexts.Length, _obsCount); i++)
+                {
+                    if (rangeTexts[i] != null)
+                        rangeTexts[i].gameObject.SetActive(_focusIndex < 0 || i == _focusIndex);
                 }
             }
 
@@ -260,16 +320,24 @@ namespace BoatAttack
                 float padX = cellPadding / Mathf.Max(1f, rect.width);
                 float padY = cellPadding / Mathf.Max(1f, rect.height);
 
+                // 포커스 모드: 포커스 대상만 전체 영역 사용
+                if (_focusIndex >= 0 && i == _focusIndex)
+                {
+                    xMin = 0f; yMin = 0f; xMax = 1f; yMax = 1f;
+                    padX = cellPadding / Mathf.Max(1f, rect.width);
+                    padY = cellPadding / Mathf.Max(1f, rect.height);
+                }
+
                 // 라벨 (셀 상단) — 코드 Labels 배열로 텍스트 자동 설정
                 if (labelTexts != null && i < labelTexts.Length && labelTexts[i] != null)
                 {
-                    labelTexts[i].text = GetLabel(i);
+                    labelTexts[i].text = GetDynamicLabel(i);
                     var rt = labelTexts[i].rectTransform;
                     rt.anchorMin = new Vector2(xMin + padX, yMax - padY - 0.04f);
                     rt.anchorMax = new Vector2(xMax - padX, yMax - padY);
                 }
 
-                float cellW = 1f / Mathf.Max(1, columns);
+                float cellW = (_focusIndex >= 0 && i == _focusIndex) ? 1f : (1f / Mathf.Max(1, columns));
 
                 // 현재 값 (셀 하단 좌측)
                 if (valueTexts != null && i < valueTexts.Length && valueTexts[i] != null)
@@ -296,6 +364,14 @@ namespace BoatAttack
             if (!_initialized || _history == null) return;
 
             Rect r = GetPixelAdjustedRect();
+
+            // 포커스 모드: 1개만 전체 크기로 렌더
+            if (_focusIndex >= 0 && _focusIndex < _obsCount)
+            {
+                DrawFocusedCell(vh, r, _focusIndex);
+                return;
+            }
+
             int cols = Mathf.Max(1, columns);
             int actualRows = ComputedRows;
             float cellW = r.width / cols;
@@ -410,6 +486,105 @@ namespace BoatAttack
             }
         }
 
+        /// <summary>포커스 모드: 1개 관측값을 전체 영역에 확대 렌더링</summary>
+        private void DrawFocusedCell(VertexHelper vh, Rect r, int obsIdx)
+        {
+            float cx = r.x + cellPadding;
+            float cy = r.y + cellPadding;
+            float cw = r.width - cellPadding * 2;
+            float ch = r.height - cellPadding * 2;
+
+            // 확대 시 상하 여백 비율 조정
+            float topMargin = 48f;
+            float bottomMargin = 44f;
+
+            // 셀 배경
+            AddRect(vh, cx, cy, cw, ch, cellBgColor);
+
+            // 셀 테두리
+            float bw = 2f;
+            AddRect(vh, cx, cy, cw, bw, cellBorderColor);
+            AddRect(vh, cx, cy + ch - bw, cw, bw, cellBorderColor);
+            AddRect(vh, cx, cy, bw, ch, cellBorderColor);
+            AddRect(vh, cx + cw - bw, cy, bw, ch, cellBorderColor);
+
+            // 코너 브라켓 (확대 시 더 크게)
+            float bracketLen = Mathf.Min(cw, ch) * 0.08f;
+            float bracketW = 3f;
+            AddRect(vh, cx, cy + ch - bracketW, bracketLen, bracketW, cornerBracketColor);
+            AddRect(vh, cx, cy + ch - bracketLen, bracketW, bracketLen, cornerBracketColor);
+            AddRect(vh, cx + cw - bracketLen, cy + ch - bracketW, bracketLen, bracketW, cornerBracketColor);
+            AddRect(vh, cx + cw - bracketW, cy + ch - bracketLen, bracketW, bracketLen, cornerBracketColor);
+            AddRect(vh, cx, cy, bracketLen, bracketW, cornerBracketColor);
+            AddRect(vh, cx, cy, bracketW, bracketLen, cornerBracketColor);
+            AddRect(vh, cx + cw - bracketLen, cy, bracketLen, bracketW, cornerBracketColor);
+            AddRect(vh, cx + cw - bracketW, cy, bracketW, bracketLen, cornerBracketColor);
+
+            // 상단 헤더 분리선
+            float headerY = cy + ch - topMargin;
+            AddRect(vh, cx + 8f, headerY, cw - 16f, 1f,
+                new Color(cellBorderColor.r, cellBorderColor.g, cellBorderColor.b, 0.5f));
+
+            // 컬러 인디케이터 바 (좌측, 확대)
+            Color indicatorCol = GetColor(obsIdx);
+            AddRect(vh, cx + 6f, cy + ch - topMargin + 8f, 6f, topMargin - 16f, indicatorCol);
+            AddRect(vh, cx + 4f, cy + ch - topMargin + 6f, 10f, topMargin - 12f,
+                new Color(indicatorCol.r, indicatorCol.g, indicatorCol.b, 0.15f));
+
+            // 포커스 인덱스 표시 (우상단 — 페이지 네비게이션)
+            // "[3/28]" 스타일의 가이드는 텍스트로만 표시 (아래 라벨에서 반영)
+
+            // 그래프 영역 (확대)
+            float gx = cx + 8f;
+            float gy2 = cy + bottomMargin;
+            float gw = cw - 16f;
+            float gh = ch - topMargin - bottomMargin;
+
+            AddRect(vh, gx, gy2, gw, gh, graphBgColor);
+
+            // 수직 격자 (10등분 — 확대 시 더 촘촘)
+            for (int g = 1; g < 10; g++)
+            {
+                float vx = gx + gw * g / 10f;
+                AddRect(vh, vx - 0.25f, gy2, 0.5f, gh,
+                    new Color(guideLineColor.r, guideLineColor.g, guideLineColor.b, 0.2f));
+            }
+
+            // 0 기준선
+            float zeroY = gy2 + gh * 0.5f;
+            AddRect(vh, gx, zeroY - 0.75f, gw, 2f, zeroLineColor);
+
+            // ±0.25, ±0.5, ±0.75 보조선 (확대 시 더 세밀)
+            float[] guides = { 0.125f, 0.25f, 0.375f, 0.5f, 0.625f, 0.75f, 0.875f };
+            foreach (float g in guides)
+            {
+                if (Mathf.Approximately(g, 0.5f)) continue; // 0 기준선은 이미 그림
+                AddRect(vh, gx, gy2 + gh * g - 0.25f, gw, 0.5f, guideLineColor);
+            }
+
+            // 그래프 라인 (글로우 + 메인, 두껍게)
+            if (_sampleCount >= 2)
+            {
+                Color glowCol = new Color(indicatorCol.r, indicatorCol.g, indicatorCol.b, 0.2f);
+                DrawGraphLine(vh, obsIdx, gx, gy2, gw, gh, glowCol, lineWidth * 4f);
+                DrawGraphLine(vh, obsIdx, gx, gy2, gw, gh, indicatorCol, lineWidth * 2f);
+            }
+
+            // 현재값 마커 (확대 시 더 크게)
+            if (_sampleCount > 0)
+            {
+                int lastIdx = (_writeIndex - 1 + historyLength) % historyLength;
+                float lastVal = Mathf.Clamp(_history[obsIdx][lastIdx], -1f, 1f);
+                float markerY = gy2 + (lastVal + 1f) * 0.5f * gh;
+                float markerX = gx + gw;
+                int mi = vh.currentVertCount;
+                vh.AddVert(new Vector3(markerX, markerY), indicatorCol, Vector2.zero);
+                vh.AddVert(new Vector3(markerX + 8f, markerY + 5f), indicatorCol, Vector2.zero);
+                vh.AddVert(new Vector3(markerX + 8f, markerY - 5f), indicatorCol, Vector2.zero);
+                vh.AddTriangle(mi, mi + 1, mi + 2);
+            }
+        }
+
         void DrawGraphLine(VertexHelper vh, int obsIdx, float gx, float gy, float gw, float gh, Color lineColor, float width = 0f)
         {
             if (width <= 0f) width = lineWidth;
@@ -464,10 +639,39 @@ namespace BoatAttack
             vh.AddTriangle(idx, idx + 2, idx + 3);
         }
 
-        // Setup 스크립트 및 런타임에서 사용 (범위 초과 시 자동 생성)
+        // 에디터 셋업용 static 버전 (VectorSensor 라벨만)
         public static string GetLabel(int index)
         {
             if (index >= 0 && index < Labels.Length) return Labels[index];
+            return $"Obs {index}";
+        }
+
+        // 런타임용 instance 버전 (EnemyBuffer + AllyBuffer 포함 동적 라벨)
+        private string GetDynamicLabel(int index)
+        {
+            if (index >= 0 && index < Labels.Length) return Labels[index];
+
+            int bufferIdx = index - Labels.Length;
+
+            // 적군 버퍼 영역 (5개씩: R, F, Dist, Hdg, Threat)
+            int enemyCount = (targetAgent != null) ? targetAgent.lastEnemyBufferObs.Count : 0;
+            if (bufferIdx >= 0 && bufferIdx < enemyCount)
+            {
+                int enemyNum = bufferIdx / 5;
+                int comp = bufferIdx % 5;
+                return $"E{enemyNum} {EnemyObsSuffix[comp]}";
+            }
+
+            // 아군 버퍼 영역 (5개씩: Dist, Fwd, Side, Hdg, Web)
+            int allyIdx = bufferIdx - enemyCount;
+            int allyCount = (targetAgent != null) ? targetAgent.lastAllyBufferObs.Count : 0;
+            if (allyIdx >= 0 && allyIdx < allyCount)
+            {
+                int allyNum = allyIdx / 5;
+                int comp = allyIdx % 5;
+                return $"A{allyNum} {AllyObsSuffix[comp]}";
+            }
+
             return $"Obs {index}";
         }
 
