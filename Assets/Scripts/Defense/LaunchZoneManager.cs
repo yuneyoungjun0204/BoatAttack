@@ -269,6 +269,7 @@ namespace BoatAttack
             dw.defenseShip2 = agent2Obj.transform;
             if (envController != null)
                 dw.envController = envController;
+            dw.UpdateObiAttachmentTargets();
 
             var wd = webObj.GetComponent<WebCollisionDetector>();
             if (wd == null) wd = webObj.AddComponent<WebCollisionDetector>();
@@ -429,6 +430,7 @@ namespace BoatAttack
                 dynamicWeb.defenseShip2 = pair.agent2.transform;
                 if (envController != null)
                     dynamicWeb.envController = envController;
+                dynamicWeb.UpdateObiAttachmentTargets();
 
                 // 복제된 Web의 webAnchor가 원본 선박을 가리키므로 복제 선박의 자식으로 재할당
                 RemapWebAnchor(dynamicWeb, templatePair, pair);
@@ -972,10 +974,18 @@ namespace BoatAttack
             }
 
             // 3. defenseShip 참조 확인 및 복구
+            bool shipRefChanged = false;
             if (pair.agent1 != null && dynamicWeb.defenseShip1 != pair.agent1.transform)
+            {
                 dynamicWeb.defenseShip1 = pair.agent1.transform;
+                shipRefChanged = true;
+            }
             if (pair.agent2 != null && dynamicWeb.defenseShip2 != pair.agent2.transform)
+            {
                 dynamicWeb.defenseShip2 = pair.agent2.transform;
+                shipRefChanged = true;
+            }
+            if (shipRefChanged) dynamicWeb.UpdateObiAttachmentTargets();
 
             // 4. envController 참조 확인
             if (envController != null && dynamicWeb.envController == null)
@@ -1340,6 +1350,7 @@ namespace BoatAttack
                 dynamicWeb.webAnchor2 = null;
                 if (envController != null)
                     dynamicWeb.envController = envController;
+                dynamicWeb.UpdateObiAttachmentTargets();
             }
 
             // Engine.RB 확인

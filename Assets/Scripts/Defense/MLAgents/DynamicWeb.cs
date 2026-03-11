@@ -1,11 +1,13 @@
 using UnityEngine;
 using Unity.MLAgents;
+using Obi;
 
 namespace BoatAttack
 {
     /// <summary>
     /// 2대의 방어 선박 사이에 동적으로 생성되는 Web (장막)
     /// 선박 간 거리에 따라 크기가 자동으로 조정됨
+    /// Obi Cloth 모드: 물리 기반 그물 시각화 (시연용, 학습 시 OFF)
     /// </summary>
     [RequireComponent(typeof(Rigidbody))]  // ML-Agents 빌드 호환성: 런타임 AddComponent 방지
     [RequireComponent(typeof(BoxCollider))]
@@ -46,6 +48,29 @@ namespace BoatAttack
         [Header("Visual")]
         [Tooltip("Web 시각화 활성화")]
         public bool showVisual = true;
+
+        [Header("=== Obi Cloth (시연용 그물) ===")]
+        [Tooltip("Obi Cloth 그물 사용 (학습 시 false, 시연 시 true)")]
+        public bool useObiCloth = false;
+
+        [Tooltip("Obi Cloth Blueprint (에디터에서 미리 생성)")]
+        public ObiClothBlueprint obiClothBlueprint;
+
+        [Tooltip("Obi Solver (환경 내 공유, 비어있으면 자동 탐색)")]
+        public ObiSolver obiSolver;
+
+        [Tooltip("Ship1에 부착할 파티클 그룹 (Blueprint 내 Left Edge)")]
+        public ObiParticleGroup obiGroupShip1;
+
+        [Tooltip("Ship2에 부착할 파티클 그룹 (Blueprint 내 Right Edge)")]
+        public ObiParticleGroup obiGroupShip2;
+
+        // Obi 런타임 참조
+        private GameObject _obiClothObj;      // ObiSolver 자식으로 생성되는 별도 오브젝트
+        private ObiCloth _obiCloth;
+        private ObiParticleAttachment _attachment1;
+        private ObiParticleAttachment _attachment2;
+        private bool _obiInitialized = false;
 
         [Header("Collision Reward")]
         [Tooltip("공격 보트를 막았을 때 방어선에게 주는 보상")]
@@ -118,6 +143,12 @@ namespace BoatAttack
                 envController = envRoot.GetComponentInChildren<DefenseEnvController>();
             }
 
+            // Obi Cloth 초기화 (useObiCloth=true일 때만)
+            if (useObiCloth)
+            {
+                InitializeObiCloth();
+            }
+
             _initialized = true;
         }
 
@@ -126,7 +157,14 @@ namespace BoatAttack
             if (defenseShip1 == null || defenseShip2 == null)
                 return;
 
+            // BoxCollider 위치/크기는 항상 업데이트 (충돌 판정용)
             UpdateWebTransform();
+
+            // Obi Attachment 지연 생성: Start()에서 선박이 NULL이었으면 여기서 생성
+            if (useObiCloth && _obiInitialized && _attachment1 == null && defenseShip1 != null)
+            {
+                CreateObiAttachments();
+            }
 
             // 색상 변경 감지 및 업데이트
             if (_lastWebColor != webColor)
@@ -168,8 +206,17 @@ namespace BoatAttack
 
             if (_visualObject != null)
             {
-                // 비주얼은 원래 두께 유지
-                _visualObject.transform.localScale = new Vector3(webThickness, webHeight, distance);
+                // Obi 모드에서는 Cube 비주얼 숨김
+                if (useObiCloth && _obiInitialized)
+                {
+                    if (_visualObject.activeSelf) _visualObject.SetActive(false);
+                }
+                else
+                {
+                    if (!_visualObject.activeSelf) _visualObject.SetActive(true);
+                    // 비주얼은 원래 두께 유지
+                    _visualObject.transform.localScale = new Vector3(webThickness, webHeight, distance);
+                }
             }
         }
 
@@ -468,5 +515,190 @@ namespace BoatAttack
             Gizmos.color = Color.yellow;
             Gizmos.DrawWireSphere(centerPos, 1f);
         }
+
+        #region Obi Cloth
+
+        /// <summary>
+        /// Obi Cloth 초기화: ObiCloth + ObiParticleAttachment × 2 생성
+        /// Blueprint와 ParticleGroup은 Inspector에서 미리 할당 필요
+        /// </summary>
+        private void InitializeObiCloth()
+        {
+            if (_obiInitialized) return;
+            if (obiClothBlueprint == null)
+            {
+                Debug.LogWarning($"[DynamicWeb] Obi Cloth Blueprint이 할당되지 않음 — Obi 비활성화");
+                useObiCloth = false;
+                return;
+            }
+
+            // ObiSolver 자동 탐색
+            if (obiSolver == null)
+            {
+                obiSolver = GetComponentInParent<ObiSolver>();
+                if (obiSolver == null)
+                {
+                    Transform envRoot = transform.parent != null ? transform.parent : transform;
+                    obiSolver = envRoot.GetComponentInChildren<ObiSolver>();
+                }
+            }
+
+            if (obiSolver == null)
+            {
+                Debug.LogWarning($"[DynamicWeb] ObiSolver를 찾을 수 없음 — Obi 비활성화");
+                useObiCloth = false;
+                return;
+            }
+
+            // ★ 핵심: ObiSolver 자식으로 별도 GameObject 생성 (비활성 상태)
+            // Obi는 ObiActor가 ObiSolver의 자식 계층에 있어야 동작함
+            // AddComponent 시 OnEnable→AddToSolver가 호출되므로,
+            // 모든 설정 완료 후 활성화해야 Blueprint가 등록됨
+            _obiClothObj = new GameObject($"ObiCloth_{gameObject.name}");
+            _obiClothObj.SetActive(false);  // ★ 비활성 상태로 시작
+            _obiClothObj.transform.SetParent(obiSolver.transform);
+            _obiClothObj.transform.localPosition = Vector3.zero;
+            _obiClothObj.transform.localRotation = Quaternion.identity;
+
+            // ObiCloth 컴포넌트 생성 (비활성이므로 OnEnable 호출 안 됨)
+            _obiCloth = _obiClothObj.AddComponent<ObiCloth>();
+            _obiCloth.clothBlueprint = obiClothBlueprint;
+
+            // 천 물성 설정 (그물답게)
+            _obiCloth.stretchCompliance = 0f;       // 늘어나지 않음
+            _obiCloth.stretchingScale = 1f;
+            _obiCloth.bendCompliance = 0.02f;       // 약간 구부러짐
+            _obiCloth.maxBending = 0.05f;
+            _obiCloth.drag = 0.05f;                 // 공기 저항 (바람에 펄럭임)
+            _obiCloth.lift = 0.02f;
+
+            // ObiClothRenderer 추가 (시각화)
+            var clothRenderer = _obiClothObj.AddComponent<ObiClothRenderer>();
+            clothRenderer.cloth = _obiCloth;
+
+            // MeshFilter에 inputMesh 설정 (Renderer가 사용)
+            var meshFilter = _obiClothObj.GetComponent<MeshFilter>();
+            if (meshFilter != null && obiClothBlueprint.inputMesh != null)
+                meshFilter.sharedMesh = obiClothBlueprint.inputMesh;
+
+            // MeshRenderer에 Material 설정 (없으면 안 보임)
+            var meshRenderer = _obiClothObj.GetComponent<MeshRenderer>();
+            if (meshRenderer != null)
+            {
+                Material mat = null;
+                if (webMaterial != null)
+                {
+                    mat = new Material(webMaterial);
+                }
+                else
+                {
+                    Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+                    if (shader == null) shader = Shader.Find("Standard");
+                    if (shader != null)
+                    {
+                        mat = new Material(shader);
+                        mat.color = webColor;
+                        // 반투명 설정
+                        mat.SetFloat("_Surface", 1);
+                        mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                        mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                        mat.SetInt("_ZWrite", 0);
+                        mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                        mat.renderQueue = 3000;
+                    }
+                }
+                if (mat != null)
+                    meshRenderer.material = mat;
+            }
+
+            // Attachment: 선박이 이미 할당되어 있으면 즉시 생성, 아니면 Update()에서 지연 생성
+            if (defenseShip1 != null && defenseShip2 != null)
+            {
+                CreateObiAttachments();
+            }
+
+            // ★ 모든 설정 완료 후 활성화 → OnEnable → AddToSolver (Blueprint 포함)
+            _obiClothObj.SetActive(true);
+
+            _obiInitialized = true;
+            Debug.Log($"[DynamicWeb] Obi 초기화 완료 (Particles: {obiClothBlueprint.particleCount}, Ships: {(defenseShip1 != null ? "OK" : "대기중")})");
+        }
+
+        /// <summary>
+        /// Obi Attachment 생성 (선박 할당 후 호출)
+        /// </summary>
+        private void CreateObiAttachments()
+        {
+            if (_obiClothObj == null || _attachment1 != null) return;
+
+            if (obiGroupShip1 != null && defenseShip1 != null)
+            {
+                _attachment1 = _obiClothObj.AddComponent<ObiParticleAttachment>();
+                _attachment1.target = defenseShip1;
+                _attachment1.particleGroup = obiGroupShip1;
+                _attachment1.attachmentType = ObiParticleAttachment.AttachmentType.Static;
+                _attachment1.constrainOrientation = false;
+            }
+
+            if (obiGroupShip2 != null && defenseShip2 != null)
+            {
+                _attachment2 = _obiClothObj.AddComponent<ObiParticleAttachment>();
+                _attachment2.target = defenseShip2;
+                _attachment2.particleGroup = obiGroupShip2;
+                _attachment2.attachmentType = ObiParticleAttachment.AttachmentType.Static;
+                _attachment2.constrainOrientation = false;
+            }
+
+            Debug.Log($"[DynamicWeb] Obi Attachment 생성 완료 (Ship1: {defenseShip1?.name}, Ship2: {defenseShip2?.name})");
+        }
+
+        /// <summary>
+        /// Obi Cloth 활성화/비활성화 (풀 시스템에서 호출)
+        /// </summary>
+        public void SetObiClothActive(bool active)
+        {
+            if (!_obiInitialized || _obiClothObj == null) return;
+
+            _obiClothObj.SetActive(active);
+        }
+
+        /// <summary>
+        /// Obi Attachment 타겟 갱신 (풀에서 선박 참조가 바뀔 때)
+        /// </summary>
+        public void UpdateObiAttachmentTargets()
+        {
+            if (!_obiInitialized) return;
+
+            if (_attachment1 != null && defenseShip1 != null)
+                _attachment1.target = defenseShip1;
+
+            if (_attachment2 != null && defenseShip2 != null)
+                _attachment2.target = defenseShip2;
+        }
+
+        /// <summary>
+        /// Obi Solver 참조 설정 (풀 복제 시 새 Solver 할당)
+        /// </summary>
+        public void SetObiSolver(ObiSolver solver)
+        {
+            obiSolver = solver;
+            if (_obiInitialized)
+            {
+                // 기존 Obi 오브젝트 제거 후 재생성
+                if (_obiClothObj != null)
+                    Destroy(_obiClothObj);
+                _obiInitialized = false;
+                InitializeObiCloth();
+            }
+        }
+
+        private void OnDestroy()
+        {
+            // DynamicWeb 파괴 시 Obi 오브젝트도 정리
+            if (_obiClothObj != null)
+                Destroy(_obiClothObj);
+        }
+
+        #endregion
     }
 }

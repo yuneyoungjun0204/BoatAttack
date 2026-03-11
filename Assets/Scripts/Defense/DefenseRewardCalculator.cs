@@ -11,7 +11,7 @@ namespace BoatAttack
     {
         [Header("=== 매 스텝 보상 ===")]
         [Tooltip("대형 유지 보상 (아군 간격이 적정 범위 내일 때)")]
-        public float formationReward = 0.001f;
+        public float formationReward = 0f;
 
         [Tooltip("아군 간 최적 거리 (m)")]
         public float optimalDistance = 50f;
@@ -24,7 +24,7 @@ namespace BoatAttack
 
         [Header("=== 차단 위치 보상 ===")]
         [Tooltip("차단 위치 개선 1m당 보상 (적 경로-Web 수직거리 감소)")]
-        public float interceptRewardPerMeter = 0.002f;
+        public float interceptRewardPerMeter = 0.0001f;
 
         [Tooltip("urgency 기준 거리 (이 along에서 배율 1.0)")]
         public float interceptRefDist = 200f;
@@ -43,7 +43,7 @@ namespace BoatAttack
 
         [Header("=== 이벤트 보상 ===")]
         [Tooltip("포획 성공 (적이 Web에 충돌)")]
-        public float captureReward = 1.0f;
+        public float captureReward = 3.0f;
 
         [Tooltip("포획 거리 보너스 최대값 (모선에서 멀리 잡을수록)")]
         public float captureDistanceBonus = 0.5f;
@@ -52,7 +52,7 @@ namespace BoatAttack
         public float sequentialCaptureBonus = 0.1f;
 
         [Tooltip("모선 충돌 페널티 (적이 모선에 충돌)")]
-        public float motherShipHitPenalty = -1.0f;
+        public float motherShipHitPenalty = -2.0f;
 
         [Tooltip("충돌 페널티 (아군끼리/모선/거리초과 등)")]
         public float collisionPenalty = -0.5f;
