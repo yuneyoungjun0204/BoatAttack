@@ -258,15 +258,17 @@ namespace BoatAttack
                 da2.envController = envController;
             }
 
-            // DynamicWeb 설정
+            // DynamicWeb 설정 (없으면 추가 — 그물 누락 절대 방지)
             var dw = webObj.GetComponent<DynamicWeb>();
-            if (dw != null)
+            if (dw == null)
             {
-                dw.defenseShip1 = agent1Obj.transform;
-                dw.defenseShip2 = agent2Obj.transform;
-                if (envController != null)
-                    dw.envController = envController;
+                Debug.LogWarning("[CreateTemplateFromPrefab] DynamicWeb 컴포넌트 없음 → 추가");
+                dw = webObj.AddComponent<DynamicWeb>();
             }
+            dw.defenseShip1 = agent1Obj.transform;
+            dw.defenseShip2 = agent2Obj.transform;
+            if (envController != null)
+                dw.envController = envController;
 
             var wd = webObj.GetComponent<WebCollisionDetector>();
             if (wd == null) wd = webObj.AddComponent<WebCollisionDetector>();
@@ -349,7 +351,7 @@ namespace BoatAttack
             agent2Clone.name = $"DefenseAgent2_pair{index}";
             pair.agent2 = agent2Clone.GetComponent<DefenseAgent>();
 
-            // Web 복제
+            // Web 복제 (템플릿 web이 없으면 새로 생성 — 그물 누락 절대 방지)
             if (templatePair.webObject != null)
             {
                 GameObject webClone = Instantiate(templatePair.webObject, poolParent);
@@ -361,6 +363,12 @@ namespace BoatAttack
                     Object.Destroy(orphanedVisual.gameObject);
 
                 pair.webObject = webClone;
+            }
+            else
+            {
+                Debug.LogWarning($"[CreatePairClone] templatePair.webObject가 null → 새 Web 생성 (pair{index})");
+                pair.webObject = CreateWebObject(poolParent);
+                pair.webObject.name = $"Web_pair{index}";
             }
 
             // Engine.RB 안전 초기화 (Boat.Awake 타이밍 이슈 방지)
@@ -402,24 +410,28 @@ namespace BoatAttack
                 }
             }
 
-            // WebCollisionDetector/DynamicWeb 설정
-            if (pair.webObject != null && envController != null)
+            // WebCollisionDetector/DynamicWeb 설정 (envController 유무와 무관하게 ship 참조는 반드시 설정)
+            if (pair.webObject != null)
             {
                 var webDetector = pair.webObject.GetComponent<WebCollisionDetector>();
                 if (webDetector == null)
                     webDetector = pair.webObject.AddComponent<WebCollisionDetector>();
-                webDetector.envController = envController;
+                if (envController != null)
+                    webDetector.envController = envController;
 
                 var dynamicWeb = pair.webObject.GetComponent<DynamicWeb>();
-                if (dynamicWeb != null)
+                if (dynamicWeb == null)
                 {
-                    dynamicWeb.envController = envController;
-                    dynamicWeb.defenseShip1 = pair.agent1.transform;
-                    dynamicWeb.defenseShip2 = pair.agent2.transform;
-
-                    // 복제된 Web의 webAnchor가 원본 선박을 가리키므로 복제 선박의 자식으로 재할당
-                    RemapWebAnchor(dynamicWeb, templatePair, pair);
+                    Debug.LogWarning($"[CreatePairClone] DynamicWeb 컴포넌트 없음 → 추가 (pair{index})");
+                    dynamicWeb = pair.webObject.AddComponent<DynamicWeb>();
                 }
+                dynamicWeb.defenseShip1 = pair.agent1.transform;
+                dynamicWeb.defenseShip2 = pair.agent2.transform;
+                if (envController != null)
+                    dynamicWeb.envController = envController;
+
+                // 복제된 Web의 webAnchor가 원본 선박을 가리키므로 복제 선박의 자식으로 재할당
+                RemapWebAnchor(dynamicWeb, templatePair, pair);
             }
 
             Debug.LogWarning($"[CreatePairClone] index={index}, a1={agent1Clone.name}, a2={agent2Clone.name}, " +
@@ -922,9 +934,83 @@ namespace BoatAttack
                 }
             }
 
-            // Web만 SetActive 토글
+            // Web만 SetActive 토글 — 활성화 시 web 누락이면 즉시 복구
+            if (pair.webObject == null && active)
+            {
+                Debug.LogError($"[SetPairActive] pair{index} 활성화 시 webObject가 null! 즉시 복구 시도");
+                EnsurePairWebIntegrity(pair, index);
+            }
             if (pair.webObject != null) pair.webObject.SetActive(active);
             pair.isActive = active;
+        }
+
+        /// <summary>
+        /// 쌍의 그물(Web) 무결성 검증 및 복구
+        /// webObject가 null이거나, DynamicWeb/WebCollisionDetector가 없거나,
+        /// defenseShip 참조가 잘못된 경우 모두 수정
+        /// </summary>
+        private void EnsurePairWebIntegrity(DefensePair pair, int index)
+        {
+            // 1. webObject 자체가 null → 새로 생성
+            if (pair.webObject == null)
+            {
+                Debug.LogWarning($"[EnsurePairWebIntegrity] pair{index} webObject null → 새 Web 생성");
+                pair.webObject = CreateWebObject(transform);
+                pair.webObject.name = $"Web_pair{index}_recovered";
+
+                // Agent에도 참조 복구
+                if (pair.agent1 != null) pair.agent1.webObject = pair.webObject;
+                if (pair.agent2 != null) pair.agent2.webObject = pair.webObject;
+            }
+
+            // 2. DynamicWeb 컴포넌트 확인
+            var dynamicWeb = pair.webObject.GetComponent<DynamicWeb>();
+            if (dynamicWeb == null)
+            {
+                Debug.LogWarning($"[EnsurePairWebIntegrity] pair{index} DynamicWeb 없음 → 추가");
+                dynamicWeb = pair.webObject.AddComponent<DynamicWeb>();
+            }
+
+            // 3. defenseShip 참조 확인 및 복구
+            if (pair.agent1 != null && dynamicWeb.defenseShip1 != pair.agent1.transform)
+                dynamicWeb.defenseShip1 = pair.agent1.transform;
+            if (pair.agent2 != null && dynamicWeb.defenseShip2 != pair.agent2.transform)
+                dynamicWeb.defenseShip2 = pair.agent2.transform;
+
+            // 4. envController 참조 확인
+            if (envController != null && dynamicWeb.envController == null)
+                dynamicWeb.envController = envController;
+
+            // 5. WebCollisionDetector 확인
+            var webDetector = pair.webObject.GetComponent<WebCollisionDetector>();
+            if (webDetector == null)
+            {
+                Debug.LogWarning($"[EnsurePairWebIntegrity] pair{index} WebCollisionDetector 없음 → 추가");
+                webDetector = pair.webObject.AddComponent<WebCollisionDetector>();
+            }
+            if (envController != null && webDetector.envController == null)
+                webDetector.envController = envController;
+
+            // 6. Rigidbody + BoxCollider 확인 (충돌 감지 필수)
+            var rb = pair.webObject.GetComponent<Rigidbody>();
+            if (rb == null)
+            {
+                rb = pair.webObject.AddComponent<Rigidbody>();
+                rb.isKinematic = true;
+                rb.useGravity = false;
+            }
+            var col = pair.webObject.GetComponent<BoxCollider>();
+            if (col == null)
+            {
+                col = pair.webObject.AddComponent<BoxCollider>();
+                col.isTrigger = true;
+            }
+
+            // 7. Agent의 webObject 참조 일관성 보장
+            if (pair.agent1 != null && pair.agent1.webObject != pair.webObject)
+                pair.agent1.webObject = pair.webObject;
+            if (pair.agent2 != null && pair.agent2.webObject != pair.webObject)
+                pair.agent2.webObject = pair.webObject;
         }
 
         /// <summary>
@@ -1071,6 +1157,9 @@ namespace BoatAttack
             {
                 pairIdx = existingInactive;
                 pair = _pairPool[pairIdx];
+
+                // 비활성 쌍 재사용 시 그물 무결성 검증 — 누락 시 즉시 복구
+                EnsurePairWebIntegrity(pair, pairIdx);
             }
             else
             {
@@ -1232,23 +1321,25 @@ namespace BoatAttack
                 a2.envController = envController;
             }
 
-            // Web 컴포넌트 설정
-            if (envController != null)
+            // Web 컴포넌트 설정 (envController 유무와 무관하게 ship 참조는 반드시 설정)
             {
                 var webDetector = webObj.GetComponent<WebCollisionDetector>();
                 if (webDetector == null) webDetector = webObj.AddComponent<WebCollisionDetector>();
-                webDetector.envController = envController;
+                if (envController != null)
+                    webDetector.envController = envController;
 
                 var dynamicWeb = webObj.GetComponent<DynamicWeb>();
-                if (dynamicWeb != null)
+                if (dynamicWeb == null)
                 {
-                    dynamicWeb.envController = envController;
-                    dynamicWeb.defenseShip1 = a1.transform;
-                    dynamicWeb.defenseShip2 = a2.transform;
-                    // 프리팹 원본 anchor 참조 제거 → defenseShip position fallback
-                    dynamicWeb.webAnchor1 = null;
-                    dynamicWeb.webAnchor2 = null;
+                    Debug.LogWarning($"[SpawnPairFromPrefab] DynamicWeb 컴포넌트 없음 → 추가 (pair{index})");
+                    dynamicWeb = webObj.AddComponent<DynamicWeb>();
                 }
+                dynamicWeb.defenseShip1 = a1.transform;
+                dynamicWeb.defenseShip2 = a2.transform;
+                dynamicWeb.webAnchor1 = null;
+                dynamicWeb.webAnchor2 = null;
+                if (envController != null)
+                    dynamicWeb.envController = envController;
             }
 
             // Engine.RB 확인
@@ -1693,53 +1784,146 @@ namespace BoatAttack
         /// <param name="webCenter">pairIdx=-1일 때 사용할 Web 중심 위치</param>
         /// <param name="enemies">적군 배열</param>
         /// <returns>담당 적 중 가장 가까운 적의 인덱스 (0-based), 없으면 -1</returns>
+        // Greedy 1:1 매칭 캐시 (매 스텝 1회만 계산)
+        private int _lastMatchingStep = -1;
+        private readonly System.Collections.Generic.Dictionary<int, int> _pairToEnemyAssignment
+            = new System.Collections.Generic.Dictionary<int, int>();
+
+        /// <summary>
+        /// Greedy 1:1 매칭 기반 담당 적 반환.
+        /// 비용 함수: interceptDist / max(alongDist, 1) × refDist
+        /// alongDist ≤ 0 (뒤쪽)이면 직선거리 × 2 페널티.
+        /// 매 스텝 첫 호출 시 전체 매칭 계산 후 캐시.
+        /// </summary>
         public int GetClosestResponsibleEnemy(int pairIdx, Vector3 webCenter, GameObject[] enemies)
         {
             if (enemies == null || _pairPool == null) return -1;
 
-            // pairIdx가 유효하면 Web 중심 계산
-            if (pairIdx >= 0 && pairIdx < _pairPool.Count)
+            // 현재 스텝 확인 (envController에서 가져옴)
+            int currentStep = envController != null ? envController.CurrentStep : -1;
+
+            // 이번 스텝에 아직 매칭 안 했으면 전체 계산
+            if (currentStep != _lastMatchingStep)
             {
-                var pair = _pairPool[pairIdx];
-                if (pair.agent1 != null && pair.agent2 != null)
-                    webCenter = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+                ComputeGreedyMatching(enemies);
+                _lastMatchingStep = currentStep;
             }
 
-            int bestIdx = -1;
-            float bestDist = float.MaxValue;
+            // 캐시에서 반환
+            if (_pairToEnemyAssignment.TryGetValue(pairIdx, out int assignedEnemy))
+                return assignedEnemy;
 
+            return -1;
+        }
+
+        /// <summary>
+        /// Greedy 1:1 매칭: 차단 비용이 낮은 (쌍, 적) 순으로 배정.
+        /// 적 > 쌍이면 남은 미배정 적 중 가장 비용 낮은 적을 가장 여유있는 쌍에 추가 배정.
+        /// </summary>
+        private void ComputeGreedyMatching(GameObject[] enemies)
+        {
+            _pairToEnemyAssignment.Clear();
+
+            const float interceptRefDist = 200f;
+            const float behindPenaltyMul = 2f;
+
+            // 활성 쌍 수집
+            var activePairs = new System.Collections.Generic.List<int>();
+            var webCenters = new System.Collections.Generic.Dictionary<int, Vector3>();
+            for (int pi = 0; pi < _pairPool.Count; pi++)
+            {
+                var pair = _pairPool[pi];
+                if (pair == null || !pair.isActive) continue;
+                if (pair.agent1 == null || pair.agent2 == null) continue;
+                activePairs.Add(pi);
+                webCenters[pi] = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+            }
+
+            // 활성 적 수집
+            var activeEnemies = new System.Collections.Generic.List<int>();
             for (int ei = 0; ei < enemies.Length; ei++)
             {
-                if (enemies[ei] == null || !enemies[ei].activeInHierarchy) continue;
+                if (enemies[ei] != null && enemies[ei].activeInHierarchy)
+                    activeEnemies.Add(ei);
+            }
 
-                float myDist = Vector3.Distance(webCenter, enemies[ei].transform.position);
+            if (activePairs.Count == 0 || activeEnemies.Count == 0) return;
 
-                // 다른 활성 쌍이 더 가까우면 담당 아님
-                bool isResponsible = true;
-                for (int pi = 0; pi < _pairPool.Count; pi++)
+            // 모든 (쌍, 적) 비용 계산
+            var costList = new System.Collections.Generic.List<(int pairIdx, int enemyIdx, float cost)>();
+            foreach (int pi in activePairs)
+            {
+                Vector3 wc = webCenters[pi];
+                foreach (int ei in activeEnemies)
                 {
-                    if (pi == pairIdx) continue;
-                    var other = _pairPool[pi];
-                    if (!other.isActive || other.agent1 == null || other.agent2 == null) continue;
-                    Vector3 otherWeb = (other.agent1.transform.position + other.agent2.transform.position) * 0.5f;
-                    if (Vector3.Distance(otherWeb, enemies[ei].transform.position) < myDist)
-                    {
-                        isResponsible = false;
-                        break;
-                    }
-                }
-
-                if (!isResponsible) continue;
-
-                // 담당 적 중 가장 가까운 것
-                if (myDist < bestDist)
-                {
-                    bestDist = myDist;
-                    bestIdx = ei;
+                    float cost = CalculateInterceptCost(wc, enemies[ei].transform, interceptRefDist, behindPenaltyMul);
+                    costList.Add((pi, ei, cost));
                 }
             }
 
-            return bestIdx;
+            // 비용 오름차순 정렬
+            costList.Sort((a, b) => a.cost.CompareTo(b.cost));
+
+            // Greedy 매칭: 비용 낮은 순으로 1:1 배정
+            var assignedPairs = new System.Collections.Generic.HashSet<int>();
+            var assignedEnemies = new System.Collections.Generic.HashSet<int>();
+
+            foreach (var (pi, ei, cost) in costList)
+            {
+                if (assignedPairs.Contains(pi) || assignedEnemies.Contains(ei)) continue;
+                _pairToEnemyAssignment[pi] = ei;
+                assignedPairs.Add(pi);
+                assignedEnemies.Add(ei);
+
+                // 모든 쌍이 배정되면 종료
+                if (assignedPairs.Count >= activePairs.Count) break;
+            }
+
+            // 미배정 쌍이 있으면 (쌍 > 적): 남은 쌍에게 가장 비용 낮은 적 배정 (중복 허용)
+            foreach (int pi in activePairs)
+            {
+                if (assignedPairs.Contains(pi)) continue;
+                float bestCost = float.MaxValue;
+                int bestEi = -1;
+                foreach (int ei in activeEnemies)
+                {
+                    float cost = CalculateInterceptCost(webCenters[pi], enemies[ei].transform, interceptRefDist, behindPenaltyMul);
+                    if (cost < bestCost) { bestCost = cost; bestEi = ei; }
+                }
+                if (bestEi >= 0)
+                    _pairToEnemyAssignment[pi] = bestEi;
+            }
+        }
+
+        /// <summary>
+        /// 차단 비용 계산: interceptDist/alongDist 기반.
+        /// 전방: interceptDist / max(alongDist,1) × refDist
+        /// 후방(alongDist≤0): 직선거리 × behindMul
+        /// </summary>
+        private float CalculateInterceptCost(Vector3 webCenter, Transform enemy,
+            float refDist, float behindMul)
+        {
+            Vector3 toWeb = webCenter - enemy.position;
+            toWeb.y = 0f;
+            Vector3 enemyDir = enemy.forward;
+            enemyDir.y = 0f;
+
+            float straightDist = toWeb.magnitude;
+
+            if (enemyDir.sqrMagnitude < 0.001f)
+                return straightDist; // forward 없으면 직선거리
+
+            enemyDir.Normalize();
+            float along = Vector3.Dot(toWeb, enemyDir);
+
+            if (along <= 0f)
+                return straightDist * behindMul; // 뒤쪽: 페널티
+
+            Vector3 perp = toWeb - along * enemyDir;
+            float interceptDist = perp.magnitude;
+
+            // 비용 = 수직거리 / 남은 거리 × 기준거리
+            return interceptDist / Mathf.Max(along, 1f) * refDist;
         }
 
         /// <summary>

@@ -51,20 +51,20 @@ namespace BoatAttack
         private bool _initialized;
         private int _cachedColumns = -1;
         private DefenseAgent _prevAgent; // 타겟 변경 감지용
+        private int _lastCallCount = -1; // collectObsCallCount 변화 추적
+        private int _staleFrames = 0;    // 관측 갱신 없이 경과한 프레임 수
 
-        // VectorSensor 13개: Partner(4) + MotherDist(1) + Self(4) + Responsible(4)
+        // VectorSensor 6개: Partner(4) + Self(2)
         private static readonly string[] Labels =
         {
             "Partner R", "Partner F", "Partner Dist", "Partner Hdg",
-            "Mother Dist",
-            "Throttle", "Steering", "Drift Spd", "Fwd Spd",
-            "Resp R", "Resp F", "Resp Dist", "Resp Threat"
+            "Throttle", "Steering"
         };
 
-        // EnemyBuffer: 5개씩 (R, F, Dist, Hdg, Threat)
-        private static readonly string[] EnemyObsSuffix = { "R", "F", "Dist", "Hdg", "Threat" };
-        // AllyBuffer: 5개씩 (Dist, Fwd, Side, Hdg, Web)
-        private static readonly string[] AllyObsSuffix = { "Dist", "Fwd", "Side", "Hdg", "Web" };
+        // EnemyBuffer: 3개씩 (Dist, SignedBrg, Hdg)
+        private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "Hdg" };
+        // AllyBuffer: 2개씩 (Dist, Brg)
+        private static readonly string[] AllyObsSuffix = { "Dist", "Brg" };
 
         private static readonly Color[] GraphColors =
         {
@@ -72,19 +72,13 @@ namespace BoatAttack
             new Color(1f, 0.6f, 0.1f),      // Partner F
             new Color(0.85f, 0.5f, 0.1f),   // Partner Dist
             new Color(0.9f, 0.4f, 0.1f),    // Partner Hdg
-            new Color(0.3f, 0.7f, 0.9f),    // Mother Dist
             new Color(0.6f, 0.8f, 0.3f),    // Throttle
             new Color(0.5f, 0.7f, 0.4f),    // Steering
-            new Color(0.4f, 0.9f, 0.5f),    // Drift Spd
-            new Color(0.3f, 0.85f, 0.6f),   // Fwd Spd
-            new Color(1f, 0.3f, 0.3f),      // Resp R
-            new Color(0.9f, 0.2f, 0.5f),    // Resp F
-            new Color(0.8f, 0.2f, 0.6f),    // Resp Dist
-            new Color(0.7f, 0.2f, 0.7f),    // Resp Threat
         };
 
         // P키 포커스 모드: -1=전체, 0~N=해당 인덱스만 확대
         private int _focusIndex = -1;
+        private Text _focusTitleText; // 포커스 모드 전용 타이틀 (동적 생성)
 
         /// <summary>현재 표시 중인 관측 수 (targetAgent에서 동적 결정)</summary>
         private int _obsCount = Labels.Length;
@@ -109,7 +103,7 @@ namespace BoatAttack
             InitHistory(_obsCount);
         }
 
-        /// <summary>지정 크기로 히스토리 초기화 (관측 수 변경 시 재호출)</summary>
+        /// <summary>지정 크기로 히스토리 초기화 (최초 호출용)</summary>
         void InitHistory(int count)
         {
             _obsCount = Mathf.Max(1, count);
@@ -118,6 +112,28 @@ namespace BoatAttack
                 _history[i] = new float[historyLength];
             _writeIndex = 0;
             _sampleCount = 0;
+            _initialized = true;
+        }
+
+        /// <summary>관측 수 변경 시 히스토리 리사이즈 (기존 데이터 보존, 초기화 안 함)</summary>
+        void ResizeHistory(int newCount)
+        {
+            newCount = Mathf.Max(1, newCount);
+            if (newCount == _obsCount && _history != null) return;
+
+            int oldCount = _obsCount;
+            var oldHistory = _history;
+
+            _obsCount = newCount;
+            _history = new float[_obsCount][];
+            for (int i = 0; i < _obsCount; i++)
+            {
+                _history[i] = new float[historyLength];
+                // 기존 채널 데이터 복사 (인덱스 범위 내)
+                if (oldHistory != null && i < oldCount && oldHistory[i] != null)
+                    System.Array.Copy(oldHistory[i], _history[i], historyLength);
+            }
+            // writeIndex, sampleCount 유지 → 그래프 연속성 보존
             _initialized = true;
         }
 
@@ -145,25 +161,81 @@ namespace BoatAttack
             // targetAgent 초기 설정 (Inspector에서 미설정 시)
             if (targetAgent == null)
                 FindInitialTarget();
+
+            // 포커스 모드 전용 타이틀 텍스트 생성
+            CreateFocusTitleText();
         }
 
-        /// <summary>카메라 또는 envController에서 초기 타겟 탐색</summary>
+        /// <summary>포커스 모드 전용 타이틀 텍스트 동적 생성</summary>
+        private void CreateFocusTitleText()
+        {
+            var go = new GameObject("FocusTitle");
+            go.transform.SetParent(transform, false);
+
+            _focusTitleText = go.AddComponent<Text>();
+            _focusTitleText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            _focusTitleText.fontSize = 22;
+            _focusTitleText.fontStyle = FontStyle.Bold;
+            _focusTitleText.alignment = TextAnchor.MiddleCenter;
+            _focusTitleText.color = Color.white;
+            _focusTitleText.supportRichText = true;
+            _focusTitleText.raycastTarget = false;
+            _focusTitleText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            _focusTitleText.verticalOverflow = VerticalWrapMode.Overflow;
+
+            var rt = _focusTitleText.rectTransform;
+            rt.anchorMin = new Vector2(0.05f, 0.92f);
+            rt.anchorMax = new Vector2(0.95f, 1f);
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+
+            // 그래프 메시 위에 렌더링되도록: sortingOrder 오버라이드
+            var canvas = go.AddComponent<Canvas>();
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 100;
+
+            go.transform.SetAsLastSibling();
+            go.SetActive(false);
+        }
+
+        /// <summary>카메라 또는 envController에서 초기 타겟 탐색 (활성 에이전트만)</summary>
         private void FindInitialTarget()
         {
             // 카메라에서 먼저
             if (followCamera != null)
             {
                 var camAgent = followCamera.CurrentDefenseAgent;
-                if (camAgent != null) { targetAgent = camAgent; return; }
+                if (IsAgentValid(camAgent)) { targetAgent = camAgent; return; }
             }
-            // envController fallback
+            // envController fallback: LaunchZoneManager에서 활성 쌍의 에이전트
+            if (envController != null && envController.launchZoneManager != null)
+            {
+                var lzm = envController.launchZoneManager;
+                int poolCount = lzm.GetCurrentPoolCount();
+                for (int i = 0; i < poolCount; i++)
+                {
+                    var pair = lzm.GetPair(i);
+                    if (pair != null && pair.isActive)
+                    {
+                        if (IsAgentValid(pair.agent1)) { targetAgent = pair.agent1; return; }
+                        if (IsAgentValid(pair.agent2)) { targetAgent = pair.agent2; return; }
+                    }
+                }
+            }
+            // 최후 fallback: 레거시 defenseAgent1/2
             if (envController != null)
             {
-                if (envController.defenseAgent1 != null)
+                if (IsAgentValid(envController.defenseAgent1))
                     targetAgent = envController.defenseAgent1;
-                else if (envController.defenseAgent2 != null)
+                else if (IsAgentValid(envController.defenseAgent2))
                     targetAgent = envController.defenseAgent2;
             }
+        }
+
+        /// <summary>에이전트가 유효하고 활성 상태인지 확인</summary>
+        private bool IsAgentValid(DefenseAgent agent)
+        {
+            return agent != null && agent.gameObject.activeInHierarchy && agent.transform.position.y > -100f;
         }
 
         void Update()
@@ -184,56 +256,70 @@ namespace BoatAttack
                 RepositionLabels();
             }
 
-            // 카메라 시점 대상과 자동 연동
+            // 카메라 시점 대상과 자동 연동 (활성 에이전트만)
             if (followCamera != null)
             {
                 DefenseAgent camAgent = followCamera.CurrentDefenseAgent;
-                if (camAgent != null)
+                if (IsAgentValid(camAgent))
                     targetAgent = camAgent;
             }
 
-            // 타겟이 아직 없으면 재탐색
-            if (targetAgent == null)
+            // 타겟이 없거나 비활성이면 재탐색
+            if (!IsAgentValid(targetAgent))
                 FindInitialTarget();
 
             // 타겟 변경 시 히스토리 초기화
             if (targetAgent != _prevAgent)
             {
                 _prevAgent = targetAgent;
+                _lastCallCount = -1;
+                _staleFrames = 0;
                 ClearHistory();
             }
 
             if (targetAgent == null || targetAgent.lastObservations == null) return;
 
-            // 관측 수 변경 감지 → 히스토리 + 라벨 동적 리사이즈
-            int agentObsCount = targetAgent.lastObservations.Length;
-            if (agentObsCount != _obsCount)
+            // 관측 수 변경 감지 → 히스토리 리사이즈 (기존 데이터 보존)
+            // lastObservationsCount 사용 (배열은 오직 커지기만 하므로 Length와 다를 수 있음)
+            int agentObsCount = targetAgent.lastObservationsCount;
+            if (agentObsCount <= 0) agentObsCount = targetAgent.lastObservations.Length;
+            if (agentObsCount != _obsCount && agentObsCount > 0)
             {
-                InitHistory(agentObsCount);
+                ResizeHistory(agentObsCount);
                 RepositionLabels();
             }
 
-            int count = Mathf.Min(agentObsCount, _obsCount);
-            for (int i = 0; i < count; i++)
-                _history[i][_writeIndex] = targetAgent.lastObservations[i];
+            // collectObsCallCount가 변하지 않았으면 같은 값 중복 기록 방지
+            int currentCallCount = targetAgent.collectObsCallCount;
+            if (currentCallCount != _lastCallCount)
+            {
+                _lastCallCount = currentCallCount;
+                _staleFrames = 0;
 
-            _writeIndex = (_writeIndex + 1) % historyLength;
-            _sampleCount = Mathf.Min(_sampleCount + 1, historyLength);
+                int count = Mathf.Min(agentObsCount, _obsCount);
+                for (int i = 0; i < count; i++)
+                    _history[i][_writeIndex] = targetAgent.lastObservations[i];
+
+                _writeIndex = (_writeIndex + 1) % historyLength;
+                _sampleCount = Mathf.Min(_sampleCount + 1, historyLength);
+            }
+            else
+            {
+                _staleFrames++;
+            }
 
             // 값 텍스트 업데이트
             if (valueTexts != null)
             {
                 int prevIdx = (_writeIndex - 1 + historyLength) % historyLength;
-                for (int i = 0; i < Mathf.Min(valueTexts.Length, count); i++)
+                for (int i = 0; i < Mathf.Min(valueTexts.Length, _obsCount); i++)
                 {
                     if (valueTexts[i] != null)
                     {
-                        // 포커스 모드: 포커스 대상만 표시, 나머지 숨김
                         if (_focusIndex >= 0)
                         {
-                            valueTexts[i].gameObject.SetActive(i == _focusIndex);
-                            if (i == _focusIndex)
-                                valueTexts[i].text = _history[i][prevIdx].ToString("F4");
+                            // 포커스 모드: 기존 값 텍스트 전부 숨김 (전용 타이틀에 값 포함)
+                            valueTexts[i].gameObject.SetActive(false);
                         }
                         else
                         {
@@ -252,9 +338,8 @@ namespace BoatAttack
                     if (labelTexts[i] == null) continue;
                     if (_focusIndex >= 0)
                     {
-                        labelTexts[i].gameObject.SetActive(i == _focusIndex);
-                        if (i == _focusIndex)
-                            labelTexts[i].text = $"[{_focusIndex + 1}/{_obsCount}] {GetDynamicLabel(i)}  (P:next / ESC:back)";
+                        // 포커스 모드: 기존 라벨 전부 숨김 (전용 타이틀 사용)
+                        labelTexts[i].gameObject.SetActive(false);
                     }
                     else
                     {
@@ -271,6 +356,43 @@ namespace BoatAttack
                 {
                     if (rangeTexts[i] != null)
                         rangeTexts[i].gameObject.SetActive(_focusIndex < 0 || i == _focusIndex);
+                }
+            }
+
+            // 포커스 모드 전용 타이틀 업데이트
+            if (_focusTitleText != null)
+            {
+                if (_focusIndex >= 0 && _focusIndex < _obsCount)
+                {
+                    _focusTitleText.gameObject.SetActive(true);
+                    string label = GetDynamicLabel(_focusIndex);
+                    Color labelCol = GetColor(_focusIndex);
+                    string hex = ColorUtility.ToHtmlStringRGB(labelCol);
+                    int prevIdx = (_writeIndex - 1 + historyLength) % historyLength;
+                    float val = _history[_focusIndex][prevIdx];
+                    _focusTitleText.text = $"<color=#{hex}>[{_focusIndex + 1}/{_obsCount}] {label}</color>  <color=#AAAAAA>{val:F4}</color>  <size=14><color=#666666>P:next  ESC:back</color></size>";
+                }
+                else
+                {
+                    // 전체 보기: 디버그 정보 (staleness는 위에서 이미 계산됨)
+                    _focusTitleText.gameObject.SetActive(true);
+                    string agentName = targetAgent != null ? targetAgent.name : "null";
+                    int callCount = targetAgent != null ? targetAgent.collectObsCallCount : 0;
+
+                    // 상태 표시: LIVE(녹색) / STALE(노란) / NO OBS(빨강)
+                    string status;
+                    if (_staleFrames > 30)
+                        status = "<color=#FF0000>NO OBS</color>";
+                    else if (_staleFrames > 5)
+                        status = "<color=#FFAA00>STALE</color>";
+                    else
+                        status = "<color=#00FF00>LIVE</color>";
+
+                    // 에이전트 위치 (HIDDEN_POS 감지용)
+                    Vector3 pos = targetAgent != null ? targetAgent.transform.position : Vector3.zero;
+                    bool active = targetAgent != null && targetAgent.gameObject.activeInHierarchy;
+
+                    _focusTitleText.text = $"<size=14>{status} <color=#888888>{agentName}  obs:{_obsCount}  calls:{callCount}  {(active?"ON":"<color=#FF0000>OFF</color>")}  ({pos.x:F0},{pos.y:F0},{pos.z:F0})</color></size>";
                 }
             }
 
@@ -653,22 +775,22 @@ namespace BoatAttack
 
             int bufferIdx = index - Labels.Length;
 
-            // 적군 버퍼 영역 (5개씩: R, F, Dist, Hdg, Threat)
+            // 적군 버퍼 영역 (3개씩: Dist, SignedBrg, Hdg)
             int enemyCount = (targetAgent != null) ? targetAgent.lastEnemyBufferObs.Count : 0;
             if (bufferIdx >= 0 && bufferIdx < enemyCount)
             {
-                int enemyNum = bufferIdx / 5;
-                int comp = bufferIdx % 5;
+                int enemyNum = bufferIdx / 3;
+                int comp = bufferIdx % 3;
                 return $"E{enemyNum} {EnemyObsSuffix[comp]}";
             }
 
-            // 아군 버퍼 영역 (5개씩: Dist, Fwd, Side, Hdg, Web)
+            // 아군 버퍼 영역 (2개씩: Dist, Brg)
             int allyIdx = bufferIdx - enemyCount;
             int allyCount = (targetAgent != null) ? targetAgent.lastAllyBufferObs.Count : 0;
             if (allyIdx >= 0 && allyIdx < allyCount)
             {
-                int allyNum = allyIdx / 5;
-                int comp = allyIdx % 5;
+                int allyNum = allyIdx / 2;
+                int comp = allyIdx % 2;
                 return $"A{allyNum} {AllyObsSuffix[comp]}";
             }
 

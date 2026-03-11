@@ -19,8 +19,21 @@ namespace BoatAttack
         [Tooltip("거리 허용 범위 (±m) - 최적 거리 기준")]
         public float distanceTolerance = 25f;
 
-        [Tooltip("적 접근 보상 (Web-적 거리 1m 감소당)")]
-        public float approachRewardPerMeter = 0.001f;
+        [Tooltip("적 접근 보상 (레거시, 0=비활성화)")]
+        public float approachRewardPerMeter = 0f;
+
+        [Header("=== 차단 위치 보상 ===")]
+        [Tooltip("차단 위치 개선 1m당 보상 (적 경로-Web 수직거리 감소)")]
+        public float interceptRewardPerMeter = 0.002f;
+
+        [Tooltip("urgency 기준 거리 (이 along에서 배율 1.0)")]
+        public float interceptRefDist = 200f;
+
+        [Tooltip("along 최소 클램프 (0 나누기 방지)")]
+        public float interceptMinClamp = 30f;
+
+        [Tooltip("urgency 최대 배율")]
+        public float interceptMaxMultiplier = 5f;
 
         [Tooltip("헤딩 정렬 보상 (0=비활성화, 적 돌진 유발 방지)")]
         public float headingAlignmentReward = 0f;
@@ -56,6 +69,9 @@ namespace BoatAttack
         [Tooltip("NoPairsLeft 종료 시 남은 적군 1대당 페널티 (음수)")]
         public float remainingEnemyPenalty = -0.5f;
 
+        [Tooltip("모든 적군 제압 시 추가 보너스")]
+        public float allClearBonus = 2.0f;
+
         [Header("=== 커버리지 보상 ===")]
         [Tooltip("적군 커버리지 거리 감소 1m당 그룹 보상")]
         public float coverageRewardPerMeter = 0.001f;
@@ -78,8 +94,18 @@ namespace BoatAttack
         [Tooltip("적이 아군보다 모선에 가까울 때 페널티")]
         public float enemyOvertakePenalty = -1.0f;
 
-        // 이전 스텝의 Web-적 거리 (접근 보상 계산용)
-        private float _prevWebToEnemyDist = float.MaxValue;
+        // 이전 스텝의 Web-적 거리 (쌍별 접근 보상 계산용)
+        private float _prevWebToEnemyDist = float.MaxValue; // 레거시 (단일 쌍 호환)
+        private readonly System.Collections.Generic.Dictionary<int, float> _prevDistByPair
+            = new System.Collections.Generic.Dictionary<int, float>();
+
+        // 이전 스텝의 차단 수직거리 (쌍별 추적)
+        private readonly System.Collections.Generic.Dictionary<int, float> _prevInterceptByPair
+            = new System.Collections.Generic.Dictionary<int, float>();
+
+        // 이전 스텝의 담당 적 인덱스 (쌍별 추적, 적 변경 시 prev 리셋)
+        private readonly System.Collections.Generic.Dictionary<int, int> _prevEnemyByPair
+            = new System.Collections.Generic.Dictionary<int, int>();
 
         /// <summary>
         /// 에이전트 상태
@@ -219,11 +245,81 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// 쌍별 매 스텝 보상 계산 (멀티 쌍 대응)
+        /// 대형 유지 + 차단 위치 + 시간 페널티
+        /// </summary>
+        /// <param name="interceptDist">적 경로 Ray에서 Web 중심까지 수직 거리 (along≤0이면 float.MaxValue)</param>
+        /// <param name="alongDist">적 전방 투영 거리 (urgency 계산용, along≤0이면 0)</param>
+        public float CalculatePairStepReward(int pairIdx, AgentState agent1, AgentState agent2,
+            float interceptDist, float alongDist, int enemyIdx = -1)
+        {
+            float reward = 0f;
+
+            // 1. 대형 유지: 아군 간 거리가 적정 범위(optimalDistance ± tolerance) 내면 보상
+            float allyDist = Vector3.Distance(agent1.position, agent2.position);
+            float error = Mathf.Abs(allyDist - optimalDistance);
+            if (error <= distanceTolerance)
+            {
+                reward += formationReward * (1f - error / distanceTolerance);
+            }
+
+            // 담당 적이 바뀌면 prev 리셋 (다른 적의 interceptDist와 비교 방지)
+            if (_prevEnemyByPair.TryGetValue(pairIdx, out int prevEnemy) && prevEnemy != enemyIdx)
+            {
+                _prevInterceptByPair.Remove(pairIdx);
+                _prevDistByPair.Remove(pairIdx);
+            }
+            _prevEnemyByPair[pairIdx] = enemyIdx;
+
+            // 2. 차단 위치 보상: 적 경로-Web 수직거리가 줄어들면 보상
+            // 적이 직진하면 interceptDist는 불변 → 아군 이동분만 보상
+            if (!_prevInterceptByPair.TryGetValue(pairIdx, out float prevIntercept))
+                prevIntercept = float.MaxValue;
+
+            if (interceptDist < float.MaxValue && prevIntercept < float.MaxValue)
+            {
+                float delta = prevIntercept - interceptDist; // 줄어들면 양수
+                if (delta > 0f && alongDist > 0f)
+                {
+                    // 적이 가까울수록 urgency 증가 (긴급 차단 유도)
+                    float urgency = interceptRefDist / Mathf.Max(alongDist, interceptMinClamp);
+                    urgency = Mathf.Min(urgency, interceptMaxMultiplier);
+                    reward += interceptRewardPerMeter * delta * urgency;
+                }
+            }
+            _prevInterceptByPair[pairIdx] = interceptDist;
+
+            // 3. 레거시 접근 보상 (approachRewardPerMeter > 0일 때만, 기본 비활성)
+            if (approachRewardPerMeter > 0f)
+            {
+                if (!_prevDistByPair.TryGetValue(pairIdx, out float prevDist))
+                    prevDist = float.MaxValue;
+                float webToEnemyDist = (interceptDist < float.MaxValue)
+                    ? Mathf.Sqrt(interceptDist * interceptDist + alongDist * alongDist)
+                    : float.MaxValue;
+                if (webToEnemyDist < float.MaxValue && prevDist < float.MaxValue)
+                {
+                    float d = prevDist - webToEnemyDist;
+                    if (d > 0f) reward += approachRewardPerMeter * d;
+                }
+                _prevDistByPair[pairIdx] = webToEnemyDist;
+            }
+
+            // 4. 시간 페널티
+            reward += timePenalty;
+
+            return reward;
+        }
+
+        /// <summary>
         /// 리셋 (에피소드 시작 시)
         /// </summary>
         public void Reset()
         {
             _prevWebToEnemyDist = float.MaxValue;
+            _prevDistByPair.Clear();
+            _prevInterceptByPair.Clear();
+            _prevEnemyByPair.Clear();
         }
     }
 }

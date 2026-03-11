@@ -669,7 +669,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 13
+    VectorObservationSize: 6
     NumStackedVectorObservations: 3
     m_ActionSpec:
       m_NumContinuousActions: 2
@@ -731,16 +731,14 @@ MonoBehaviour:
   speedMultiplier: 1
   inputSmoothing: 0.2
   partnerNormK: 50
-  enemyNormK: 300
-  motherNormK: 500
+  enemyNormK: 600
+  motherNormK: 1000
   partnerRScale: 1
   partnerFScale: 1
   partnerDistScale: 1
   partnerHdgScale: 1
-  enemyRScale: 1
-  enemyFScale: 1
   enemyDistScale: 1
-  enemyHdgScale: 1
+  bearingNormK: 30
   motherDistScale: 1
   speedNormK: 10
   forwardSpeedScale: 1
@@ -758,6 +756,8 @@ MonoBehaviour:
   showRaycasts: 1
   enableDebugLog: 0
   lastObservations: []
+  lastObservationsCount: 0
+  collectObsCallCount: 0
   lastEnemyBufferObs: []
   lastAllyBufferObs: []
   _totalReward: 0
@@ -789,5 +789,5 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_SensorName: BufferSensor
-  m_ObservableSize: 4
+  m_ObservableSize: 2
   m_MaxNumObservables: 10
