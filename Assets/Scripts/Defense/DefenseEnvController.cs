@@ -1235,6 +1235,10 @@ namespace BoatAttack
                 totalStepReward = stepReward;
             }
 
+            // 매칭 시각화 (Debug.DrawLine, Game/Scene 뷰 모두 표시)
+            if (launchZoneManager != null)
+                launchZoneManager.DrawMatchingDebugLines();
+
             // Inspector 모니터링
             _lastStepReward = totalStepReward;
             _currentEpisodeReward += totalStepReward;

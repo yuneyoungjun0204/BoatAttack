@@ -2187,6 +2187,8 @@ namespace BoatAttack
                     $"Zone {i} ({angleDeg:F0}° / {dist:F0}m)", style);
 #endif
             }
+
+            // Greedy 1:1 매칭 시각화 (Gizmos 버전은 제거, Debug.DrawLine 사용)
         }
 
         private static void DrawWireCylinder(Vector3 center, float radius, float height)
@@ -2213,6 +2215,54 @@ namespace BoatAttack
                 if (i % 4 == 0) Gizmos.DrawLine(ct, cb);
                 prevTop = ct;
                 prevBot = cb;
+            }
+        }
+
+        /// <summary>
+        /// Greedy 1:1 매칭 시각화 (Debug.DrawLine → Gizmos 불필요, Game/Scene 뷰 모두 표시)
+        /// FixedUpdate에서 매 스텝 호출
+        /// </summary>
+        public void DrawMatchingDebugLines()
+        {
+            if (_pairPool == null || _pairToEnemyAssignment == null || _pairToEnemyAssignment.Count == 0) return;
+
+            GameObject[] enemies = envController != null ? envController.enemyShips : null;
+            if (enemies == null) return;
+
+            Color[] pairColors = {
+                Color.green, Color.cyan, Color.yellow,
+                Color.magenta, new Color(1f, 0.5f, 0f), Color.white
+            };
+
+            float dt = Time.fixedDeltaTime * 2f; // 2프레임 유지
+
+            foreach (var kvp in _pairToEnemyAssignment)
+            {
+                int pi = kvp.Key;
+                int ei = kvp.Value;
+
+                if (pi < 0 || pi >= _pairPool.Count) continue;
+                var pair = _pairPool[pi];
+                if (pair == null || !pair.isActive || pair.agent1 == null || pair.agent2 == null) continue;
+                if (ei < 0 || ei >= enemies.Length || enemies[ei] == null || !enemies[ei].activeInHierarchy) continue;
+
+                Vector3 webCenter = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+                Vector3 enemyPos = enemies[ei].transform.position;
+                Color c = pairColors[pi % pairColors.Length];
+
+                // 매칭 라인 (Web 중심 → 적)
+                Debug.DrawLine(webCenter, enemyPos, c, dt);
+
+                // Web 중심 십자 표시
+                float s = 3f;
+                Debug.DrawLine(webCenter + Vector3.left * s, webCenter + Vector3.right * s, c, dt);
+                Debug.DrawLine(webCenter + Vector3.forward * s, webCenter + Vector3.back * s, c, dt);
+
+                // 적 위치 X 표시
+                float ex = 5f;
+                Color ce = new Color(c.r, c.g, c.b, 0.8f);
+                Debug.DrawLine(enemyPos + new Vector3(-ex, 0, -ex), enemyPos + new Vector3(ex, 0, ex), ce, dt);
+                Debug.DrawLine(enemyPos + new Vector3(-ex, 0, ex), enemyPos + new Vector3(ex, 0, -ex), ce, dt);
             }
         }
 
