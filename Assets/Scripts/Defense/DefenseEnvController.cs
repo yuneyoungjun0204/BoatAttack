@@ -264,6 +264,9 @@ namespace BoatAttack
         private float[] _poolNoiseSeed;
         private float _poolTemplateY; // 템플릿 높이(y) 저장
 
+        // Raycast 차단 시각화 (적→모선)
+        private LineRenderer[] _enemyRayLines;
+
         [Header("Multi-Environment")]
         [Tooltip("환경 루트 Transform (Island Level 등). 비어있으면 부모 또는 자기 자신 사용")]
         public Transform environmentRoot;
@@ -1233,6 +1236,119 @@ namespace BoatAttack
                     }
                 }
                 totalStepReward = stepReward;
+            }
+
+            // Raycast 차단 보상 + 시각화: 각 활성 적에서 모선 방향으로 Ray
+            if (motherShip != null && _enemyPool != null && rewardCalculator.raycastInterceptReward > 0f)
+            {
+                Vector3 motherPos = motherShip.transform.position;
+
+                for (int ei = 0; ei < _enemyPool.Length; ei++)
+                {
+                    if (_enemyPool[ei] == null || !_enemyPool[ei].activeSelf)
+                    {
+                        // 비활성 적은 Ray 숨기기
+                        if (_enemyRayLines != null && ei < _enemyRayLines.Length && _enemyRayLines[ei] != null)
+                            _enemyRayLines[ei].enabled = false;
+                        continue;
+                    }
+                    if (IsEnemyNeutralized(_enemyPool[ei]))
+                    {
+                        if (_enemyRayLines != null && ei < _enemyRayLines.Length && _enemyRayLines[ei] != null)
+                            _enemyRayLines[ei].enabled = false;
+                        continue;
+                    }
+
+                    Vector3 enemyPos = _enemyPool[ei].transform.position;
+                    Vector3 toMother = motherPos - enemyPos;
+                    toMother.y = 0f;
+                    float distToMother = toMother.magnitude;
+
+                    if (distToMother < 1f) continue;
+
+                    Vector3 rayDir = toMother.normalized;
+                    Vector3 rayEnd = enemyPos + rayDir * distToMother;
+
+                    // 시각화: LineRenderer 업데이트
+                    bool hitWeb = false;
+                    if (_enemyRayLines != null && ei < _enemyRayLines.Length && _enemyRayLines[ei] != null)
+                    {
+                        _enemyRayLines[ei].enabled = true;
+                        _enemyRayLines[ei].SetPosition(0, enemyPos + Vector3.up * 2f);
+                        _enemyRayLines[ei].SetPosition(1, rayEnd + Vector3.up * 2f);
+                    }
+
+                    // Raycast: 적→모선 방향으로 쏘기 (Trigger 콜라이더도 감지)
+                    RaycastHit[] hits = Physics.RaycastAll(
+                        enemyPos + Vector3.up * 2f, rayDir, distToMother,
+                        Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide);
+
+                    // 디버그: 100스텝마다 첫 번째 적의 레이 정보 출력
+                    if (ei == 0 && _resetTimer % 100 == 0)
+                    {
+                        Debug.Log($"[RayDebug] Enemy0 ray: origin={enemyPos + Vector3.up * 2f}, dir={rayDir}, dist={distToMother:F1}, hits={hits.Length}");
+                        foreach (var dbgHit in hits)
+                        {
+                            var dbgDw = dbgHit.collider.GetComponent<DynamicWeb>();
+                            if (dbgDw == null) dbgDw = dbgHit.collider.GetComponentInParent<DynamicWeb>();
+                            Debug.Log($"[RayDebug]   hit: {dbgHit.collider.gameObject.name} (layer={dbgHit.collider.gameObject.layer}), isTrigger={dbgHit.collider.isTrigger}, hasDW={dbgDw != null}, point={dbgHit.point}");
+                        }
+                        // Web 위치도 출력
+                        if (launchZoneManager != null && launchZoneManager.IsInitialized)
+                        {
+                            for (int wpi = 0; wpi < launchZoneManager.GetCurrentPoolCount(); wpi++)
+                            {
+                                var wp = launchZoneManager.GetPair(wpi);
+                                if (wp == null || !wp.isActive || wp.webObject == null) continue;
+                                var wbc = wp.webObject.GetComponent<BoxCollider>();
+                                if (wbc != null)
+                                    Debug.Log($"[RayDebug]   Web{wpi}: pos={wp.webObject.transform.position}, bounds={wbc.bounds}, isTrigger={wbc.isTrigger}");
+                            }
+                        }
+                    }
+
+                    foreach (var hit in hits)
+                    {
+                        var dw = hit.collider.GetComponent<DynamicWeb>();
+                        if (dw == null) dw = hit.collider.GetComponentInParent<DynamicWeb>();
+                        if (dw == null) continue;
+
+                        hitWeb = true;
+
+                        // Ray가 Web에 닿음 → 해당 쌍에 보상
+                        DefenseAgent agent = null;
+                        if (dw.defenseShip1 != null)
+                            agent = dw.defenseShip1.GetComponent<DefenseAgent>();
+                        if (agent == null && dw.defenseShip2 != null)
+                            agent = dw.defenseShip2.GetComponent<DefenseAgent>();
+
+                        if (agent != null)
+                        {
+                            float reward = rewardCalculator.raycastInterceptReward;
+                            agent.AddReward(reward);
+                            if (agent.partnerAgent != null)
+                                agent.partnerAgent.AddReward(reward);
+                            totalStepReward += reward;
+                        }
+
+                        break; // 한 적당 하나의 Web만
+                    }
+
+                    // Ray 색상: Web에 닿으면 초록, 아니면 빨강
+                    if (_enemyRayLines != null && ei < _enemyRayLines.Length && _enemyRayLines[ei] != null)
+                    {
+                        if (hitWeb)
+                        {
+                            _enemyRayLines[ei].startColor = new Color(0f, 1f, 0f, 0.7f);
+                            _enemyRayLines[ei].endColor = new Color(0f, 1f, 0f, 0.2f);
+                        }
+                        else
+                        {
+                            _enemyRayLines[ei].startColor = new Color(1f, 0f, 0f, 0.5f);
+                            _enemyRayLines[ei].endColor = new Color(1f, 0f, 0f, 0.1f);
+                        }
+                    }
+                }
             }
 
             // Inspector 모니터링
@@ -2538,6 +2654,9 @@ namespace BoatAttack
             _poolDollyCarts = new Cinemachine.CinemachineDollyCart[poolSize];
             _poolNoiseSeed = new float[poolSize];
 
+            // Raycast 시각화용 LineRenderer 배열
+            _enemyRayLines = new LineRenderer[poolSize];
+
             // 씬에서 템플릿 찾기 (3단계 fallback)
             // 1순위: 환경 루트 하위 태그 검색
             // 2순위: Inspector enemyShips 배열
@@ -2598,6 +2717,19 @@ namespace BoatAttack
                 clone.SetActive(false);
                 _enemyPool[i] = clone;
                 CachePoolComponents(i);
+
+                // Raycast 시각화용 LineRenderer (적→모선)
+                var rayLineObj = new GameObject($"RayLine_{i}");
+                rayLineObj.transform.SetParent(clone.transform);
+                var lr = rayLineObj.AddComponent<LineRenderer>();
+                lr.positionCount = 2;
+                lr.startWidth = 0.5f;
+                lr.endWidth = 0.5f;
+                lr.material = new Material(Shader.Find("Sprites/Default"));
+                lr.startColor = new Color(1f, 0f, 0f, 0.5f);
+                lr.endColor = new Color(1f, 0f, 0f, 0.1f);
+                lr.enabled = false;
+                _enemyRayLines[i] = lr;
             }
             template.SetActive(false);
             template.name = $"{template.name}_template(unused)";

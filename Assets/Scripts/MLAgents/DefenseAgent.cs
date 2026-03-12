@@ -83,7 +83,7 @@ namespace BoatAttack
 
         [Range(0f, 1f)]
         [Tooltip("최소 Throttle (action=0일 때 최소 전진력)")]
-        public float minThrottle = 0.3f;
+        public float minThrottle = 0.1f;
 
         [Range(0.1f, 2.0f)]
         public float steeringSensitivity = 1.0f;
@@ -744,10 +744,9 @@ namespace BoatAttack
             throttleInput = Mathf.Clamp(throttleInput, -1f, 1f);
             steeringInput = Mathf.Clamp(steeringInput, -1f, 1f);
 
-            // Throttle Mapping (simple):
-            //   action [-1,+1] → throttle [minThrottle, maxThrottle]
-            //   -1 → minThrottle(0.3), 0 → mid(0.65), +1 → maxThrottle(1.0)
-            float throttle = minThrottle + (throttleInput + 1f) * 0.5f * (maxThrottle - minThrottle);
+            // Throttle Mapping: action [-1,+1] → throttle [0, maxThrottle]
+            //   -1 → 0 (정지), 0 → 0.5×max, +1 → max (전진 최대)
+            float throttle = (throttleInput + 1f) * 0.5f * maxThrottle;
 
             // Steering
             float steering = Mathf.Clamp(steeringInput * steeringSensitivity, -1f, 1f);

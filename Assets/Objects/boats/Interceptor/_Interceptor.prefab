@@ -670,7 +670,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_BrainParameters:
     VectorObservationSize: 6
-    NumStackedVectorObservations: 3
+    NumStackedVectorObservations: 1
     m_ActionSpec:
       m_NumContinuousActions: 2
       BranchSizes: 
@@ -726,7 +726,7 @@ MonoBehaviour:
   maxLinearAcceleration: 5
   maxAngularAcceleration: 45
   maxThrottle: 1
-  minThrottle: 0
+  minThrottle: 0.15
   steeringSensitivity: 1.112
   speedMultiplier: 1
   inputSmoothing: 0.2
@@ -738,7 +738,7 @@ MonoBehaviour:
   partnerDistScale: 1
   partnerHdgScale: 1
   enemyDistScale: 1
-  bearingNormK: 30
+  bearingNormK: 10
   motherDistScale: 1
   speedNormK: 10
   forwardSpeedScale: 1
@@ -747,7 +747,7 @@ MonoBehaviour:
   phantomSpacing: 80
   phantomSpeed: 50
   phantomSpeedMult: 1.5
-  phantomNoiseStrength: 3
+  phantomNoiseStrength: 5
   phantomWebHalfWidth: 25
   phantomPairs: []
   phantomCount: 0

@@ -548,8 +548,13 @@ namespace BoatAttack
                 List<int> pairIndices = kvp.Value;
                 LaunchZone zone = launchZones[zoneIdx];
 
-                // 진수구역 방위각 + jitter
-                float zoneAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+                // 1쌍만 배정된 구역: 적 접근 각도 기준으로 직접 배치 (경로 정면 차단)
+                // 여러 쌍이 배정된 구역: 진수구역 방위각 기준 (횡대열 전개)
+                float zoneAngleDeg;
+                if (pairIndices.Count == 1)
+                    zoneAngleDeg = approachAngleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+                else
+                    zoneAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
                 float zoneAngleRad = zoneAngleDeg * Mathf.Deg2Rad;
                 Vector3 zoneDir = new Vector3(Mathf.Sin(zoneAngleRad), 0f, Mathf.Cos(zoneAngleRad));
 

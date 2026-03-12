@@ -38,6 +38,9 @@ namespace BoatAttack
         [Tooltip("헤딩 정렬 보상 (0=비활성화, 적 돌진 유발 방지)")]
         public float headingAlignmentReward = 0f;
 
+        [Tooltip("추력 보상 계수 (throttle × 계수 = 매 스텝 보상)")]
+        public float throttleRewardCoeff = 0.0002f;
+
         [Tooltip("시간 페널티 (매 스텝)")]
         public float timePenalty = -0.0001f;
 
@@ -75,6 +78,10 @@ namespace BoatAttack
         [Header("=== 커버리지 보상 ===")]
         [Tooltip("적군 커버리지 거리 감소 1m당 그룹 보상")]
         public float coverageRewardPerMeter = 0.001f;
+
+        [Header("=== Raycast 차단 보상 ===")]
+        [Tooltip("적→모선 Ray가 Web에 닿을 때 해당 쌍에 매 스텝 보상")]
+        public float raycastInterceptReward = 0.002f;
 
         [Header("=== 거리 제한 ===")]
         [Tooltip("아군 간 최대 허용 거리 (초과 시 쌍 무력화)")]
