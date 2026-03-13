@@ -514,7 +514,7 @@ namespace BoatAttack
                 {
                     if (i == myPairIdx) continue;
                     DefensePair pair = lzm.GetPair(i);
-                    if (pair == null) continue;
+                    if (pair == null || !pair.isActive) continue;
                     if (pair.agent1 == null || pair.agent2 == null) continue;
 
                     Vector3 a1Pos = pair.agent1.transform.position;
@@ -765,6 +765,13 @@ namespace BoatAttack
 
             _engine.Accelerate(throttle);
             _engine.Turn(steering);
+
+            // 가속 보상: throttle 높을수록 보상 (적극적 기동 유도)
+            if (envController != null && envController.rewardCalculator != null)
+            {
+                float throttleReward = envController.rewardCalculator.throttleRewardCoeff * throttle;
+                AddReward(throttleReward);
+            }
 
             // 디버그 로그
             if (enableDebugLog)

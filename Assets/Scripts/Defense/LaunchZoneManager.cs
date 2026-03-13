@@ -307,6 +307,9 @@ namespace BoatAttack
             {
                 var obj = Instantiate(webPrefab, parent);
                 obj.SetActive(false); // Start() 전에 ship 참조 설정 보장
+                // Instantiate가 원본의 _initialized, _netContainer 등을 복사하므로 리셋
+                var clonedDw = obj.GetComponent<DynamicWeb>();
+                if (clonedDw != null) clonedDw.ResetCloneState();
                 return obj;
             }
 
@@ -357,10 +360,14 @@ namespace BoatAttack
                 GameObject webClone = Instantiate(templatePair.webObject, poolParent);
                 webClone.name = $"Web_pair{index}";
 
-                // Instantiate 시 복제된 WebVisual 자식 제거 (Start()에서 새로 생성됨)
-                Transform orphanedVisual = webClone.transform.Find("WebVisual");
-                if (orphanedVisual != null)
-                    Object.Destroy(orphanedVisual.gameObject);
+                // Instantiate 시 복제된 비주얼 자식 즉시 제거 (Start()에서 새로 생성됨)
+                // DestroyImmediate 사용: Destroy()는 프레임 끝에 실행되어 DynamicWeb.Start()와 경합
+                for (int ci = webClone.transform.childCount - 1; ci >= 0; ci--)
+                {
+                    GameObject child = webClone.transform.GetChild(ci).gameObject;
+                    if (child.name == "WebVisual" || child.name == "FishingNetVisual")
+                        Object.DestroyImmediate(child);
+                }
 
                 pair.webObject = webClone;
             }
@@ -425,6 +432,8 @@ namespace BoatAttack
                     Debug.LogWarning($"[CreatePairClone] DynamicWeb 컴포넌트 없음 → 추가 (pair{index})");
                     dynamicWeb = pair.webObject.AddComponent<DynamicWeb>();
                 }
+                // Instantiate가 원본의 _initialized=true, _netContainer=원본참조를 복사하므로 리셋
+                dynamicWeb.ResetCloneState();
                 dynamicWeb.defenseShip1 = pair.agent1.transform;
                 dynamicWeb.defenseShip2 = pair.agent2.transform;
                 if (envController != null)
@@ -516,7 +525,10 @@ namespace BoatAttack
             //     $"maxPairCount={maxPairCount}, poolLen={_pairPool.Count}, " +
             //     $"motherPos={motherPos}, agentGroup={agentGroup != null}");
 
-            // 0. 진수구역 쿨다운 리셋
+            // 0. 이전 에피소드의 DelayedWebDisable 코루틴 중지 (고아 Web 방지)
+            StopAllCoroutines();
+
+            // 진수구역 쿨다운 리셋
             ResetZoneCooldowns();
 
             // 1. 모든 쌍 비활성화 + MA-POCA 해제
@@ -548,10 +560,12 @@ namespace BoatAttack
                 List<int> pairIndices = kvp.Value;
                 LaunchZone zone = launchZones[zoneIdx];
 
-                // 1쌍만 배정된 구역: 적 접근 각도 기준으로 직접 배치 (경로 정면 차단)
-                // 여러 쌍이 배정된 구역: 진수구역 방위각 기준 (횡대열 전개)
+                // 양동: 각 구역이 담당하는 적 방향(구역 방위각) 기준 배치
+                // 집중/파상: 1쌍이면 적 접근 각도, 여러 쌍이면 구역 방위각
                 float zoneAngleDeg;
-                if (pairIndices.Count == 1)
+                if (formationType == FormationType.Diversionary)
+                    zoneAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+                else if (pairIndices.Count == 1)
                     zoneAngleDeg = approachAngleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
                 else
                     zoneAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
@@ -611,9 +625,9 @@ namespace BoatAttack
                     if (pair.agent2 != null) pair.agent2.assignedTargetIndex = bestEnemyIdx + 1;
                 }
 
-                // Stage3/7: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
+                // Stage3/7/8: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
                 Quaternion rot;
-                if (envController != null && (envController.currentStage == TrainingStage.Stage3_Tactical || envController.currentStage == TrainingStage.Stage7_FleetManeuver))
+                if (envController != null && (envController.currentStage == TrainingStage.Stage3_Tactical || envController.currentStage == TrainingStage.Stage7_FleetManeuver || envController.currentStage == TrainingStage.Stage8_TacticalFullObs))
                 {
                     rot = Quaternion.LookRotation(zoneDir, Vector3.up);
                 }
@@ -669,51 +683,46 @@ namespace BoatAttack
             var assignments = new Dictionary<int, List<int>>();
             var usedZones = new HashSet<int>();
 
-            bool isFleet = envController != null && envController.currentStage == TrainingStage.Stage7_FleetManeuver;
+            bool isFleet = envController != null && (envController.currentStage == TrainingStage.Stage7_FleetManeuver
+                || envController.currentStage == TrainingStage.Stage8_TacticalFullObs);
 
             if (formationType == FormationType.Diversionary && diversionaryAngles != null && diversionaryAngles.Length > 1)
             {
-                // 양동: 각 방향별로 가까운 구역에 분산 배정
-                int pairsPerDir = pairCount / diversionaryAngles.Length;
-                int pairRemainder = pairCount % diversionaryAngles.Length;
+                // 양동: 라운드 로빈으로 각 방향에 1쌍씩 균등 배정
+                int dirCount = diversionaryAngles.Length;
                 int pairIdx = 0;
 
-                for (int d = 0; d < diversionaryAngles.Length; d++)
+                // 각 방향별 가장 가까운 구역 미리 계산
+                int[] bestZonePerDir = new int[dirCount];
+                float[] dirAnglesDeg = new float[dirCount];
+                for (int d = 0; d < dirCount; d++)
                 {
-                    float dirAngleDeg = diversionaryAngles[d] * Mathf.Rad2Deg;
-                    int count = pairsPerDir + (d < pairRemainder ? 1 : 0);
+                    dirAnglesDeg[d] = diversionaryAngles[d] * Mathf.Rad2Deg;
+                    bestZonePerDir[d] = FindClosestZone(dirAnglesDeg[d]);
+                }
 
-                    // 이 방향 기준 가까운 순 정렬
-                    var sorted = GetZonesSortedByAngle(dirAngleDeg);
+                // 라운드 로빈: 방향 0→1→2→0→1→2→... 순서로 1쌍씩 배정
+                int dirSlot = 0;
+                int failCount = 0; // 연속 실패 카운트 (무한루프 방지)
+                while (pairIdx < pairCount && failCount < dirCount)
+                {
+                    int d = dirSlot % dirCount;
+                    int zoneIdx = bestZonePerDir[d];
+                    float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAnglesDeg[d], launchZones[zoneIdx].angleDeg));
 
-                    // Stage7: 구역 재사용 허용 (1구역에 여러 쌍)
-                    // 기타: 1구역 1쌍
-                    int zoneSlot = 0;
-                    for (int j = 0; j < count && pairIdx < pairCount; j++)
+                    if (angleDiff <= 90f)
                     {
-                        bool found = false;
-                        while (zoneSlot < sorted.Count)
-                        {
-                            int zoneIdx = sorted[zoneSlot];
-                            float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAngleDeg, launchZones[zoneIdx].angleDeg));
-                            if (angleDiff > 90f) break;
-
-                            if (!isFleet && usedZones.Contains(zoneIdx))
-                            {
-                                zoneSlot++;
-                                continue;
-                            }
-                            usedZones.Add(zoneIdx);
-                            if (!assignments.ContainsKey(zoneIdx))
-                                assignments[zoneIdx] = new List<int>();
-                            assignments[zoneIdx].Add(pairIdx);
-                            pairIdx++;
-                            if (!isFleet) zoneSlot++; // 기존: 다음 구역으로
-                            found = true;
-                            break;
-                        }
-                        if (!found) break;
+                        if (!assignments.ContainsKey(zoneIdx))
+                            assignments[zoneIdx] = new List<int>();
+                        assignments[zoneIdx].Add(pairIdx);
+                        pairIdx++;
+                        failCount = 0;
                     }
+                    else
+                    {
+                        failCount++;
+                    }
+                    dirSlot++;
                 }
             }
             else
@@ -945,7 +954,16 @@ namespace BoatAttack
                 Debug.LogError($"[SetPairActive] pair{index} 활성화 시 webObject가 null! 즉시 복구 시도");
                 EnsurePairWebIntegrity(pair, index);
             }
-            if (pair.webObject != null) pair.webObject.SetActive(active);
+            if (pair.webObject != null)
+            {
+                pair.webObject.SetActive(active);
+                // 활성화 시 비주얼 누락 검증 (Destroy로 파괴된 경우 재생성)
+                if (active)
+                {
+                    var dw = pair.webObject.GetComponent<DynamicWeb>();
+                    if (dw != null) dw.EnsureVisualExists();
+                }
+            }
             pair.isActive = active;
         }
 
@@ -1016,6 +1034,12 @@ namespace BoatAttack
                 pair.agent1.webObject = pair.webObject;
             if (pair.agent2 != null && pair.agent2.webObject != pair.webObject)
                 pair.agent2.webObject = pair.webObject;
+
+            // 8. 비주얼 무결성: DynamicWeb 내부 비주얼 오브젝트가 파괴되었으면 재초기화
+            if (dynamicWeb != null && dynamicWeb.showVisual)
+            {
+                dynamicWeb.EnsureVisualExists();
+            }
         }
 
         /// <summary>
@@ -1339,6 +1363,8 @@ namespace BoatAttack
                     Debug.LogWarning($"[SpawnPairFromPrefab] DynamicWeb 컴포넌트 없음 → 추가 (pair{index})");
                     dynamicWeb = webObj.AddComponent<DynamicWeb>();
                 }
+                // Instantiate가 원본의 _initialized=true, _netContainer=원본참조를 복사하므로 리셋
+                dynamicWeb.ResetCloneState();
                 dynamicWeb.defenseShip1 = a1.transform;
                 dynamicWeb.defenseShip2 = a2.transform;
                 dynamicWeb.webAnchor1 = null;

@@ -38,7 +38,7 @@ namespace BoatAttack
         [Tooltip("헤딩 정렬 보상 (0=비활성화, 적 돌진 유발 방지)")]
         public float headingAlignmentReward = 0f;
 
-        [Tooltip("추력 보상 계수 (throttle × 계수 = 매 스텝 보상)")]
+        [Tooltip("추력 보상 계수 (throttle × 계수 = 매 스텝 보상, 가속할수록 보상)")]
         public float throttleRewardCoeff = 0.0002f;
 
         [Tooltip("시간 페널티 (매 스텝)")]
@@ -83,6 +83,19 @@ namespace BoatAttack
         [Tooltip("적→모선 Ray가 Web에 닿을 때 해당 쌍에 매 스텝 보상")]
         public float raycastInterceptReward = 0.002f;
 
+        [Tooltip("수직 차단 보너스 계수 (perpScore × 계수가 보상 배율에 추가)")]
+        public float perpendicularBonusCoeff = 0.5f;
+
+        [Tooltip("중앙 차단 보너스 계수 (centerScore × 계수가 보상 배율에 추가)")]
+        public float centerBonusCoeff = 0.5f;
+
+        [Header("=== 근접 포획 보너스 (Bridge Reward) ===")]
+        [Tooltip("Web중심↔적 거리가 임계값 이내일 때 보상 계수")]
+        public float proximityBridgeCoeff = 0.005f;
+
+        [Tooltip("근접 포획 보너스 활성화 거리 (m)")]
+        public float proximityThreshold = 30f;
+
         [Header("=== 거리 제한 ===")]
         [Tooltip("아군 간 최대 허용 거리 (초과 시 쌍 무력화)")]
         public float maxAllyDistance = 100f;
@@ -96,6 +109,13 @@ namespace BoatAttack
 
         [Tooltip("가상 아군쌍 침범 페널티")]
         public float phantomViolationPenalty = -0.5f;
+
+        [Header("=== 쌍 간 근접 페널티 ===")]
+        [Tooltip("다른 쌍과의 최소 허용 거리 (m) — 이 이내로 접근하면 연속 페널티")]
+        public float pairProximityMinDistance = 40f;
+
+        [Tooltip("쌍 간 근접 페널티 계수 (거리 1m 침범당 페널티)")]
+        public float pairProximityPenaltyCoeff = -0.001f;
 
         [Header("=== 적 추월 페널티 ===")]
         [Tooltip("적이 아군보다 모선에 가까울 때 페널티")]

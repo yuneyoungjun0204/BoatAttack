@@ -105,17 +105,25 @@ public class WindzoneExtended : MonoBehaviour
     /// <summary>
     /// 에피소드 리셋 시 호출하여 바람 방향/세기를 재랜덤화 (도메인 랜덤화)
     /// </summary>
-    public static void RandomizeWind()
+    public static void RandomizeWind() => RandomizeWind(-1f, -1f);
+
+    /// <summary>
+    /// 바람 방향/세기 랜덤화. spdMin/spdMax가 음수면 기존 fallback 사용.
+    /// </summary>
+    public static void RandomizeWind(float spdMin, float spdMax)
     {
         // 매 에피소드 방향/속도 랜덤화
         float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
         WindDirection = new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle));
 
-        float spdMin = 3f, spdMax = 10f;
-        if (_instance != null)
+        if (spdMin < 0f || spdMax < 0f)
         {
-            spdMin = _instance.windSpeedMin;
-            spdMax = _instance.windSpeedMax;
+            spdMin = 3f; spdMax = 10f;
+            if (_instance != null)
+            {
+                spdMin = _instance.windSpeedMin;
+                spdMax = _instance.windSpeedMax;
+            }
         }
         WindSpeed = Random.Range(spdMin, spdMax);
 

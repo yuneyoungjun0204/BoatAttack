@@ -110,6 +110,7 @@ namespace BoatAttack
         private MeshRenderer _renderer;
         private GameObject _visualObject;
         private Color _lastWebColor;
+        private int _netUpdateCounter;  // 그물 메시 프레임 스킵용
 
         // 어부 그물용
         private GameObject _netContainer;
@@ -129,17 +130,47 @@ namespace BoatAttack
 
         private void OnEnable()
         {
-            // SetActive(true) 시 비주얼이 없으면 재생성 (풀 재활성화 대응)
-            if (_initialized && showVisual)
+            // 아직 Initialize 안 됐으면 여기서 실행 (풀에서 꺼낸 클론 대응)
+            if (!_initialized)
             {
-                if (useFishingNetVisual && _netContainer == null)
-                    CreateVisual();
-                else if (!useFishingNetVisual && _visualObject == null)
+                Initialize();
+                return; // Initialize 내에서 CreateVisual 이미 호출됨
+            }
+
+            // SetActive(true) 시 비주얼이 없으면 재생성 (풀 재활성화 대응)
+            if (showVisual)
+            {
+                bool hasVisual = useFishingNetVisual
+                    ? (_netContainer != null)
+                    : (_visualObject != null);
+                if (!hasVisual)
                     CreateVisual();
             }
         }
 
         private bool _initialized = false;
+
+        /// <summary>
+        /// Instantiate로 복제된 클론의 내부 상태 초기화.
+        /// 원본의 _initialized=true, _netContainer=원본참조 등이 복사되므로
+        /// 클론에서 Initialize()가 정상 실행되도록 모든 내부 참조를 리셋.
+        /// </summary>
+        public void ResetCloneState()
+        {
+            _initialized = false;
+            _netContainer = null;
+            _visualObject = null;
+            _verticalLines = null;
+            _horizontalLines = null;
+            _diagonalLines = null;
+            _topRopeLine = null;
+            _bottomRopeLine = null;
+            _floatObjects = null;
+            _knotObjects = null;
+            _renderer = null;
+            _cachedNodes = null;
+            _collider = null;
+        }
 
         private void Initialize()
         {
@@ -152,6 +183,19 @@ namespace BoatAttack
                 _collider = gameObject.AddComponent<BoxCollider>();
             }
             _collider.isTrigger = isTrigger;
+
+            // Instantiate로 복제된 고아 비주얼 제거 (Start() 전 잔존물)
+            for (int i = transform.childCount - 1; i >= 0; i--)
+            {
+                var child = transform.GetChild(i);
+                if (child.name == "WebVisual" || child.name == "FishingNetVisual")
+                {
+                    child.gameObject.SetActive(false);
+                    Destroy(child.gameObject);
+                }
+            }
+            _netContainer = null;
+            _visualObject = null;
 
             // 시각화 오브젝트 생성
             if (showVisual)
@@ -217,10 +261,12 @@ namespace BoatAttack
                 _collider.size = new Vector3(webThickness * colliderThicknessMultiplier, webHeight, distance);
             }
 
-            // 어부 그물 시각화 업데이트
+            // 어부 그물 시각화 업데이트 (3프레임마다 — 성능 최적화)
             if (useFishingNetVisual && _netContainer != null)
             {
-                UpdateFishingNetVisual(pos1, pos2, distance);
+                _netUpdateCounter++;
+                if (_netUpdateCounter % 3 == 0)
+                    UpdateFishingNetVisual(pos1, pos2, distance);
             }
             else if (_visualObject != null)
             {
@@ -377,12 +423,72 @@ namespace BoatAttack
         /// <summary>
         /// Web 시각화 생성
         /// </summary>
+        /// <summary>
+        /// 런타임 비주얼 모드 전환 (그물 메시 ↔ 단순 Cube)
+        /// </summary>
+        /// <summary>
+        /// 비주얼 오브젝트가 파괴/누락되었으면 재생성. 풀 재사용 시 호출.
+        /// </summary>
+        public void EnsureVisualExists()
+        {
+            if (!_initialized || !showVisual) return;
+            bool hasVisual = useFishingNetVisual
+                ? (_netContainer != null)
+                : (_visualObject != null);
+            if (!hasVisual)
+            {
+                Debug.Log($"[DynamicWeb] EnsureVisualExists: 비주얼 누락 → 재생성 (fishingNet={useFishingNetVisual})");
+                CreateVisual();
+            }
+        }
+
+        public void SetFishingNetVisual(bool enabled)
+        {
+            if (useFishingNetVisual == enabled) return;
+            useFishingNetVisual = enabled;
+
+            // 아직 Initialize() 전이면 값만 바꾸고 리턴 (Start()에서 올바른 값으로 생성됨)
+            if (!_initialized) return;
+
+            // 기존 비주얼 제거 — 즉시 비활성화 후 Destroy (물리 콜백 중에도 안전)
+            if (_netContainer != null) { _netContainer.SetActive(false); Destroy(_netContainer); _netContainer = null; }
+            if (_visualObject != null) { _visualObject.SetActive(false); Destroy(_visualObject); _visualObject = null; }
+            _verticalLines = null;
+            _horizontalLines = null;
+            _diagonalLines = null;
+            _topRopeLine = null;
+            _bottomRopeLine = null;
+            _floatObjects = null;
+            _knotObjects = null;
+            _renderer = null;
+
+            // 새 비주얼 생성
+            if (showVisual)
+                CreateVisual();
+        }
+
         private void CreateVisual()
         {
             if (useFishingNetVisual)
             {
                 CreateFishingNetVisual();
                 return;
+            }
+
+            // Instantiate로 복제된 고아 WebVisual 제거
+            for (int i = transform.childCount - 1; i >= 0; i--)
+            {
+                var child = transform.GetChild(i);
+                if (child.name == "WebVisual")
+                {
+                    child.gameObject.SetActive(false);
+                    Destroy(child.gameObject);
+                }
+            }
+            if (_visualObject != null)
+            {
+                _visualObject.SetActive(false);
+                Destroy(_visualObject);
             }
 
             _visualObject = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -407,8 +513,22 @@ namespace BoatAttack
         /// </summary>
         private void CreateFishingNetVisual()
         {
+            // 기존 컨테이너 제거
             if (_netContainer != null)
+            {
+                _netContainer.SetActive(false);
                 Destroy(_netContainer);
+            }
+            // Instantiate로 복제된 고아 FishingNetVisual도 제거
+            for (int i = transform.childCount - 1; i >= 0; i--)
+            {
+                var child = transform.GetChild(i);
+                if (child.name == "FishingNetVisual")
+                {
+                    child.gameObject.SetActive(false);
+                    Destroy(child.gameObject);
+                }
+            }
 
             _netContainer = new GameObject("FishingNetVisual");
             _netContainer.transform.SetParent(transform);
