@@ -2675,25 +2675,18 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// Stage9에서는 DisarmPair (직진 이탈 + 트랩 그물), 그 외에서는 DisablePair (정지 + 비활성화)
+        /// 쌍 비활성화 (정지). Stage9에서는 추가로 트랩 그물 생성.
         /// </summary>
         private void DisableOrDisarmPair(int pairIdx)
         {
-            if (currentStage == TrainingStage.Stage9_DisarmReform)
+            // Stage9: 트랩 그물 생성 (DisablePair가 web을 비활성화하기 전에)
+            if (currentStage == TrainingStage.Stage9_DisarmReform && enableTrapWeb)
             {
-                // 트랩 그물 생성 (DisarmPair가 web을 비활성화하기 전에)
-                if (enableTrapWeb)
-                {
-                    var pair = launchZoneManager.GetPair(pairIdx);
-                    CreateTrapFromWeb(pair);
-                }
-                // 직진 이탈 모드
-                launchZoneManager.DisarmPair(pairIdx, m_AgentGroup, _resetTimer);
+                var pair = launchZoneManager.GetPair(pairIdx);
+                CreateTrapFromWeb(pair);
             }
-            else
-            {
-                launchZoneManager.DisablePair(pairIdx, m_AgentGroup);
-            }
+
+            launchZoneManager.DisablePair(pairIdx, m_AgentGroup);
         }
 
         /// <summary>
