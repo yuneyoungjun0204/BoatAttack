@@ -44,6 +44,8 @@ namespace BoatAttack
 
         [HideInInspector] public int assignedZoneIndex = -1;
         [HideInInspector] public bool isActive = false;
+        [HideInInspector] public bool isDisarmed = false;  // 직진 이탈 중 (Stage9)
+        [HideInInspector] public int disarmStep = -1;      // 직진 시작 스텝
         [HideInInspector] public int deployStep = -1; // 배치 시점 (FixedUpdate 스텝)
 
         // 좌/우 교차 체크용 (배치 시 기록)
@@ -439,6 +441,9 @@ namespace BoatAttack
                 if (envController != null)
                     dynamicWeb.envController = envController;
 
+                // parentDynamicWeb 명시 설정 (auto-detection 타이밍 문제 방지 — DynamicWeb 초기화 후)
+                webDetector.parentDynamicWeb = dynamicWeb;
+
                 // 복제된 Web의 webAnchor가 원본 선박을 가리키므로 복제 선박의 자식으로 재할당
                 RemapWebAnchor(dynamicWeb, templatePair, pair);
             }
@@ -627,7 +632,7 @@ namespace BoatAttack
 
                 // Stage3/7/8: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
                 Quaternion rot;
-                if (envController != null && (envController.currentStage == TrainingStage.Stage3_Tactical || envController.currentStage == TrainingStage.Stage7_FleetManeuver || envController.currentStage == TrainingStage.Stage8_TacticalFullObs))
+                if (envController != null && (envController.currentStage == TrainingStage.Stage3_Tactical || envController.currentStage == TrainingStage.Stage7_FleetManeuver || envController.currentStage == TrainingStage.Stage8_TacticalFullObs || envController.currentStage == TrainingStage.Stage9_DisarmReform))
                 {
                     rot = Quaternion.LookRotation(zoneDir, Vector3.up);
                 }
@@ -684,7 +689,8 @@ namespace BoatAttack
             var usedZones = new HashSet<int>();
 
             bool isFleet = envController != null && (envController.currentStage == TrainingStage.Stage7_FleetManeuver
-                || envController.currentStage == TrainingStage.Stage8_TacticalFullObs);
+                || envController.currentStage == TrainingStage.Stage8_TacticalFullObs
+                || envController.currentStage == TrainingStage.Stage9_DisarmReform);
 
             if (formationType == FormationType.Diversionary && diversionaryAngles != null && diversionaryAngles.Length > 1)
             {
@@ -965,6 +971,13 @@ namespace BoatAttack
                 }
             }
             pair.isActive = active;
+
+            // 활성화 시 Disarmed 상태 리셋
+            if (active)
+            {
+                pair.isDisarmed = false;
+                pair.disarmStep = -1;
+            }
         }
 
         /// <summary>
@@ -1371,6 +1384,9 @@ namespace BoatAttack
                 dynamicWeb.webAnchor2 = null;
                 if (envController != null)
                     dynamicWeb.envController = envController;
+
+                // parentDynamicWeb 명시 설정 (auto-detection 타이밍 문제 방지 — DynamicWeb 초기화 후)
+                webDetector.parentDynamicWeb = dynamicWeb;
             }
 
             // Engine.RB 확인
@@ -1570,6 +1586,68 @@ namespace BoatAttack
             pair.isActive = false;
 
             // Debug.Log($"[LaunchZoneManager] Pair {pairIndex} 무력화 (현재 위치 정지)");
+        }
+
+        /// <summary>
+        /// Stage9: 포획 후 직진 이탈 모드 (Disarm)
+        /// MA-POCA 해제 + 그물 비활성화 + 에이전트 직진 모드 활성화
+        /// 에이전트는 현재 헤딩 방향으로 전속력 직진하여 전장에서 자연스럽게 이탈
+        /// </summary>
+        public void DisarmPair(int pairIndex, SimpleMultiAgentGroup agentGroup, int currentStep)
+        {
+            if (_pairPool == null || pairIndex < 0 || pairIndex >= _pairPool.Count)
+                return;
+            DefensePair pair = _pairPool[pairIndex];
+            if (!pair.isActive || pair.isDisarmed) return;
+
+            // MA-POCA 해제 (Posthumous Credit 작동)
+            if (agentGroup != null)
+            {
+                if (pair.agent1 != null) agentGroup.UnregisterAgent(pair.agent1);
+                if (pair.agent2 != null) agentGroup.UnregisterAgent(pair.agent2);
+            }
+
+            // 그물 비활성화
+            if (pair.webObject != null) pair.webObject.SetActive(false);
+
+            // 직진 모드 활성화 (ML 정책 대신 하드코딩 직진)
+            if (pair.agent1 != null) pair.agent1.SetStraightMode(true);
+            if (pair.agent2 != null) pair.agent2.SetStraightMode(true);
+
+            // 상태 전환: Active → Disarmed (isActive는 유지 — 관측에 보임)
+            pair.isDisarmed = true;
+            pair.disarmStep = currentStep;
+
+            _deployedPairCount = Mathf.Max(0, _deployedPairCount - 1);
+
+            Debug.Log($"[LaunchZoneManager] Pair {pairIndex} 직진 이탈 시작, step={currentStep}");
+        }
+
+        /// <summary>
+        /// Stage9: 직진 이탈 완료 → 완전 비활성화 (HIDDEN_POS + 재활용 가능)
+        /// </summary>
+        public void DeactivateDisarmedPair(int pairIndex)
+        {
+            if (_pairPool == null || pairIndex < 0 || pairIndex >= _pairPool.Count)
+                return;
+            DefensePair pair = _pairPool[pairIndex];
+            if (!pair.isDisarmed) return;
+
+            // 직진 모드 해제 + neutralized 해제 (재활용 가능)
+            if (pair.agent1 != null) { pair.agent1.SetStraightMode(false); pair.agent1.SetNeutralized(false); }
+            if (pair.agent2 != null) { pair.agent2.SetStraightMode(false); pair.agent2.SetNeutralized(false); }
+
+            // HIDDEN_POS로 이동 + 비활성화
+            SetPairActive(pairIndex, false);
+            pair.isDisarmed = false;
+            pair.disarmStep = -1;
+            pair.assignedZoneIndex = -1;
+            pair.deployStep = -1;
+
+            if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
+            if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
+
+            Debug.Log($"[LaunchZoneManager] Pair {pairIndex} 직진 이탈 완료 → 비활성화");
         }
 
         /// <summary>

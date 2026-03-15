@@ -18,7 +18,8 @@ namespace BoatAttack
         Stage5_FullScale,   // 전체 복잡도 (Commander + DefenseAgent 동시 학습)
         Stage6_PhantomFormation, // 1 페어 + Phantom 가상 아군쌍 대형 학습
         Stage7_FleetManeuver,   // 다수 실제 아군 쌍(5~10) 군집 기동 학습
-        Stage8_TacticalFullObs  // Stage3 + 모든 적 BufferSensor 관측 (타겟 배정 없음)
+        Stage8_TacticalFullObs, // Stage3 + 모든 적 BufferSensor 관측 (타겟 배정 없음)
+        Stage9_DisarmReform     // Stage8 + 포획 후 직진 이탈 + 포획 보상 개별 분배
     }
 
     /// <summary>
@@ -74,6 +75,28 @@ namespace BoatAttack
         [Tooltip("Stage8(TacticalFullObs)에서 활성화할 적군 수")]
         [Range(0, 10)]
         public int stage8EnemyCount = 1;
+
+        [Header("Stage9 (DisarmReform)")]
+        [Tooltip("Stage9에서 활성화할 적군 수")]
+        [Range(0, 10)]
+        public int stage9EnemyCount = 3;
+
+        [Tooltip("Stage9 포획 보상 중 개별 분배 비율 (0~1, 나머지는 그룹)")]
+        [Range(0f, 1f)]
+        public float captureIndividualShare = 0.5f;
+
+        [Tooltip("Stage9 직진 이탈 유지 스텝 수 (이후 완전 비활성화)")]
+        public int disarmDurationSteps = 50;
+
+        [Tooltip("트랩 그물 활성화 (포획 후 그물을 바다에 깔아둠)")]
+        public bool enableTrapWeb = true;
+
+        [Tooltip("트랩 그물의 포획 보상 비율 (정상 포획 대비)")]
+        [Range(0f, 1f)]
+        public float trapRewardRatio = 0.5f;
+
+        [Tooltip("트랩 그물 수명 (스텝, 이후 자동 소멸)")]
+        public int trapLifetimeSteps = 200;
 
         [Tooltip("타겟 배정 고정: 유효한 기존 배정을 유지 (false=매번 재배정)")]
         public bool lockTargetAssignment = true;
@@ -305,6 +328,9 @@ namespace BoatAttack
         // 중복 충돌 방지 (같은 적군 선박이 짧은 시간 내 여러 번 충돌하는 것 방지)
         private float _collisionCooldown = 2.0f; // 충돌 쿨다운 시간 (초)
         private System.Collections.Generic.Dictionary<GameObject, float> _collisionCooldownTimes = new System.Collections.Generic.Dictionary<GameObject, float>();
+
+        // Stage9: 깔린 트랩 그물 관리
+        private System.Collections.Generic.List<GameObject> _anchoredTraps = new System.Collections.Generic.List<GameObject>();
         
         // 위치 리셋 관련
         private int _lastResetFrame = -1; // 중복 리셋 방지용
@@ -916,7 +942,7 @@ namespace BoatAttack
                     for (int pi = 0; pi < poolCap; pi++)
                     {
                         DefensePair pair = launchZoneManager.GetPair(pi);
-                        if (pair == null || !pair.isActive) continue;
+                        if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                         if (pair.agent1 == null || pair.agent2 == null) continue;
 
                         // 배치 후 유예기간 (10스텝) 동안 거리 체크 건너뛰기
@@ -958,7 +984,7 @@ namespace BoatAttack
                         {
                             pair.agent1.AddReward(rewardCalculator.collisionPenalty);
                             pair.agent2.AddReward(rewardCalculator.collisionPenalty);
-                            launchZoneManager.DisablePair(pi, m_AgentGroup);
+                            DisableOrDisarmPair(pi);
                             NotifyCameraPairDisabled(pair);
                             Debug.LogWarning($"[DefenseEnv] Pair {pi} 무력화: {disableReason}, step={_resetTimer}");
                         }
@@ -1048,7 +1074,7 @@ namespace BoatAttack
                 for (int pi = 0; pi < poolCapP; pi++)
                 {
                     DefensePair pair = launchZoneManager.GetPair(pi);
-                    if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+                    if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
 
                     GameObject targetEnemy = null;
                     int tIdx = pair.agent1.assignedTargetIndex;
@@ -1079,7 +1105,7 @@ namespace BoatAttack
                 for (int pi = 0; pi < poolCap2; pi++)
                 {
                     DefensePair pair = launchZoneManager.GetPair(pi);
-                    if (pair == null || !pair.isActive) continue;
+                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                     if (pair.agent1 == null) continue;
                     if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
 
@@ -1109,7 +1135,7 @@ namespace BoatAttack
                         {
                             pair.agent1.AddReward(rewardCalculator.phantomViolationPenalty);
                             pair.agent2.AddReward(rewardCalculator.phantomViolationPenalty);
-                            launchZoneManager.DisablePair(pi, m_AgentGroup);
+                            DisableOrDisarmPair(pi);
                             Debug.LogWarning($"[DefenseEnv] Pair {pi} phantom 그물 충돌, dist={minPhantomDist:F1}m, step={_resetTimer}");
                             continue;
                         }
@@ -1147,7 +1173,7 @@ namespace BoatAttack
                     {
                         pair.agent1.AddReward(rewardCalculator.enemyOvertakePenalty);
                         if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.enemyOvertakePenalty);
-                        launchZoneManager.DisablePair(pi, m_AgentGroup);
+                        DisableOrDisarmPair(pi);
                         Debug.LogWarning($"[DefenseEnv] Pair {pi} 완전 추월: farthestEnemy={farthestEnemyDist:F0}m < ally={allyDist:F0}m, step={_resetTimer}");
                     }
                 }
@@ -1172,11 +1198,17 @@ namespace BoatAttack
                 DeployReservesForUnassignedEnemies();
             }
 
-            // Stage8: 어떤 아군보다 모선에 가까운 적이 있으면 예비 쌍 출동 (80스텝마다)
-            if (currentStage == TrainingStage.Stage8_TacticalFullObs && launchZoneManager != null
-                && motherShip != null && _resetTimer % 80 == 0)
+            // Stage8/9: 어떤 아군보다 모선에 가까운 적이 있으면 예비 쌍 출동 (80스텝마다)
+            if ((currentStage == TrainingStage.Stage8_TacticalFullObs || currentStage == TrainingStage.Stage9_DisarmReform)
+                && launchZoneManager != null && motherShip != null && _resetTimer % 80 == 0)
             {
                 Stage8DeployForUncoveredEnemies();
+            }
+
+            // Stage9: 직진 이탈 중인 쌍 타이머 체크
+            if (currentStage == TrainingStage.Stage9_DisarmReform && launchZoneManager != null)
+            {
+                ProcessDisarmedPairs();
             }
 
             // 보상 계산 주기 확인
@@ -1195,7 +1227,7 @@ namespace BoatAttack
                 for (int pi = 0; pi < poolCount; pi++)
                 {
                     var pair = launchZoneManager.GetPair(pi);
-                    if (pair == null || !pair.isActive) continue;
+                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                     if (pair.agent1 == null || pair.agent2 == null) continue;
 
                     var a1State = rewardCalculator.GetAgentState(pair.agent1);
@@ -1373,7 +1405,7 @@ namespace BoatAttack
                         for (int pi = 0; pi < launchZoneManager.GetCurrentPoolCount(); pi++)
                         {
                             var pair = launchZoneManager.GetPair(pi);
-                            if (pair == null || !pair.isActive || pair.webObject == null) continue;
+                            if (pair == null || !pair.isActive || pair.isDisarmed || pair.webObject == null) continue;
                             var dw = pair.webObject.GetComponent<DynamicWeb>();
                             if (dw == null || dw.defenseShip1 == null || dw.defenseShip2 == null) continue;
 
@@ -1642,7 +1674,26 @@ namespace BoatAttack
             // 기존 리셋 코루틴 중지 및 플래그 초기화
             StopAllCoroutines();
             _isResettingPositions = false;
+
+            // Stage9: 트랩 그물 정리
+            ClearAllTraps();
             _lastResetFrame = -1; // 프레임 체크 초기화
+
+            // Stage9: 이전 에피소드에서 disarm 상태로 남은 쌍들 초기화
+            if (launchZoneManager != null)
+            {
+                for (int i = 0; i < launchZoneManager.GetPoolCapacity(); i++)
+                {
+                    var pair = launchZoneManager.GetPair(i);
+                    if (pair != null && pair.isDisarmed)
+                    {
+                        if (pair.agent1 != null) pair.agent1.SetStraightMode(false);
+                        if (pair.agent2 != null) pair.agent2.SetStraightMode(false);
+                        pair.isDisarmed = false;
+                        pair.disarmStep = -1;
+                    }
+                }
+            }
 
             // 에피소드 종료 플래그를 먼저 리셋하여 다음 FixedUpdate()에서 타이머가 증가하지 않도록 함
             _episodeEnding = false;
@@ -1758,6 +1809,7 @@ namespace BoatAttack
         /// </summary>
         public void OnEnemyHitWeb(GameObject enemyBoat, DynamicWeb capturingWeb = null)
         {
+            Debug.Log($"[OnEnemyHitWeb] CALLED! stage={currentStage}, capturingWeb={capturingWeb != null}, enemy={enemyBoat?.name}");
             if (_episodeEnding) return;
             if (_resetTimer <= 10) return;
             if (enemyBoat == null) return;
@@ -1789,7 +1841,24 @@ namespace BoatAttack
                 + rewardCalculator.captureDistanceBonus * distRatio;
 
             // 보상 부여
-            if (m_AgentGroup != null)
+            if (currentStage == TrainingStage.Stage9_DisarmReform && m_AgentGroup != null && capturingWeb != null)
+            {
+                // Stage9: 포획한 쌍에 개별 보상 + 나머지 그룹 보상
+                float individualReward = reward * captureIndividualShare;
+                float groupReward = reward * (1f - captureIndividualShare);
+
+                // 포획한 쌍에게 개별 보상 (UnregisterAgent 전이므로 유효)
+                DefenseAgent capAgent1 = capturingWeb.defenseShip1 != null
+                    ? capturingWeb.defenseShip1.GetComponent<DefenseAgent>() : null;
+                DefenseAgent capAgent2 = capturingWeb.defenseShip2 != null
+                    ? capturingWeb.defenseShip2.GetComponent<DefenseAgent>() : null;
+                if (capAgent1 != null) capAgent1.AddReward(individualReward);
+                if (capAgent2 != null) capAgent2.AddReward(individualReward);
+
+                // 그룹 보상
+                m_AgentGroup.AddGroupReward(groupReward);
+            }
+            else if (m_AgentGroup != null)
                 m_AgentGroup.AddGroupReward(reward);
             else
             {
@@ -1824,33 +1893,68 @@ namespace BoatAttack
         /// </summary>
         private void FreezeCapturingPair(DynamicWeb capturingWeb)
         {
-            if (capturingWeb == null || launchZoneManager == null) return;
+            Debug.Log($"[FreezeCapturingPair] ENTER: stage={currentStage}, capturingWeb={capturingWeb != null}, launchZoneManager={launchZoneManager != null}");
+            if (launchZoneManager == null) return;
 
-            // DynamicWeb의 defenseShip1 → DefenseAgent → FindPairIndex
-            DefenseAgent agent = null;
-            if (capturingWeb.defenseShip1 != null)
-                agent = capturingWeb.defenseShip1.GetComponent<DefenseAgent>();
+            int pairIdx = -1;
 
-            if (agent == null && capturingWeb.defenseShip2 != null)
-                agent = capturingWeb.defenseShip2.GetComponent<DefenseAgent>();
+            // 1차: capturingWeb에서 쌍 식별
+            if (capturingWeb != null)
+            {
+                DefenseAgent agent = null;
+                if (capturingWeb.defenseShip1 != null)
+                    agent = capturingWeb.defenseShip1.GetComponent<DefenseAgent>();
+                if (agent == null && capturingWeb.defenseShip2 != null)
+                    agent = capturingWeb.defenseShip2.GetComponent<DefenseAgent>();
+                if (agent != null)
+                    pairIdx = launchZoneManager.FindPairIndex(agent);
+                Debug.Log($"[FreezeCapturingPair] 1차 탐색: agent={agent?.name}, pairIdx={pairIdx}, ship1={capturingWeb.defenseShip1?.name}, ship2={capturingWeb.defenseShip2?.name}");
+            }
 
-            if (agent == null) return;
+            // 2차 fallback: capturingWeb이 null이면, 최근 포획 이벤트를 발생시킨 쌍 추정
+            // (활성 쌍 중 webObject에 _hasTriggered=true인 WebCollisionDetector가 있는 쌍)
+            if (pairIdx < 0)
+            {
+                for (int i = 0; i < launchZoneManager.GetPoolCapacity(); i++)
+                {
+                    var pair = launchZoneManager.GetPair(i);
+                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
+                    if (pair.webObject == null) continue;
+                    var detector = pair.webObject.GetComponent<WebCollisionDetector>();
+                    if (detector != null && detector.HasTriggered)
+                    {
+                        pairIdx = i;
+                        // capturingWeb도 복구
+                        if (capturingWeb == null)
+                            capturingWeb = pair.webObject.GetComponent<DynamicWeb>();
+                        Debug.Log($"[FreezeCapturingPair] fallback으로 Pair {i} 식별 (WebCollisionDetector.HasTriggered)");
+                        break;
+                    }
+                }
+            }
 
-            int pairIdx = launchZoneManager.FindPairIndex(agent);
+            if (pairIdx < 0)
+            {
+                Debug.LogWarning($"[FreezeCapturingPair] 포획 쌍을 찾을 수 없음! capturingWeb={capturingWeb}, stage={currentStage}");
+                return;
+            }
+
             if (pairIdx >= 0)
             {
-                // 현재 위치에서 정지 (DisablePair: freeze + MA-POCA 해제 + web 즉시 비활성)
-                launchZoneManager.DisablePair(pairIdx, m_AgentGroup);
+                DisableOrDisarmPair(pairIdx);
 
-                // Web은 0.5초간 유지 후 비활성화 (포획 연출)
-                var pair = launchZoneManager.GetPair(pairIdx);
-                if (pair != null && pair.webObject != null)
+                // 비-Stage9: Web 0.5초간 유지 후 비활성화 (포획 연출)
+                if (currentStage != TrainingStage.Stage9_DisarmReform)
                 {
-                    pair.webObject.SetActive(true); // DisablePair가 꺼놨으므로 다시 켜기
-                    StartCoroutine(DelayedWebDisable(pair.webObject, 0.5f));
+                    var pair = launchZoneManager.GetPair(pairIdx);
+                    if (pair != null && pair.webObject != null)
+                    {
+                        pair.webObject.SetActive(true); // DisablePair가 꺼놨으므로 다시 켜기
+                        StartCoroutine(DelayedWebDisable(pair.webObject, 0.5f));
+                    }
                 }
 
-                Debug.Log($"[DefenseEnv] 포획 성공 → Pair {pairIdx} 현재 위치 정지, step={_resetTimer}");
+                Debug.Log($"[DefenseEnv] 포획 성공 → Pair {pairIdx} {(currentStage == TrainingStage.Stage9_DisarmReform ? "직진 이탈" : "현재 위치 정지")}, step={_resetTimer}");
             }
         }
 
@@ -1882,10 +1986,14 @@ namespace BoatAttack
                     if (hitPair != null && hitPair.deployStep >= 0 && (_resetTimer - hitPair.deployStep) < 10)
                         return;
 
+                    // Disarmed 쌍은 직진 이탈 중이므로 충돌 무시
+                    if (hitPair != null && hitPair.isDisarmed)
+                        return;
+
                     // 1. 충돌 당한 쌍 페널티 + 비활성화
                     if (hitPair?.agent1 != null) hitPair.agent1.AddReward(rewardCalculator.allyWebCollisionPenalty);
                     if (hitPair?.agent2 != null) hitPair.agent2.AddReward(rewardCalculator.allyWebCollisionPenalty);
-                    launchZoneManager.DisablePair(hitPairIdx, m_AgentGroup);
+                    DisableOrDisarmPair(hitPairIdx);
                     NotifyCameraPairDisabled(hitPair);
 
                     // 2. Web을 가진 쌍 (가해 쌍)도 비활성화
@@ -1903,7 +2011,7 @@ namespace BoatAttack
                                 DefensePair webPair = launchZoneManager.GetPair(webPairIdx);
                                 if (webPair?.agent1 != null) webPair.agent1.AddReward(rewardCalculator.allyWebCollisionPenalty);
                                 if (webPair?.agent2 != null) webPair.agent2.AddReward(rewardCalculator.allyWebCollisionPenalty);
-                                launchZoneManager.DisablePair(webPairIdx, m_AgentGroup);
+                                DisableOrDisarmPair(webPairIdx);
                                 NotifyCameraPairDisabled(webPair);
                             }
                         }
@@ -2233,7 +2341,7 @@ namespace BoatAttack
             for (int i = 0; i < poolCount; i++)
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive) continue;
+                if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                 if (pair.agent1 == null) continue;
 
                 Vector3 pairCenter = pair.agent2 != null
@@ -2266,7 +2374,7 @@ namespace BoatAttack
                         // Stage6/7: 재배치 불가 → 페널티 + 영구 비활성화 → 에피소드 종료 유도
                         if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.enemyOvertakePenalty);
                         if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.enemyOvertakePenalty);
-                        launchZoneManager.DisablePair(i, m_AgentGroup);
+                        DisableOrDisarmPair(i);
                     }
                     else
                     {
@@ -2303,7 +2411,7 @@ namespace BoatAttack
                 for (int i = 0; i < poolCount; i++)
                 {
                     DefensePair pair = launchZoneManager.GetPair(i);
-                    if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+                    if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
 
                     int existingIdx = pair.agent1.assignedTargetIndex;
                     if (existingIdx > 0)
@@ -2328,7 +2436,7 @@ namespace BoatAttack
                 for (int i = 0; i < poolCount; i++)
                 {
                     DefensePair pair = launchZoneManager.GetPair(i);
-                    if (pair == null || !pair.isActive) continue;
+                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                     if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
                     if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
                 }
@@ -2342,7 +2450,7 @@ namespace BoatAttack
             for (int i = 0; i < poolCount; i++)
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+                if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
 
                 // 이미 유효한 배정이 있으면 스킵 (lockTargetAssignment 모드)
                 if (pair.agent1.assignedTargetIndex > 0) continue;
@@ -2415,7 +2523,7 @@ namespace BoatAttack
             for (int i = 0; i < poolCount; i++)
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+                if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
                 int targetIdx = pair.agent1.assignedTargetIndex;
                 if (targetIdx > 0) assignedEnemies.Add(targetIdx - 1); // 1-indexed → 0-indexed
             }
@@ -2464,6 +2572,192 @@ namespace BoatAttack
         [Tooltip("Stage8 한 번 호출 시 최대 출동 쌍 수 (0이면 무제한)")]
         public int stage8MaxDeployPerCall = 3;
 
+        /// <summary>
+        /// Stage9: 직진 이탈 중인 쌍들의 타이머를 체크하여
+        /// 일정 스텝 경과 또는 모선에서 멀어지면 완전 비활성화
+        /// </summary>
+        private void ProcessDisarmedPairs()
+        {
+            if (launchZoneManager == null) return;
+            int poolCap = launchZoneManager.GetPoolCapacity();
+
+            for (int i = 0; i < poolCap; i++)
+            {
+                DefensePair pair = launchZoneManager.GetPair(i);
+                if (pair == null || !pair.isDisarmed) continue;
+
+                int elapsed = _resetTimer - pair.disarmStep;
+
+                // 최소 5스텝은 직진 유지 (즉시 비활성화 방지)
+                if (elapsed < 5) continue;
+
+                // 조건: 일정 스텝 경과 또는 모선에서 400m 이상
+                bool timeout = elapsed >= disarmDurationSteps;
+                bool farAway = false;
+                float dist = 0f;
+                if (motherShip != null && pair.agent1 != null)
+                {
+                    dist = Vector3.Distance(pair.agent1.transform.position, motherShip.transform.position);
+                    farAway = dist > 400f;
+                }
+
+                if (timeout || farAway)
+                {
+                    Debug.Log($"[ProcessDisarmedPairs] Pair {i} 비활성화: elapsed={elapsed}, timeout={timeout}, farAway={farAway}, dist={dist:F0}, disarmStep={pair.disarmStep}, _resetTimer={_resetTimer}");
+                    launchZoneManager.DeactivateDisarmedPair(i);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Stage9: 적군이 깔린 트랩 그물에 걸렸을 때 처리
+        /// 정상 포획의 trapRewardRatio 배 그룹 보상 + 적 무력화
+        /// </summary>
+        public void OnEnemyHitTrap(GameObject enemyBoat)
+        {
+            if (_episodeEnding) return;
+            if (enemyBoat == null) return;
+
+            enemyBoat = ResolveToPoolEntry(enemyBoat);
+
+            // 중복 충돌 방지
+            float currentTime = Time.time;
+            if (_collisionCooldownTimes.ContainsKey(enemyBoat))
+            {
+                if (currentTime - _collisionCooldownTimes[enemyBoat] < _collisionCooldown)
+                    return;
+            }
+            _collisionCooldownTimes[enemyBoat] = currentTime;
+            _totalCollisionCount++;
+            _capturedEnemyCount++;
+
+            // 트랩 포획 보상 (정상의 절반, 그룹에만)
+            float reward = rewardCalculator.captureReward * trapRewardRatio;
+            if (m_AgentGroup != null)
+                m_AgentGroup.AddGroupReward(reward);
+
+            DisableEnemy(enemyBoat);
+
+            Debug.Log($"[DefenseEnv] 트랩 그물 포획! reward={reward:F2}, step={_resetTimer}");
+
+            CheckEpisodeEndCondition();
+        }
+
+        /// <summary>
+        /// Stage9: 아군이 깔린 트랩 그물에 걸렸을 때 처리
+        /// 해당 쌍 비활성화 + allyWebCollisionPenalty 적용
+        /// </summary>
+        public void OnAllyHitTrap(DefenseAgent agent)
+        {
+            if (_episodeEnding) return;
+            if (agent == null || launchZoneManager == null) return;
+
+            int pairIdx = launchZoneManager.FindPairIndex(agent);
+            if (pairIdx < 0) return;
+
+            DefensePair pair = launchZoneManager.GetPair(pairIdx);
+            if (pair == null || !pair.isActive) return;
+
+            // 이미 비활성화/Disarm 처리된 쌍은 무시
+            if (pair.isDisarmed) return;
+
+            // 페널티 (아군 Web 충돌과 동일)
+            if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.allyWebCollisionPenalty);
+            if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.allyWebCollisionPenalty);
+
+            // 비활성화 (Stage9이면 직진 이탈)
+            DisableOrDisarmPair(pairIdx);
+            NotifyCameraPairDisabled(pair);
+
+            Debug.LogWarning($"[DefenseEnv] AllyHitTrap → Pair {pairIdx} 트랩 그물 충돌 무력화, step={_resetTimer}");
+
+            CheckEpisodeEndCondition();
+        }
+
+        /// <summary>
+        /// Stage9에서는 DisarmPair (직진 이탈 + 트랩 그물), 그 외에서는 DisablePair (정지 + 비활성화)
+        /// </summary>
+        private void DisableOrDisarmPair(int pairIdx)
+        {
+            if (currentStage == TrainingStage.Stage9_DisarmReform)
+            {
+                // 트랩 그물 생성 (DisarmPair가 web을 비활성화하기 전에)
+                if (enableTrapWeb)
+                {
+                    var pair = launchZoneManager.GetPair(pairIdx);
+                    CreateTrapFromWeb(pair);
+                }
+                // 직진 이탈 모드
+                launchZoneManager.DisarmPair(pairIdx, m_AgentGroup, _resetTimer);
+            }
+            else
+            {
+                launchZoneManager.DisablePair(pairIdx, m_AgentGroup);
+            }
+        }
+
+        /// <summary>
+        /// Stage9: 포획 시 현재 Web 위치에 간이 트랩 생성
+        /// </summary>
+        private void CreateTrapFromWeb(DefensePair pair)
+        {
+            if (pair == null || pair.webObject == null) return;
+
+            var srcCollider = pair.webObject.GetComponent<BoxCollider>();
+            if (srcCollider == null) return;
+
+            // 트랩 GameObject 생성 (환경 계층 내)
+            var trap = new GameObject("TrapWeb");
+            trap.transform.SetParent(transform);
+            trap.transform.position = pair.webObject.transform.position;
+            trap.transform.rotation = pair.webObject.transform.rotation;
+            trap.transform.localScale = pair.webObject.transform.lossyScale;
+
+            // 콜라이더 복사 (isTrigger)
+            var col = trap.AddComponent<BoxCollider>();
+            col.isTrigger = true;
+            col.center = srcCollider.center;
+            col.size = srcCollider.size;
+
+            // Rigidbody 필요 (Trigger 작동 조건: 한쪽에 Rigidbody 필요)
+            var rb = trap.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+            rb.useGravity = false;
+
+            // 디버그 시각화용 Cube (반투명 빨간색)
+            var visual = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            visual.name = "TrapVisual";
+            visual.transform.SetParent(trap.transform, false);
+            visual.transform.localPosition = col.center;
+            visual.transform.localScale = col.size;
+            var meshCollider = visual.GetComponent<Collider>();
+            if (meshCollider != null) Destroy(meshCollider); // 시각화용이므로 콜라이더 제거
+            var mat = visual.GetComponent<Renderer>().material;
+            mat.color = new Color(1f, 0f, 0f, 0.3f);
+
+            // 트랩 핸들러
+            var handler = trap.AddComponent<TrapWebHandler>();
+            handler.envController = this;
+            handler.remainingSteps = trapLifetimeSteps;
+
+            _anchoredTraps.Add(trap);
+
+            Debug.Log($"[DefenseEnv] 트랩 그물 생성: pos={trap.transform.position}, size={col.size}, lifetime={trapLifetimeSteps}steps");
+        }
+
+        /// <summary>
+        /// Stage9: 에피소드 리셋 시 모든 트랩 정리
+        /// </summary>
+        private void ClearAllTraps()
+        {
+            for (int i = _anchoredTraps.Count - 1; i >= 0; i--)
+            {
+                if (_anchoredTraps[i] != null)
+                    Destroy(_anchoredTraps[i]);
+            }
+            _anchoredTraps.Clear();
+        }
+
         private void Stage8DeployForUncoveredEnemies()
         {
             if (!launchZoneManager.HasReservePairs()) return;
@@ -2491,7 +2785,7 @@ namespace BoatAttack
                 for (int i = 0; i < poolCount; i++)
                 {
                     DefensePair pair = launchZoneManager.GetPair(i);
-                    if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+                    if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
 
                     Vector3 allyCenter = pair.agent2 != null
                         ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f
@@ -2535,7 +2829,7 @@ namespace BoatAttack
                 for (int i = 0; i < poolCount; i++)
                 {
                     DefensePair pair = launchZoneManager.GetPair(i);
-                    if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+                    if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
                     Vector3 allyCenter = pair.agent2 != null
                         ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f
                         : pair.agent1.transform.position;
@@ -2716,7 +3010,7 @@ namespace BoatAttack
                     if (pair?.agent1 != null) pair.agent1.AddReward(penalty);
                     if (pair?.agent2 != null) pair.agent2.AddReward(penalty);
 
-                    launchZoneManager.DisablePair(pairIdx, m_AgentGroup);
+                    DisableOrDisarmPair(pairIdx);
                     NotifyCameraPairDisabled(pair);
                     Debug.LogWarning($"[DefenseEnv] FriendlyCollision → Pair {pairIdx} 무력화, step={_resetTimer}");
 
@@ -3137,19 +3431,19 @@ namespace BoatAttack
                             }
                         }
 
-                        // Stage3/Stage6/Stage8 (기동 학습): 1:1 자동 매칭 + 미배정 적에 예비 출동
+                        // Stage3/Stage6/Stage8/Stage9 (기동 학습): 1:1 자동 매칭 + 미배정 적에 예비 출동
                         if (currentStage == TrainingStage.Stage3_Tactical || currentStage == TrainingStage.Stage6_PhantomFormation
-                            || currentStage == TrainingStage.Stage8_TacticalFullObs)
+                            || currentStage == TrainingStage.Stage8_TacticalFullObs || currentStage == TrainingStage.Stage9_DisarmReform)
                         {
                             AutoAssignOneToOneTargets();
-                            // Stage8: 리셋 시 즉시 전체 출동하지 않음 — 100스텝마다 Stage8DeployForUncoveredEnemies()로 점진 출동
-                            if (currentStage != TrainingStage.Stage8_TacticalFullObs)
+                            // Stage8/9: 리셋 시 즉시 전체 출동하지 않음 — 80스텝마다 Stage8DeployForUncoveredEnemies()로 점진 출동
+                            if (currentStage != TrainingStage.Stage8_TacticalFullObs && currentStage != TrainingStage.Stage9_DisarmReform)
                                 DeployReservesForUnassignedEnemies();
                         }
                         // Stage7: 타겟 배정 없음 — 에이전트가 스스로 판단
 
-                        // Stage8: 스폰 위치/수 결정에만 배정 사용 → 즉시 해제
-                        if (currentStage == TrainingStage.Stage8_TacticalFullObs && launchZoneManager != null)
+                        // Stage8/9: 스폰 위치/수 결정에만 배정 사용 → 즉시 해제
+                        if ((currentStage == TrainingStage.Stage8_TacticalFullObs || currentStage == TrainingStage.Stage9_DisarmReform) && launchZoneManager != null)
                         {
                             int poolCap = launchZoneManager.GetPoolCapacity();
                             for (int ci = 0; ci < poolCap; ci++)
@@ -3885,6 +4179,10 @@ namespace BoatAttack
                 case TrainingStage.Stage8_TacticalFullObs:
                     // Stage8: Stage3 동작 + 모든 적 BufferSensor 관측
                     break;
+
+                case TrainingStage.Stage9_DisarmReform:
+                    // Stage9: Stage8 + 포획 후 직진 이탈 + 포획 보상 개별 분배
+                    break;
             }
         }
 
@@ -3918,6 +4216,9 @@ namespace BoatAttack
 
                 case TrainingStage.Stage8_TacticalFullObs:
                     return stage8EnemyCount;
+
+                case TrainingStage.Stage9_DisarmReform:
+                    return stage9EnemyCount;
 
                 default:
                     return 0;
@@ -3964,9 +4265,9 @@ namespace BoatAttack
                 return Mathf.Clamp(_stage7AllyCount, 1, maxPairs);
             }
 
-            // Stage3/Stage6/Stage8 (기동 학습): 1:1 — 적 1대당 아군 쌍 1개
+            // Stage3/Stage6/Stage8/Stage9 (기동 학습): 1:1 — 적 1대당 아군 쌍 1개
             if (currentStage == TrainingStage.Stage3_Tactical || currentStage == TrainingStage.Stage6_PhantomFormation
-                || currentStage == TrainingStage.Stage8_TacticalFullObs)
+                || currentStage == TrainingStage.Stage8_TacticalFullObs || currentStage == TrainingStage.Stage9_DisarmReform)
                 return Mathf.Clamp(enemyCount, 1, maxPairs);
 
             return Mathf.Clamp(Mathf.CeilToInt(enemyCount / 3f), 1, maxPairs);
@@ -4027,7 +4328,8 @@ namespace BoatAttack
                    currentStage == TrainingStage.Stage3_Tactical ||
                    currentStage == TrainingStage.Stage6_PhantomFormation ||
                    currentStage == TrainingStage.Stage7_FleetManeuver ||
-                   currentStage == TrainingStage.Stage8_TacticalFullObs;
+                   currentStage == TrainingStage.Stage8_TacticalFullObs ||
+                   currentStage == TrainingStage.Stage9_DisarmReform;
         }
 
         /// <summary>
@@ -4039,7 +4341,8 @@ namespace BoatAttack
                    currentStage == TrainingStage.Stage3_Tactical ||
                    currentStage == TrainingStage.Stage6_PhantomFormation ||
                    currentStage == TrainingStage.Stage7_FleetManeuver ||
-                   currentStage == TrainingStage.Stage8_TacticalFullObs;
+                   currentStage == TrainingStage.Stage8_TacticalFullObs ||
+                   currentStage == TrainingStage.Stage9_DisarmReform;
         }
 
         /// <summary>
@@ -4050,7 +4353,8 @@ namespace BoatAttack
             return currentStage == TrainingStage.Stage3_Tactical ||
                    currentStage == TrainingStage.Stage6_PhantomFormation ||
                    currentStage == TrainingStage.Stage7_FleetManeuver ||
-                   currentStage == TrainingStage.Stage8_TacticalFullObs;
+                   currentStage == TrainingStage.Stage8_TacticalFullObs ||
+                   currentStage == TrainingStage.Stage9_DisarmReform;
         }
 
         /// <summary>

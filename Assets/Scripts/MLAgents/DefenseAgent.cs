@@ -171,6 +171,7 @@ namespace BoatAttack
 
         private bool _episodeEnded = false;
         private bool _neutralized = false;
+        private bool _straightMode = false;  // Stage9: 직진 이탈 모드
         private float _prevThrottle = 0f;
         private float _prevSteering = 0f;
 
@@ -256,6 +257,37 @@ namespace BoatAttack
         public void SetNeutralized(bool value) => _neutralized = value;
 
         /// <summary>
+        /// Stage9: 직진 이탈 모드 설정
+        /// true → FixedUpdate에서 ML 정책 무시, 현재 헤딩으로 전속력 직진
+        /// </summary>
+        public void SetStraightMode(bool value)
+        {
+            Debug.Log($"[{name}] SetStraightMode: {_straightMode} → {value}");
+            _straightMode = value;
+            _straightModeLogCount = 0;
+        }
+
+        /// <summary>
+        /// Stage9: 직진 이탈 중 엔진 구동 (UnregisterAgent 후 OnActionReceived가 호출되지 않으므로 직접 구동)
+        /// </summary>
+        private void FixedUpdate()
+        {
+            if (!_straightMode) return;
+            if (_engine == null || _engine.RB == null) return;
+
+            _engine.Accelerate(maxThrottle);
+            _engine.Turn(0f);
+
+            // 디버그: 직진 모드 동작 확인 (첫 5프레임만)
+            if (_straightModeLogCount < 5)
+            {
+                Debug.Log($"[{name}] StraightMode FixedUpdate: throttle={maxThrottle}, vel={_engine.RB.velocity.magnitude:F1}, neutralized={_neutralized}");
+                _straightModeLogCount++;
+            }
+        }
+        private int _straightModeLogCount = 0;
+
+        /// <summary>
         /// 런타임 배치 시 에이전트 상태 리셋
         /// OnEpisodeBegin과 달리 ML-Agents 에피소드를 건드리지 않고 내부 플래그만 초기화
         /// </summary>
@@ -263,6 +295,7 @@ namespace BoatAttack
         {
             _episodeEnded = false;
             _neutralized = false;
+            _straightMode = false;
             assignedTargetIndex = -1; // Commander가 새로 배정
             _prevThrottle = 0f;
             _prevSteering = 0f;
@@ -734,6 +767,16 @@ namespace BoatAttack
                 return;
             }
 
+            // Stage9: 직진 이탈 모드 — ML 정책 무시, 현재 헤딩으로 전속력 직진
+            if (_straightMode)
+            {
+                _engine.Accelerate(maxThrottle);
+                _engine.Turn(0f);
+                _prevThrottle = maxThrottle;
+                _prevSteering = 0f;
+                return;
+            }
+
             float throttleInput = actions.ContinuousActions[0];
             float steeringInput = actions.ContinuousActions[1];
 
@@ -840,7 +883,7 @@ namespace BoatAttack
 
         private void OnCollisionEnter(Collision collision)
         {
-            if (_episodeEnded || _neutralized)
+            if (_episodeEnded || _neutralized || _straightMode)
                 return;
 
             if (collision.gameObject.GetComponent<DefenseAgent>() != null ||

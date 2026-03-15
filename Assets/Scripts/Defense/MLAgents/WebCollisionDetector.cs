@@ -31,6 +31,7 @@ namespace BoatAttack
         [HideInInspector] public DynamicWeb parentDynamicWeb;
 
         private bool _hasTriggered = false;
+        public bool HasTriggered => _hasTriggered;
 
         private void Start()
         {
@@ -90,16 +91,8 @@ namespace BoatAttack
                     Destroy(effect, 3f);
                 }
             }
-            // 다른 페어의 아군 선박이 웹에 닿으면 처리
-            else if (other.GetComponent<DefenseAgent>() != null)
-            {
-                if (envController != null)
-                {
-                    envController.OnAllyHitWeb(other.gameObject, parentDynamicWeb);
-                    if (enableDebugLog)
-                        Debug.Log($"[WebCollisionDetector] 아군 웹 충돌! {other.gameObject.name}");
-                }
-            }
+            // 아군 웹 충돌은 DynamicWeb.OnTriggerEnter에서 처리 (IsOtherPairDefenseShip 필터링 포함)
+            // WebCollisionDetector에서는 적군 포획만 담당
         }
 
         /// <summary>

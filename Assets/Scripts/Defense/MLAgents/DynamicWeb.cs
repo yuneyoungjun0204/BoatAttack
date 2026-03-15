@@ -972,7 +972,7 @@ namespace BoatAttack
 
             if (envController != null)
             {
-                envController.OnEnemyHitWeb(attackBoat);
+                envController.OnEnemyHitWeb(attackBoat, this);
             }
         }
 
