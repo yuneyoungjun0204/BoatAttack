@@ -95,6 +95,16 @@ namespace BoatAttack
         private Vector3 _lastMousePos;
         private bool _isDragging = false;
 
+        // 자유 시점 (FreeLook) 모드
+        private bool _isFreeLook = false;
+        private float _freeLookYaw = 0f;
+        private float _freeLookPitch = 20f;
+        private float _freeLookMoveSpeed = 50f;
+        private float _freeLookSensitivity = 0.15f;
+
+        // Cinemachine 제어
+        private Cinemachine.CinemachineBrain _cinemachineBrain;
+
         // OnGUI 스타일 캐시
         private GUIStyle _hudStyle;
         private GUIStyle _hudStyleAlly;
@@ -107,6 +117,7 @@ namespace BoatAttack
                 envController = FindObjectOfType<DefenseEnvController>();
             if (launchZoneManager == null)
                 launchZoneManager = FindObjectOfType<LaunchZoneManager>();
+            _cinemachineBrain = GetComponent<Cinemachine.CinemachineBrain>();
 
             Debug.LogWarning($"[FollowCam] START: env={envController != null}, lzm={launchZoneManager != null}");
         }
@@ -133,6 +144,17 @@ namespace BoatAttack
                 _switchCooldown--;
 
             HandleInput();
+            HandleFreeLookToggle();
+
+            if (_isFreeLook)
+            {
+                UpdateFreeLookCamera();
+                _debugCurrentTarget = "[FreeLook]";
+                _debugAllyCount = GetAliveAllies().Count;
+                _debugEnemyCount = GetAliveEnemies().Count;
+                return;
+            }
+
             HandleTopDownInput();
 
             if (_isTopDown)
@@ -177,6 +199,11 @@ namespace BoatAttack
                     _topDownPosition = transform.position;
                     _topDownPosition.y = 0f;
                     _isDragging = false;
+                    if (_cinemachineBrain != null) _cinemachineBrain.enabled = false;
+                }
+                else
+                {
+                    if (_cinemachineBrain != null) _cinemachineBrain.enabled = true;
                 }
             }
 
@@ -220,6 +247,75 @@ namespace BoatAttack
 
         #endregion
 
+        #region FreeLook Camera
+
+        private void HandleFreeLookToggle()
+        {
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard == null) return;
+
+            if (keyboard.fKey.wasPressedThisFrame)
+            {
+                _isFreeLook = !_isFreeLook;
+                if (_isFreeLook)
+                {
+                    // 현재 카메라 방향 유지한 채 전환
+                    _freeLookYaw = transform.eulerAngles.y;
+                    _freeLookPitch = transform.eulerAngles.x;
+                    _isTopDown = false; // 탑다운 해제
+                    // Cinemachine이 카메라를 덮어쓰지 않도록 비활성화
+                    if (_cinemachineBrain != null) _cinemachineBrain.enabled = false;
+                }
+                else
+                {
+                    // Cinemachine 복원
+                    if (_cinemachineBrain != null) _cinemachineBrain.enabled = true;
+                }
+            }
+        }
+
+        private void UpdateFreeLookCamera()
+        {
+            var mouse = Mouse.current;
+            var keyboard = Keyboard.current;
+            if (mouse == null || keyboard == null) return;
+
+            // 우클릭 드래그 → 시점 회전
+            if (mouse.rightButton.isPressed)
+            {
+                Vector2 delta = mouse.delta.ReadValue();
+                _freeLookYaw += delta.x * _freeLookSensitivity;
+                _freeLookPitch -= delta.y * _freeLookSensitivity;
+                _freeLookPitch = Mathf.Clamp(_freeLookPitch, -89f, 89f);
+            }
+
+            transform.rotation = Quaternion.Euler(_freeLookPitch, _freeLookYaw, 0f);
+
+            // WASD + QE → 이동
+            Vector3 move = Vector3.zero;
+            if (keyboard.wKey.isPressed) move += transform.forward;
+            if (keyboard.sKey.isPressed) move -= transform.forward;
+            if (keyboard.dKey.isPressed) move += transform.right;
+            if (keyboard.aKey.isPressed) move -= transform.right;
+            if (keyboard.eKey.isPressed) move += Vector3.up;
+            if (keyboard.qKey.isPressed) move -= Vector3.up;
+
+            // Shift → 가속
+            float speed = _freeLookMoveSpeed;
+            if (keyboard.leftShiftKey.isPressed) speed *= 3f;
+
+            // 스크롤 → 이동 속도 조절
+            float scroll = mouse.scroll.ReadValue().y;
+            if (Mathf.Abs(scroll) > 0.01f)
+            {
+                _freeLookMoveSpeed = Mathf.Clamp(_freeLookMoveSpeed + scroll * 5f, 5f, 500f);
+            }
+
+            transform.position += move.normalized * speed * Time.unscaledDeltaTime;
+        }
+
+        #endregion
+
         private bool IsTargetAlive()
         {
             if (_currentTarget == null) return false;
@@ -248,8 +344,8 @@ namespace BoatAttack
 
         private void HandleInput()
         {
-            // 탑다운 모드에서는 C키 무시
-            if (_isTopDown) return;
+            // 탑다운/자유 시점 모드에서는 C키 무시
+            if (_isTopDown || _isFreeLook) return;
 
             // InputAction 기반 (가장 안정적)
             bool pressed = _switchAction != null && _switchAction.WasPressedThisFrame();
@@ -471,21 +567,26 @@ namespace BoatAttack
             GUILayout.Label($"ENEMY: {enemyCount} ships", _hudStyleEnemy);
             GUILayout.Label($"  Captured: {capturedCount}  |  Breached: {breachedCount}", _hudStyleTarget);
 
-            if (_isTopDown)
+            if (_isFreeLook)
             {
-                GUILayout.Label($"CAM: [Top-Down]  [RClick=follow]", _hudStyleTarget);
+                GUILayout.Label($"CAM: [FreeLook]  [F=exit]", _hudStyleTarget);
+                GUILayout.Label($"  RDrag=rotate  WASD=move  Scroll=speed", _hudStyleTarget);
+            }
+            else if (_isTopDown)
+            {
+                GUILayout.Label($"CAM: [Top-Down]  [RClick=follow]  [F=free]", _hudStyleTarget);
                 GUILayout.Label($"  Drag=move  Scroll=zoom", _hudStyleTarget);
             }
             else if (_currentTarget != null)
             {
                 string prefix = _followingAllies ? "[Ally]" : "[Enemy]";
                 GUILayout.Label($"CAM: {prefix} {_currentTarget.name}  [C=switch]", _hudStyleTarget);
-                GUILayout.Label($"  [RClick=top-down]", _hudStyleTarget);
+                GUILayout.Label($"  [RClick=top-down]  [F=free]", _hudStyleTarget);
             }
             else
             {
                 GUILayout.Label("CAM: No target  [C=switch]", _hudStyleTarget);
-                GUILayout.Label($"  [RClick=top-down]", _hudStyleTarget);
+                GUILayout.Label($"  [RClick=top-down]  [F=free]", _hudStyleTarget);
             }
 
             GUILayout.EndArea();

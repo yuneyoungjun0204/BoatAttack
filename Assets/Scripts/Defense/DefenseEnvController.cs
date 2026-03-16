@@ -225,7 +225,7 @@ namespace BoatAttack
         public float enemyBreachThreshold = 20f;
 
         [Tooltip("좌/우 교차 판정 임계값 (cos): 0=90°반전, 0.01≈89.4°, 1=완전일치")]
-        public float swapDotThreshold = 0.01f;
+        public float swapDotThreshold = 0.02f;
 
         [Tooltip("에피소드 내 최대 아군 쌍 생성 수 (이 수 이상 생성 불가)")]
         public int maxAllyPairsPerEpisode = 25;
@@ -957,11 +957,21 @@ namespace BoatAttack
                         if (pair.agent1 == null || pair.agent2 == null) continue;
 
                         // 배치 후 유예기간 (10스텝) 동안 거리 체크 건너뛰기
-                        if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
+                        bool inGrace = pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10;
+                        if (inGrace) continue;
 
                         Vector3 p1 = pair.agent1.transform.position;
                         Vector3 p2 = pair.agent2.transform.position;
                         float allyDist = Vector3.Distance(p1, p2);
+
+                        // 유예 직후 첫 체크: 실제 위치 기반으로 고정 기준 기록
+                        if (pair.prevLateralDir.sqrMagnitude < 0.5f)
+                        {
+                            Vector3 initDir = p2 - p1;
+                            initDir.y = 0f;
+                            if (initDir.sqrMagnitude > 0.01f)
+                                pair.prevLateralDir = initDir.normalized;
+                        }
 
                         bool shouldDisable = false;
                         string disableReason = null;
@@ -977,20 +987,26 @@ namespace BoatAttack
                             disableReason = $"거리 부족 (dist={allyDist:F1}, min={rewardCalculator.minAllyDistance})";
                         }
 
-                        // 좌/우 교차 체크: 배치 시 agent1→agent2 방향 vs 현재 방향
-                        // 정규화 후 dot < threshold = 교차 직전~교차 감지
+                        // 좌/우 교차 체크: 유예 후 고정된 기준 방향 vs 현재 방향
+                        // 가까울 때는 각도 노이즈가 크므로 확실한 교차만 감지
                         if (!shouldDisable)
                         {
                             Vector3 currentDir = p2 - p1;
                             currentDir.y = 0f;
                             float mag = currentDir.magnitude;
-                            float swapDot = mag > 0.1f
-                                ? Vector3.Dot(pair.deployLateralDir, currentDir / mag)
-                                : 1f; // 거리 너무 가까우면 판정 보류
-                            if (swapDot < swapDotThreshold)
+                            if (mag > 0.1f)
                             {
-                                shouldDisable = true;
-                                disableReason = $"좌/우 교차 (dot={swapDot:F2}, threshold={swapDotThreshold})";
+                                Vector3 currentNorm = currentDir / mag;
+                                float swapDot = Vector3.Dot(pair.prevLateralDir, currentNorm);
+                                // 거리 20m 미만: 확실한 교차만 (dot < -0.3 ≈ 107°)
+                                // 거리 20m 이상: 정상 threshold
+                                float effectiveThreshold = allyDist < 25f ? -0.6f : swapDotThreshold;
+                                if (swapDot < effectiveThreshold)
+                                {
+                                    shouldDisable = true;
+                                    disableReason = $"좌/우 교차 (dot={swapDot:F2}, threshold={effectiveThreshold:F2}, dist={allyDist:F1})";
+                                }
+                                // prevLateralDir 갱신 안 함 — 고정 기준 유지
                             }
                         }
 
@@ -1856,26 +1872,24 @@ namespace BoatAttack
             float reward = rewardCalculator.captureReward * seqBonus
                 + rewardCalculator.captureDistanceBonus * distRatio;
 
-            // 보상 부여
-            if (currentStage == TrainingStage.Stage9_DisarmReform && m_AgentGroup != null && capturingWeb != null)
+            // 보상 부여: 그룹 보상(전액) + 포획한 쌍에 개별 보너스
+            if (m_AgentGroup != null)
             {
-                // Stage9: 포획한 쌍에 개별 보상 + 나머지 그룹 보상
-                float individualReward = reward * captureIndividualShare;
-                float groupReward = reward * (1f - captureIndividualShare);
-
-                // 포획한 쌍에게 개별 보상 (UnregisterAgent 전이므로 유효)
-                DefenseAgent capAgent1 = capturingWeb.defenseShip1 != null
-                    ? capturingWeb.defenseShip1.GetComponent<DefenseAgent>() : null;
-                DefenseAgent capAgent2 = capturingWeb.defenseShip2 != null
-                    ? capturingWeb.defenseShip2.GetComponent<DefenseAgent>() : null;
-                if (capAgent1 != null) capAgent1.AddReward(individualReward);
-                if (capAgent2 != null) capAgent2.AddReward(individualReward);
-
-                // 그룹 보상
-                m_AgentGroup.AddGroupReward(groupReward);
-            }
-            else if (m_AgentGroup != null)
+                // 그룹 보상: 전체 팀에 reward 전액
                 m_AgentGroup.AddGroupReward(reward);
+
+                // 개별 보너스: 포획한 쌍에 추가 보상
+                if (capturingWeb != null)
+                {
+                    float individualBonus = reward * captureIndividualShare;
+                    DefenseAgent capAgent1 = capturingWeb.defenseShip1 != null
+                        ? capturingWeb.defenseShip1.GetComponent<DefenseAgent>() : null;
+                    DefenseAgent capAgent2 = capturingWeb.defenseShip2 != null
+                        ? capturingWeb.defenseShip2.GetComponent<DefenseAgent>() : null;
+                    if (capAgent1 != null) capAgent1.AddReward(individualBonus);
+                    if (capAgent2 != null) capAgent2.AddReward(individualBonus);
+                }
+            }
             else
             {
                 if (defenseAgent1 != null) defenseAgent1.AddReward(reward);

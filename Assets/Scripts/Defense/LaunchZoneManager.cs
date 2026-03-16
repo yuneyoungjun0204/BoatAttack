@@ -51,6 +51,7 @@ namespace BoatAttack
         // 좌/우 교차 체크용 (배치 시 기록)
         [HideInInspector] public bool agent1StartsOnLeft = true; // agent1이 lateralDir 기준 왼쪽인지
         [HideInInspector] public Vector3 deployLateralDir = Vector3.right; // 배치 시 횡방향 (좌/우 판별 축)
+        [HideInInspector] public Vector3 prevLateralDir = Vector3.right; // 이전 스텝의 (p2-p1) 정규화 방향
     }
 
     /// <summary>
@@ -657,6 +658,7 @@ namespace BoatAttack
 
                 // 좌/우 교차 체크용 초기값 기록
                 pair.deployLateralDir = webLateral;
+                pair.prevLateralDir = Vector3.zero; // 유예 후 실제 위치로 기록됨
                 float dot1 = Vector3.Dot(pos1 - pairCenter, webLateral);
                 pair.agent1StartsOnLeft = dot1 < 0f;
 
@@ -1273,6 +1275,7 @@ namespace BoatAttack
 
             // 좌/우 교차 체크용 초기값 기록 (실제 agent1→agent2 방향)
             pair.deployLateralDir = lateralDir;
+            pair.prevLateralDir = Vector3.zero; // 유예 후 실제 위치로 기록됨
             float dotSingle = Vector3.Dot(pos1 - pairCenter, lateralDir);
             pair.agent1StartsOnLeft = dotSingle < 0f;
 

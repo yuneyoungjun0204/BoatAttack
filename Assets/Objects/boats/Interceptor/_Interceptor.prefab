@@ -669,7 +669,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 5
+    VectorObservationSize: 6
     NumStackedVectorObservations: 1
     m_ActionSpec:
       m_NumContinuousActions: 2
@@ -744,6 +744,7 @@ MonoBehaviour:
   forwardSpeedScale: 1
   driftSpeedScale: 1
   allyPairNormK: 100
+  webLengthNormK: 50
   phantomSpacing: 80
   phantomSpeed: 50
   phantomSpeedMult: 1.5
