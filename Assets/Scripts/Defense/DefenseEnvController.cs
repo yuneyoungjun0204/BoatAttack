@@ -224,6 +224,9 @@ namespace BoatAttack
         [Tooltip("적이 그물보다 모선에 이 거리 이상 더 가까우면 방어선 돌파 (m)")]
         public float enemyBreachThreshold = 20f;
 
+        [Tooltip("좌/우 교차 판정 임계값 (cos): 0=90°반전, 0.01≈89.4°, 1=완전일치")]
+        public float swapDotThreshold = 0.01f;
+
         [Tooltip("에피소드 내 최대 아군 쌍 생성 수 (이 수 이상 생성 불가)")]
         public int maxAllyPairsPerEpisode = 25;
 
@@ -331,6 +334,14 @@ namespace BoatAttack
 
         // Stage9: 깔린 트랩 그물 관리
         private System.Collections.Generic.List<GameObject> _anchoredTraps = new System.Collections.Generic.List<GameObject>();
+
+        /// <summary>활성 트랩 정보 (에이전트 관측용)</summary>
+        public struct TrapInfo
+        {
+            public Vector3 position;
+            public float webSize;
+        }
+        public System.Collections.Generic.List<TrapInfo> activeTraps = new System.Collections.Generic.List<TrapInfo>();
         
         // 위치 리셋 관련
         private int _lastResetFrame = -1; // 중복 리셋 방지용
@@ -967,16 +978,19 @@ namespace BoatAttack
                         }
 
                         // 좌/우 교차 체크: 배치 시 agent1→agent2 방향 vs 현재 방향
-                        // dot < 0 = 위치가 완전히 반전됨 (확실한 교차만 감지, 미세 회전 오판 없음)
+                        // 정규화 후 dot < threshold = 교차 직전~교차 감지
                         if (!shouldDisable)
                         {
                             Vector3 currentDir = p2 - p1;
                             currentDir.y = 0f;
-                            float swapDot = Vector3.Dot(pair.deployLateralDir, currentDir);
-                            if (swapDot < 0f)
+                            float mag = currentDir.magnitude;
+                            float swapDot = mag > 0.1f
+                                ? Vector3.Dot(pair.deployLateralDir, currentDir / mag)
+                                : 1f; // 거리 너무 가까우면 판정 보류
+                            if (swapDot < swapDotThreshold)
                             {
                                 shouldDisable = true;
-                                disableReason = $"좌/우 교차 (방향 반전, dot={swapDot:F2})";
+                                disableReason = $"좌/우 교차 (dot={swapDot:F2}, threshold={swapDotThreshold})";
                             }
                         }
 
@@ -1265,11 +1279,11 @@ namespace BoatAttack
             }
             else if (defenseAgent1 != null && defenseAgent2 != null)
             {
-                // fallback: LaunchZoneManager 없는 레거시 모드
+                // fallback: LaunchZoneManager 없는 레거시 모드 (대형 유지만)
                 var agent1State = rewardCalculator.GetAgentState(defenseAgent1);
                 var agent2State = rewardCalculator.GetAgentState(defenseAgent2);
-                float stepReward = rewardCalculator.CalculateStepReward(
-                    agent1State, agent2State, enemyShips, webObject);
+                float stepReward = rewardCalculator.CalculatePairStepReward(
+                    0, agent1State, agent2State, float.MaxValue, 0f);
                 if (Mathf.Abs(stepReward) > 0.0001f)
                 {
                     if (m_AgentGroup != null)
@@ -1369,7 +1383,9 @@ namespace BoatAttack
                                 }
                             }
 
-                            float reward = rewardCalculator.raycastInterceptReward * perpBonus * centerBonus;
+                            // 위협도 가중치: 적이 모선에 가까울수록 보상 증가 (1.0 ~ 2.0)
+                            float threatWeight = 1f + Mathf.Clamp01(1f - distToMother / 500f);
+                            float reward = rewardCalculator.raycastInterceptReward * perpBonus * centerBonus * threatWeight;
                             agent.AddReward(reward);
                             if (agent.partnerAgent != null)
                                 agent.partnerAgent.AddReward(reward);
@@ -2735,7 +2751,11 @@ namespace BoatAttack
 
             _anchoredTraps.Add(trap);
 
-            Debug.Log($"[DefenseEnv] 트랩 그물 생성: pos={trap.transform.position}, size={col.size}, lifetime={trapLifetimeSteps}steps");
+            // 관측용 트랩 정보 등록
+            float webSize = col.size.x * trap.transform.localScale.x; // 월드 스케일 기준 그물 폭
+            activeTraps.Add(new TrapInfo { position = trap.transform.position, webSize = webSize });
+
+            Debug.Log($"[DefenseEnv] 트랩 그물 생성: pos={trap.transform.position}, size={col.size}, webSize={webSize:F1}, lifetime={trapLifetimeSteps}steps");
         }
 
         /// <summary>
@@ -2749,6 +2769,7 @@ namespace BoatAttack
                     Destroy(_anchoredTraps[i]);
             }
             _anchoredTraps.Clear();
+            activeTraps.Clear();
         }
 
         private void Stage8DeployForUncoveredEnemies()

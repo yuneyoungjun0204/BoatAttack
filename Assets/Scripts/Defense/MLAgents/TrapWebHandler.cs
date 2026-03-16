@@ -12,6 +12,7 @@ namespace BoatAttack
     {
         [HideInInspector] public DefenseEnvController envController;
         [HideInInspector] public int remainingSteps;
+        [HideInInspector] public float webSize; // 관측용 그물 크기
 
         private const string ENEMY_TAG = "attack_boat";
         private int _lastAcademyStep;
@@ -33,6 +34,7 @@ namespace BoatAttack
 
             if (remainingSteps <= 0)
             {
+                RemoveFromActiveTraps();
                 Destroy(gameObject);
             }
         }
@@ -45,6 +47,7 @@ namespace BoatAttack
             if (other.CompareTag(ENEMY_TAG))
             {
                 envController.OnEnemyHitTrap(other.gameObject);
+                RemoveFromActiveTraps();
                 Destroy(gameObject);
                 return;
             }
@@ -57,6 +60,19 @@ namespace BoatAttack
             {
                 envController.OnAllyHitTrap(defenseAgent);
                 // 트랩은 유지 (1회용 아님 — 아군 충돌로는 파괴하지 않음)
+            }
+        }
+        private void RemoveFromActiveTraps()
+        {
+            if (envController == null) return;
+            Vector3 pos = transform.position;
+            for (int i = envController.activeTraps.Count - 1; i >= 0; i--)
+            {
+                if (Vector3.Distance(envController.activeTraps[i].position, pos) < 1f)
+                {
+                    envController.activeTraps.RemoveAt(i);
+                    break;
+                }
             }
         }
     }
