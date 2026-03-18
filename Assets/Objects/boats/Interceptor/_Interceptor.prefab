@@ -516,12 +516,12 @@ PrefabInstance:
     - target: {fileID: 1046895372862771327, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_FollowOffset.x
-      value: 100
+      value: 200
       objectReference: {fileID: 0}
     - target: {fileID: 1046895372862771327, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_FollowOffset.y
-      value: -50
+      value: -100
       objectReference: {fileID: 0}
     - target: {fileID: 1857749394586354482, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
@@ -731,7 +731,7 @@ MonoBehaviour:
   speedMultiplier: 1
   inputSmoothing: 0.2
   partnerNormK: 50
-  enemyNormK: 600
+  enemyNormK: 700
   motherNormK: 1000
   partnerRScale: 1
   partnerFScale: 1

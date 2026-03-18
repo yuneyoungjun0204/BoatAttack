@@ -964,13 +964,18 @@ namespace BoatAttack
                         Vector3 p2 = pair.agent2.transform.position;
                         float allyDist = Vector3.Distance(p1, p2);
 
-                        // 유예 직후 첫 체크: 실제 위치 기반으로 고정 기준 기록
+                        // 유예 직후 첫 체크: 실제 위치 기반으로 고정 기준 + 좌/우 기록
                         if (pair.prevLateralDir.sqrMagnitude < 0.5f)
                         {
                             Vector3 initDir = p2 - p1;
                             initDir.y = 0f;
                             if (initDir.sqrMagnitude > 0.01f)
+                            {
                                 pair.prevLateralDir = initDir.normalized;
+                                Vector3 center = (p1 + p2) * 0.5f;
+                                float d1 = Vector3.Dot(p1 - center, pair.prevLateralDir);
+                                pair.agent1StartsOnLeft = d1 < 0f;
+                            }
                         }
 
                         bool shouldDisable = false;
@@ -987,26 +992,16 @@ namespace BoatAttack
                             disableReason = $"거리 부족 (dist={allyDist:F1}, min={rewardCalculator.minAllyDistance})";
                         }
 
-                        // 좌/우 교차 체크: 유예 후 고정된 기준 방향 vs 현재 방향
-                        // 가까울 때는 각도 노이즈가 크므로 확실한 교차만 감지
-                        if (!shouldDisable)
+                        // 좌/우 교차 체크: 유예 후 고정 기준에서 agent1의 좌/우가 뒤바뀌었는지
+                        if (!shouldDisable && pair.prevLateralDir.sqrMagnitude > 0.5f)
                         {
-                            Vector3 currentDir = p2 - p1;
-                            currentDir.y = 0f;
-                            float mag = currentDir.magnitude;
-                            if (mag > 0.1f)
+                            Vector3 center = (p1 + p2) * 0.5f;
+                            float dot1 = Vector3.Dot(p1 - center, pair.prevLateralDir);
+                            bool agent1NowOnLeft = dot1 < 0f;
+                            if (agent1NowOnLeft != pair.agent1StartsOnLeft)
                             {
-                                Vector3 currentNorm = currentDir / mag;
-                                float swapDot = Vector3.Dot(pair.prevLateralDir, currentNorm);
-                                // 거리 20m 미만: 확실한 교차만 (dot < -0.3 ≈ 107°)
-                                // 거리 20m 이상: 정상 threshold
-                                float effectiveThreshold = allyDist < 25f ? -0.6f : swapDotThreshold;
-                                if (swapDot < effectiveThreshold)
-                                {
-                                    shouldDisable = true;
-                                    disableReason = $"좌/우 교차 (dot={swapDot:F2}, threshold={effectiveThreshold:F2}, dist={allyDist:F1})";
-                                }
-                                // prevLateralDir 갱신 안 함 — 고정 기준 유지
+                                shouldDisable = true;
+                                disableReason = $"좌/우 교차 (startLeft={pair.agent1StartsOnLeft}, nowLeft={agent1NowOnLeft})";
                             }
                         }
 
@@ -1228,9 +1223,9 @@ namespace BoatAttack
                 DeployReservesForUnassignedEnemies();
             }
 
-            // Stage8/9: 어떤 아군보다 모선에 가까운 적이 있으면 예비 쌍 출동 (80스텝마다)
+            // Stage8/9: 어떤 아군보다 모선에 가까운 적이 있으면 예비 쌍 출동 (100스텝마다)
             if ((currentStage == TrainingStage.Stage8_TacticalFullObs || currentStage == TrainingStage.Stage9_DisarmReform)
-                && launchZoneManager != null && motherShip != null && _resetTimer % 80 == 0)
+                && launchZoneManager != null && motherShip != null && _resetTimer % 100 == 0)
             {
                 Stage8DeployForUncoveredEnemies();
             }
@@ -1408,24 +1403,27 @@ namespace BoatAttack
                             totalStepReward += reward;
                         }
 
+                        // 타임아웃 타이머 갱신: hit한 Web의 pair를 찾아서 lastRaycastHitStep 갱신
+                        if (launchZoneManager != null && launchZoneManager.IsInitialized)
+                        {
+                            for (int pi = 0; pi < launchZoneManager.GetCurrentPoolCount(); pi++)
+                            {
+                                var p = launchZoneManager.GetPair(pi);
+                                if (p == null || !p.isActive) continue;
+                                if (p.webObject != null && p.webObject.GetComponent<DynamicWeb>() == dw)
+                                {
+                                    p.lastRaycastHitStep = _resetTimer;
+                                    p.hasEverHitRaycast = true;
+                                    break;
+                                }
+                            }
+                        }
+
                         break; // 한 적당 하나의 Web만
                     }
 
-                    // 미차단 페널티: Ray가 Web에 안 닿으면 그룹 페널티
-                    if (!hitWeb)
-                    {
-                        float penalty = -rewardCalculator.raycastInterceptReward;
-                        if (m_AgentGroup != null)
-                        {
-                            m_AgentGroup.AddGroupReward(penalty);
-                        }
-                        else
-                        {
-                            if (defenseAgent1 != null) defenseAgent1.AddReward(penalty);
-                            if (defenseAgent2 != null) defenseAgent2.AddReward(penalty);
-                        }
-                        totalStepReward += penalty;
-                    }
+                    // 미차단 페널티: 타임아웃 방식으로 대체 (매-스텝 누적 음수 제거)
+                    // if (!hitWeb) { ... }
 
                     // 근접 포획 보너스 (Bridge Reward): Web중심↔적 거리가 임계값 이내일 때
                     if (rewardCalculator.proximityBridgeCoeff > 0f && rewardCalculator.proximityThreshold > 0f
@@ -1478,6 +1476,37 @@ namespace BoatAttack
                             _enemyRayLines[ei].startColor = new Color(1f, 0f, 0f, 0.5f);
                             _enemyRayLines[ei].endColor = new Color(1f, 0f, 0f, 0.1f);
                         }
+                    }
+                }
+            }
+
+            // 레이캐스트 타임아웃 체크: 일정 스텝간 미차단 시 페어 비활성화
+            if (rewardCalculator.raycastTimeoutSteps > 0
+                && launchZoneManager != null && launchZoneManager.IsInitialized)
+            {
+                int poolCount = launchZoneManager.GetCurrentPoolCount();
+                for (int pi = 0; pi < poolCount; pi++)
+                {
+                    var pair = launchZoneManager.GetPair(pi);
+                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
+                    if (pair.lastRaycastHitStep < 0) continue; // 아직 배치 안 됨
+
+                    // 배치 후 유예기간
+                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
+
+                    int stepsSinceHit = _resetTimer - pair.lastRaycastHitStep;
+                    int effectiveTimeout = pair.hasEverHitRaycast
+                        ? rewardCalculator.raycastTimeoutSteps / 2
+                        : rewardCalculator.raycastTimeoutSteps;
+                    if (stepsSinceHit > effectiveTimeout)
+                    {
+                        if (pair.agent1 != null)
+                            pair.agent1.AddReward(rewardCalculator.raycastTimeoutPenalty);
+                        if (pair.agent2 != null)
+                            pair.agent2.AddReward(rewardCalculator.raycastTimeoutPenalty);
+
+                        Debug.Log($"[RaycastTimeout] Pair {pi} 비활성화: {stepsSinceHit}스텝간 미차단 (limit={effectiveTimeout}, everHit={pair.hasEverHitRaycast})");
+                        DisableOrDisarmPair(pi);
                     }
                 }
             }

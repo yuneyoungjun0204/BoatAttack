@@ -67,6 +67,13 @@ namespace BoatAttack
         [Tooltip("중앙 차단 보너스 계수 (centerScore × 계수가 보상 배율에 추가)")]
         public float centerBonusCoeff = 0.5f;
 
+        [Header("=== 레이캐스트 타임아웃 ===")]
+        [Tooltip("레이캐스트 미차단 허용 스텝 수 (0=비활성화). 50스텝≈5초@timescale10")]
+        public int raycastTimeoutSteps = 50;
+
+        [Tooltip("타임아웃 비활성화 시 페널티")]
+        public float raycastTimeoutPenalty = -0.5f;
+
         [Header("=== 근접 포획 보너스 (Bridge Reward) ===")]
         [Tooltip("Web중심↔적 거리가 임계값 이내일 때 보상 계수")]
         public float proximityBridgeCoeff = 0.005f;

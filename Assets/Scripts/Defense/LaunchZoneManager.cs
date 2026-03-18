@@ -52,6 +52,10 @@ namespace BoatAttack
         [HideInInspector] public bool agent1StartsOnLeft = true; // agent1이 lateralDir 기준 왼쪽인지
         [HideInInspector] public Vector3 deployLateralDir = Vector3.right; // 배치 시 횡방향 (좌/우 판별 축)
         [HideInInspector] public Vector3 prevLateralDir = Vector3.right; // 이전 스텝의 (p2-p1) 정규화 방향
+
+        // 레이캐스트 타임아웃 체크용
+        [HideInInspector] public int lastRaycastHitStep = -1;
+        [HideInInspector] public bool hasEverHitRaycast = false;
     }
 
     /// <summary>
@@ -662,7 +666,10 @@ namespace BoatAttack
                 float dot1 = Vector3.Dot(pos1 - pairCenter, webLateral);
                 pair.agent1StartsOnLeft = dot1 < 0f;
 
-                pair.deployStep = -1;
+                int currentStep = envController != null ? envController.CurrentStep : 0;
+                pair.deployStep = currentStep;
+                pair.lastRaycastHitStep = currentStep;
+                pair.hasEverHitRaycast = false;
 
                 // 활성화
                 SetPairActive(pi, true);
@@ -1221,6 +1228,8 @@ namespace BoatAttack
 
             pair.assignedZoneIndex = zoneIdx;
             pair.deployStep = envController != null ? envController.CurrentStep : 0;
+            pair.lastRaycastHitStep = pair.deployStep; // 배치 시점부터 타임아웃 카운트 시작
+            pair.hasEverHitRaycast = false;
 
             // 3. 적군 참조 설정
             if (enemies != null)
@@ -1646,6 +1655,8 @@ namespace BoatAttack
             pair.disarmStep = -1;
             pair.assignedZoneIndex = -1;
             pair.deployStep = -1;
+            pair.lastRaycastHitStep = -1;
+            pair.hasEverHitRaycast = false;
 
             if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
             if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
@@ -1676,6 +1687,8 @@ namespace BoatAttack
             SetPairActive(pairIndex, false);
             pair.assignedZoneIndex = -1;
             pair.deployStep = -1;
+            pair.lastRaycastHitStep = -1;
+            pair.hasEverHitRaycast = false;
 
             // neutralized 해제 (재배치 시 다시 사용 가능하도록)
             if (pair.agent1 != null) pair.agent1.SetNeutralized(false);

@@ -46,32 +46,25 @@ namespace BoatAttack
 
         private float _yaw;
         private float _pitch;
-        private Cinemachine.CinemachineBrain _cinemachineBrain;
-        private DefenseFollowCamera _followCamera;
+        private Cinemachine.CinemachineBrain[] _allBrains;
+        private DefenseFollowCamera[] _allFollowCams;
 
         /// <summary>자유 비행 모드 활성 여부</summary>
         public bool IsActive => _isActive;
 
-        /// <summary>
-        /// 씬 로드 후 자동으로 Main Camera에 부착
-        /// </summary>
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void AutoAttach()
-        {
-            if (Object.FindObjectOfType<DefenseEnvController>() == null) return;
-            var cam = Camera.main;
-            if (cam == null) return;
-            if (cam.GetComponent<FreeFlyCamera>() != null) return;
-            cam.gameObject.AddComponent<FreeFlyCamera>();
-        }
+        // AutoAttach 제거 — DefenseFollowCamera와 F키 충돌 방지
+        // Main Camera에 수동으로 추가하거나 DefenseFollowCamera가 자동 부착
 
         private void Start()
         {
-            _cinemachineBrain = GetComponent<Cinemachine.CinemachineBrain>();
-            _followCamera = GetComponent<DefenseFollowCamera>();
+            _allBrains = Object.FindObjectsOfType<Cinemachine.CinemachineBrain>();
+            _allFollowCams = Object.FindObjectsOfType<DefenseFollowCamera>();
             _yaw = transform.eulerAngles.y;
             _pitch = transform.eulerAngles.x;
         }
+
+        private Vector3 _targetPos;
+        private Quaternion _targetRot;
 
         private void Update()
         {
@@ -102,6 +95,14 @@ namespace BoatAttack
             HandleSpeed();
         }
 
+        private void LateUpdate()
+        {
+            if (!_isActive) return;
+            // Cinemachine LateUpdate 이후 카메라를 강제로 덮어씀
+            transform.position = _targetPos;
+            transform.rotation = _targetRot;
+        }
+
         /// <summary>자유 비행 모드 활성화</summary>
         public void Activate()
         {
@@ -109,14 +110,18 @@ namespace BoatAttack
             _yaw = transform.eulerAngles.y;
             _pitch = transform.eulerAngles.x;
             if (_pitch > 180f) _pitch -= 360f;
+            _targetPos = transform.position;
+            _targetRot = transform.rotation;
 
-            // Cinemachine 비활성화
-            if (_cinemachineBrain != null)
-                _cinemachineBrain.enabled = false;
+            // 씬의 모든 Cinemachine 비활성화
+            if (_allBrains != null)
+                foreach (var brain in _allBrains)
+                    if (brain != null) brain.enabled = false;
 
-            // FollowCamera 비활성화
-            if (_followCamera != null)
-                _followCamera.enabled = false;
+            // 씬의 모든 FollowCamera 비활성화
+            if (_allFollowCams != null)
+                foreach (var fc in _allFollowCams)
+                    if (fc != null) fc.enabled = false;
 
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
@@ -129,13 +134,15 @@ namespace BoatAttack
         {
             _isActive = false;
 
-            // Cinemachine 복원
-            if (_cinemachineBrain != null)
-                _cinemachineBrain.enabled = true;
+            // 씬의 모든 Cinemachine 복원
+            if (_allBrains != null)
+                foreach (var brain in _allBrains)
+                    if (brain != null) brain.enabled = true;
 
-            // FollowCamera 복원
-            if (_followCamera != null)
-                _followCamera.enabled = true;
+            // 씬의 모든 FollowCamera 복원
+            if (_allFollowCams != null)
+                foreach (var fc in _allFollowCams)
+                    if (fc != null) fc.enabled = true;
 
             Debug.Log("[FreeFlyCamera] 자유 비행 모드 OFF");
         }
@@ -143,12 +150,15 @@ namespace BoatAttack
         private void HandleMovement(Keyboard kb)
         {
             Vector3 move = Vector3.zero;
+            Quaternion rot = Quaternion.Euler(_pitch, _yaw, 0f);
+            Vector3 fwd = rot * Vector3.forward;
+            Vector3 right = rot * Vector3.right;
 
             // WASD: 수평 이동
-            if (kb.wKey.isPressed) move += transform.forward;
-            if (kb.sKey.isPressed) move -= transform.forward;
-            if (kb.aKey.isPressed) move -= transform.right;
-            if (kb.dKey.isPressed) move += transform.right;
+            if (kb.wKey.isPressed) move += fwd;
+            if (kb.sKey.isPressed) move -= fwd;
+            if (kb.aKey.isPressed) move -= right;
+            if (kb.dKey.isPressed) move += right;
 
             // Space/Shift: 상승/하강
             if (kb.spaceKey.isPressed) move += Vector3.up;
@@ -156,7 +166,7 @@ namespace BoatAttack
 
             if (move.sqrMagnitude > 0.01f)
             {
-                transform.position += move.normalized * moveSpeed * Time.unscaledDeltaTime;
+                _targetPos += move.normalized * moveSpeed * Time.unscaledDeltaTime;
             }
         }
 
@@ -185,7 +195,7 @@ namespace BoatAttack
             _yaw += yawDelta;
             _pitch = Mathf.Clamp(_pitch + pitchDelta, -pitchLimit, pitchLimit);
 
-            transform.rotation = Quaternion.Euler(_pitch, _yaw, 0f);
+            _targetRot = Quaternion.Euler(_pitch, _yaw, 0f);
         }
 
         private void HandleSpeed()
