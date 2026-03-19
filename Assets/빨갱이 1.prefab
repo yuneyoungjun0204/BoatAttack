@@ -34777,13 +34777,15 @@ GameObject:
   - component: {fileID: 4635383092979925273}
   - component: {fileID: 6827343430107846827}
   - component: {fileID: 1880583791985537024}
+  - component: {fileID: 1803397374738088967}
+  - component: {fileID: 674889114191396071}
   m_Layer: 11
   m_Name: "\uBE68\uAC31\uC774 1"
   m_TagString: attack_boat
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &4099050320986568149
 Transform:
   m_ObjectHideFlags: 0
@@ -34793,7 +34795,7 @@ Transform:
   m_GameObject: {fileID: 7205157340779662337}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.74734855, z: 0, w: 0.6644323}
-  m_LocalPosition: {x: -1209.3986, y: 0, z: 248.24384}
+  m_LocalPosition: {x: -468.42, y: 295.22, z: -195.71}
   m_LocalScale: {x: 2, y: 3, z: 1.4}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -34925,6 +34927,83 @@ MonoBehaviour:
   destroyAfterExplosion: 0
   destroyDelay: 1.5
   useTriggerCollision: 0
+--- !u!114 &1803397374738088967
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7205157340779662337}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5d1c4e0b1822b495aa52bc52839ecb30, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_BrainParameters:
+    VectorObservationSize: 4
+    NumStackedVectorObservations: 3
+    m_ActionSpec:
+      m_NumContinuousActions: 2
+      BranchSizes: 
+    VectorActionSize: 02000000
+    VectorActionDescriptions: []
+    VectorActionSpaceType: 1
+    hasUpgradedBrainParametersWithActionSpec: 1
+  m_Model: {fileID: 0}
+  m_InferenceDevice: 0
+  m_BehaviorType: 0
+  m_BehaviorName: AttackBoat
+  TeamId: 0
+  m_UseChildSensors: 1
+  m_UseChildActuators: 1
+  m_DeterministicInference: 0
+  m_ObservableAttributeHandling: 0
+--- !u!114 &674889114191396071
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7205157340779662337}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0cb4d54e49c123c409b91ab0b82657a6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  agentParameters:
+    maxStep: 0
+  hasUpgradedFromAgentParameters: 1
+  MaxStep: 2000
+  targetMotherShip: {fileID: 0}
+  motherShipTag: MotherShip
+  enableAttackML: 1
+  distNormK: 500
+  webDistNormK: 200
+  minThrottleRatio: 0.5
+  maxSteeringOffset: 1
+  approachRewardCoeff: 0.01
+  mlTimePenalty: -0.0001
+  motherShipReachReward: 1
+  webCapturePenalty: -1
+  raycastDistance: 50
+  raycastCount: 8
+  distanceRewardMultiplier: 0.01
+  maxRewardDistance: 100
+  timePenalty: -0.001
+  steeringSensitivity: 0.3
+  inputSmoothing: 0.2
+  showRaycasts: 1
+  _totalReward: 0
+  explosionPrefab: {fileID: 0}
+  explosionReward: 50
+  explosionScale: 23
+  useTriggerCollision: 0
+  followWaypoints: 1
+  directChaseDistance: 50
+  enableRush: 1
+  rushThrottle: 1
+  steeringNoise: 0.1
+  noiseSpeed: 2
 --- !u!1 &8305774083215281229
 GameObject:
   m_ObjectHideFlags: 0

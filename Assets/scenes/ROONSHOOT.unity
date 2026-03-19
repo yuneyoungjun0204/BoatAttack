@@ -30005,7 +30005,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_SensorName: PairBuffer
-  m_ObservableSize: 6
+  m_ObservableSize: 2
   m_MaxNumObservables: 10
 --- !u!114 &202823441
 MonoBehaviour:
@@ -30020,7 +30020,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_SensorName: EnemyBuffer
-  m_ObservableSize: 5
+  m_ObservableSize: 3
   m_MaxNumObservables: 10
 --- !u!114 &202823442
 MonoBehaviour:

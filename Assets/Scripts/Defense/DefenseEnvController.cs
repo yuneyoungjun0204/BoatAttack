@@ -2173,6 +2173,25 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// 활성 Web(DynamicWeb) 목록 수집 (공격선박 ML 관측용)
+        /// </summary>
+        private System.Collections.Generic.List<DynamicWeb> GetActiveWebList()
+        {
+            var webs = new System.Collections.Generic.List<DynamicWeb>();
+            if (launchZoneManager == null || !launchZoneManager.IsInitialized) return webs;
+
+            int poolCount = launchZoneManager.GetCurrentPoolCount();
+            for (int i = 0; i < poolCount; i++)
+            {
+                var pair = launchZoneManager.GetPair(i);
+                if (pair == null || !pair.isActive || pair.webObject == null) continue;
+                var dw = pair.webObject.GetComponent<DynamicWeb>();
+                if (dw != null) webs.Add(dw);
+            }
+            return webs;
+        }
+
+        /// <summary>
         /// 적군 선박 무력화 (비활성화, 리스폰 없음)
         /// 포획 또는 모선 충돌 시 해당 적만 제거
         /// </summary>
@@ -2201,7 +2220,12 @@ namespace BoatAttack
             // AttackAgent 액션 차단 (_hasExploded → FixedUpdate/OnActionReceived 스킵)
             var attackAgent = enemyBoat.GetComponent<AttackAgent>();
             if (attackAgent != null)
+            {
+                // ML 모드: 그물 포획 페널티
+                if (attackAgent.enableAttackML)
+                    attackAgent.OnCapturedByWeb();
                 attackAgent.SetNeutralized();
+            }
 
             // 활성 적군 목록에서 제거 (카메라/보상 계산에서 무시됨)
             MarkEnemyAsNeutralized(enemyBoat);
@@ -3247,6 +3271,10 @@ namespace BoatAttack
             {
                 attackAgent.followWaypoints = false;
                 attackAgent.targetMotherShip = motherShip;
+
+                // ML 모드: 활성 Web 목록 전달
+                if (attackAgent.enableAttackML)
+                    attackAgent.SetActiveWebs(GetActiveWebList());
             }
 
             // 8. Engine 리셋 (Gerstner 파도 안정화)
