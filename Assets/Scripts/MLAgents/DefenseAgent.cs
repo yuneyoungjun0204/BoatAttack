@@ -174,6 +174,8 @@ namespace BoatAttack
         private bool _episodeEnded = false;
         private bool _neutralized = false;
         private bool _straightMode = false;  // Stage9: 직진 이탈 모드
+        private bool _deployMode = false;   // Convoy-Deploy: 그물 전개 모드
+        private float _deploySteerOverride = -0.5f;
         private float _prevThrottle = 0f;
         private float _prevSteering = 0f;
 
@@ -256,6 +258,7 @@ namespace BoatAttack
         /// 무력화 상태 설정 (DisablePair에서 호출)
         /// true → OnActionReceived에서 엔진 구동 차단
         /// </summary>
+        public bool IsNeutralized => _neutralized;
         public void SetNeutralized(bool value) => _neutralized = value;
 
         /// <summary>
@@ -290,6 +293,18 @@ namespace BoatAttack
         private int _straightModeLogCount = 0;
 
         /// <summary>
+        /// Convoy-Deploy: 그물 전개 모드 설정
+        /// true → ML 정책 무시, 지정 방향으로 조타하며 전속력 이동
+        /// </summary>
+        public bool IsDeployMode => _deployMode;
+
+        public void SetDeployMode(bool value, float steerOverride = -0.5f)
+        {
+            _deployMode = value;
+            _deploySteerOverride = steerOverride;
+        }
+
+        /// <summary>
         /// 런타임 배치 시 에이전트 상태 리셋
         /// OnEpisodeBegin과 달리 ML-Agents 에피소드를 건드리지 않고 내부 플래그만 초기화
         /// </summary>
@@ -298,6 +313,7 @@ namespace BoatAttack
             _episodeEnded = false;
             _neutralized = false;
             _straightMode = false;
+            _deployMode = false;
             assignedTargetIndex = -1; // Commander가 새로 배정
             _prevThrottle = 0f;
             _prevSteering = 0f;
@@ -308,6 +324,7 @@ namespace BoatAttack
         public override void OnEpisodeBegin()
         {
             _episodeEnded = false;
+            _deployMode = false;
             assignedTargetIndex = -1; // Commander가 새로 배정
             // _neutralized는 여기서 리셋하지 않음
             // SetNeutralized(false)로만 해제 (DeployPairs/ResetScene에서 호출)
@@ -846,6 +863,16 @@ namespace BoatAttack
                 return;
             }
 
+            // Convoy-Deploy: 그물 전개 모드 — ML 정책 무시, 지정 방향으로 전속력 분리
+            if (_deployMode)
+            {
+                _engine.Accelerate(maxThrottle);
+                _engine.Turn(_deploySteerOverride);
+                _prevThrottle = maxThrottle;
+                _prevSteering = _deploySteerOverride;
+                return;
+            }
+
             float throttleInput = actions.ContinuousActions[0];
             float steeringInput = actions.ContinuousActions[1];
 
@@ -955,15 +982,27 @@ namespace BoatAttack
             if (_episodeEnded || _neutralized || _straightMode)
                 return;
 
-            if (collision.gameObject.GetComponent<DefenseAgent>() != null ||
-                collision.gameObject.CompareTag("MotherShip"))
+            var otherAgent = collision.gameObject.GetComponent<DefenseAgent>();
+            bool isMotherShip = collision.gameObject.CompareTag("MotherShip");
+
+            if (otherAgent != null || isMotherShip)
             {
-                // 멀티 환경 호환: 같은 환경 계층 내에서 컨트롤러 찾기
-                Transform envRoot = transform.parent != null ? transform.parent : transform;
-                DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
-                if (envController != null)
+                // 파트너 아군 충돌: 페널티만 (비활성화 없음)
+                if (otherAgent != null && otherAgent == partnerAgent)
                 {
-                    envController.OnFriendlyCollision(this);
+                    Transform envRoot = transform.parent != null ? transform.parent : transform;
+                    DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
+                    if (envController != null)
+                        envController.OnPartnerCollision(this);
+                    return;
+                }
+
+                // 다른 쌍/모선 충돌: 기존 처리 (쌍 비활성화)
+                {
+                    Transform envRoot = transform.parent != null ? transform.parent : transform;
+                    DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
+                    if (envController != null)
+                        envController.OnFriendlyCollision(this);
                 }
             }
         }

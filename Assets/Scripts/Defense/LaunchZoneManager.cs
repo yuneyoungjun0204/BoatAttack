@@ -56,6 +56,10 @@ namespace BoatAttack
         // 레이캐스트 타임아웃 체크용
         [HideInInspector] public int lastRaycastHitStep = -1;
         [HideInInspector] public bool hasEverHitRaycast = false;
+
+        // Convoy-Deploy 시스템
+        [HideInInspector] public bool isDeploying = false;
+        [HideInInspector] public int deployStartStep = -1;
     }
 
     /// <summary>
@@ -670,6 +674,8 @@ namespace BoatAttack
                 pair.deployStep = currentStep;
                 pair.lastRaycastHitStep = currentStep;
                 pair.hasEverHitRaycast = false;
+                pair.isDeploying = false;
+                pair.deployStartStep = -1;
 
                 // 활성화
                 SetPairActive(pi, true);
@@ -825,10 +831,15 @@ namespace BoatAttack
                 }
             }
 
-            // 2. 풀 상한 체크
-            if (_pairPool.Count >= maxPairCount)
+            // 2. 풀 상한 체크 (Neutralized 쌍은 제외 — 그물 유지 중이므로 풀 슬롯 차지 안 함)
+            int effectiveCount = 0;
+            for (int i = 0; i < _pairPool.Count; i++)
             {
-                Debug.LogWarning($"[GetOrCreate] 풀 상한 도달: {_pairPool.Count}/{maxPairCount}");
+                if (!IsPairNeutralized(_pairPool[i])) effectiveCount++;
+            }
+            if (effectiveCount >= maxPairCount)
+            {
+                Debug.LogWarning($"[GetOrCreate] 풀 상한 도달: effective={effectiveCount}/{maxPairCount} (total={_pairPool.Count})");
                 return -1;
             }
 
@@ -981,11 +992,13 @@ namespace BoatAttack
             }
             pair.isActive = active;
 
-            // 활성화 시 Disarmed 상태 리셋
+            // 활성화 시 Disarmed/Deploying 상태 리셋
             if (active)
             {
                 pair.isDisarmed = false;
                 pair.disarmStep = -1;
+                pair.isDeploying = false;
+                pair.deployStartStep = -1;
             }
         }
 
@@ -1087,6 +1100,36 @@ namespace BoatAttack
         /// 활성 쌍 수 반환
         /// </summary>
         public int GetActivePairCount()
+        {
+            if (_pairPool == null) return 0;
+            int count = 0;
+            for (int i = 0; i < _pairPool.Count; i++)
+            {
+                if (_pairPool[i] != null && _pairPool[i].isActive)
+                {
+                    // Neutralized 쌍 (Convoy EXIT 후 그물 유지)은 활성 카운트에서 제외
+                    if (IsPairNeutralized(_pairPool[i])) continue;
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// 쌍의 양쪽 에이전트가 모두 Neutralized인지 확인
+        /// </summary>
+        private bool IsPairNeutralized(DefensePair pair)
+        {
+            if (pair == null) return false;
+            return pair.agent1 != null && pair.agent1.IsNeutralized
+                && pair.agent2 != null && pair.agent2.IsNeutralized;
+        }
+
+        /// <summary>
+        /// 작전 중인 쌍 수 (활성 + Neutralized 그물 유지 중)
+        /// 에피소드 종료 판단용 — 그물이 남아있으면 아직 작전 중
+        /// </summary>
+        public int GetOperationalPairCount()
         {
             if (_pairPool == null) return 0;
             int count = 0;
@@ -1230,6 +1273,8 @@ namespace BoatAttack
             pair.deployStep = envController != null ? envController.CurrentStep : 0;
             pair.lastRaycastHitStep = pair.deployStep; // 배치 시점부터 타임아웃 카운트 시작
             pair.hasEverHitRaycast = false;
+            pair.isDeploying = false;
+            pair.deployStartStep = -1;
 
             // 3. 적군 참조 설정
             if (enemies != null)
@@ -1440,12 +1485,14 @@ namespace BoatAttack
         {
             if (_pairPool == null) return 0;
             int existingInactive = 0;
+            int effectiveCount = 0;
             for (int i = 0; i < _pairPool.Count; i++)
             {
                 if (!_pairPool[i].isActive) existingInactive++;
+                if (!IsPairNeutralized(_pairPool[i])) effectiveCount++;
             }
-            // 아직 생성되지 않은 쌍도 "사용 가능"에 포함
-            int canCreate = Mathf.Max(0, maxPairCount - _pairPool.Count);
+            // 아직 생성되지 않은 쌍도 "사용 가능"에 포함 (Neutralized는 슬롯 차지 안 함)
+            int canCreate = Mathf.Max(0, maxPairCount - effectiveCount);
             return existingInactive + canCreate;
         }
 
@@ -1657,6 +1704,8 @@ namespace BoatAttack
             pair.deployStep = -1;
             pair.lastRaycastHitStep = -1;
             pair.hasEverHitRaycast = false;
+            pair.isDeploying = false;
+            pair.deployStartStep = -1;
 
             if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
             if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
@@ -1689,6 +1738,8 @@ namespace BoatAttack
             pair.deployStep = -1;
             pair.lastRaycastHitStep = -1;
             pair.hasEverHitRaycast = false;
+            pair.isDeploying = false;
+            pair.deployStartStep = -1;
 
             // neutralized 해제 (재배치 시 다시 사용 가능하도록)
             if (pair.agent1 != null) pair.agent1.SetNeutralized(false);

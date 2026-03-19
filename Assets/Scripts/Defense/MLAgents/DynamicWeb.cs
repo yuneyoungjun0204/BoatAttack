@@ -100,6 +100,10 @@ namespace BoatAttack
         [Tooltip("그물 줄 색상")]
         public Color ropeColor = new Color(0.95f, 0.93f, 0.88f, 1f); // 흰색 나일론 줄
 
+        [Header("Convoy Mode")]
+        [Tooltip("선박 간격이 이 거리(m) 미만이면 그물 collider/시각 비활성 (접힘 상태)")]
+        public float minWebActiveDist = 20f;
+
         [Tooltip("어부 그물 스타일 시각화 사용")]
         public bool useFishingNetVisual = true;
 
@@ -111,6 +115,7 @@ namespace BoatAttack
         private GameObject _visualObject;
         private Color _lastWebColor;
         private int _netUpdateCounter;  // 그물 메시 프레임 스킵용
+        private bool _wasWebOpen = true; // convoy 접힘 상태 변경 추적
 
         // 어부 그물용
         private GameObject _netContainer;
@@ -261,14 +266,24 @@ namespace BoatAttack
                 _collider.size = new Vector3(webThickness * colliderThicknessMultiplier, webHeight, distance);
             }
 
+            // Convoy 접힘: 선박 간격 < minWebActiveDist이면 collider/시각 비활성
+            bool webOpen = distance >= minWebActiveDist;
+            if (webOpen != _wasWebOpen)
+            {
+                if (_collider != null) _collider.enabled = webOpen;
+                if (_netContainer != null) _netContainer.SetActive(webOpen);
+                if (_visualObject != null) _visualObject.SetActive(webOpen);
+                _wasWebOpen = webOpen;
+            }
+
             // 어부 그물 시각화 업데이트 (3프레임마다 — 성능 최적화)
-            if (useFishingNetVisual && _netContainer != null)
+            if (webOpen && useFishingNetVisual && _netContainer != null)
             {
                 _netUpdateCounter++;
                 if (_netUpdateCounter % 3 == 0)
                     UpdateFishingNetVisual(pos1, pos2, distance);
             }
-            else if (_visualObject != null)
+            else if (webOpen && _visualObject != null)
             {
                 // 기존 Cube 비주얼
                 _visualObject.transform.localScale = new Vector3(webThickness, webHeight, distance);

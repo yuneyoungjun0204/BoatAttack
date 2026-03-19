@@ -106,6 +106,13 @@ namespace BoatAttack
         [Tooltip("적이 아군보다 모선에 가까울 때 페널티")]
         public float enemyOvertakePenalty = -1.0f;
 
+        [Header("=== Convoy / Deploy ===")]
+        [Tooltip("적이 이 거리(m) 이내 진입 시 그물 전개 시작")]
+        public float deployRange = 150f;
+
+        [Tooltip("선박 간격이 이 거리(m) 이상이면 그물 고정 + 선박 정지")]
+        public float webDeployedThreshold = 100f;
+
         // 이전 스텝의 담당 적 인덱스 (쌍별 추적, 적 변경 시 prev 리셋)
         private readonly System.Collections.Generic.Dictionary<int, int> _prevEnemyByPair
             = new System.Collections.Generic.Dictionary<int, int>();
