@@ -61,8 +61,8 @@ namespace BoatAttack
             "Throttle", "Steering"
         };
 
-        // EnemyBuffer: 3개씩 (Dist, SignedBrg, Hdg)
-        private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "Hdg" };
+        // EnemyBuffer: 4개씩 (Dist, SignedBrg, Hdg, SignedRayDist)
+        private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "Hdg", "RayD" };
         // AllyBuffer: 2개씩 (Dist, Brg)
         private static readonly string[] AllyObsSuffix = { "Dist", "Brg" };
 
@@ -775,12 +775,12 @@ namespace BoatAttack
 
             int bufferIdx = index - Labels.Length;
 
-            // 적군 버퍼 영역 (3개씩: Dist, SignedBrg, Hdg)
+            // 적군 버퍼 영역 (4개씩: Dist, SignedBrg, Hdg, SignedRayDist)
             int enemyCount = (targetAgent != null) ? targetAgent.lastEnemyBufferObs.Count : 0;
             if (bufferIdx >= 0 && bufferIdx < enemyCount)
             {
-                int enemyNum = bufferIdx / 3;
-                int comp = bufferIdx % 3;
+                int enemyNum = bufferIdx / 4;
+                int comp = bufferIdx % 4;
                 return $"E{enemyNum} {EnemyObsSuffix[comp]}";
             }
 
