@@ -113,6 +113,16 @@ namespace BoatAttack
         [Tooltip("선박 간격이 이 거리(m) 이상이면 그물 고정 + 선박 정지")]
         public float webDeployedThreshold = 100f;
 
+        [Tooltip("Deploy 트리거 발동 시 일회성 보너스 (양 에이전트에 지급)")]
+        public float deployTriggerBonus = 0.3f;
+
+        [Header("=== Convoy Ray 보상 (FixedJoint 모드) ===")]
+        [Tooltip("Ray 차단 접근 보상 (|SignedRayDist|→0 유도, 매 스텝)")]
+        public float rayApproachReward = 0.002f;
+
+        [Tooltip("Ray 수직 헤딩 보상 (쌍 헤딩 ⊥ Ray 유도, 매 스텝)")]
+        public float rayPerpendicularReward = 0.001f;
+
         // 이전 스텝의 담당 적 인덱스 (쌍별 추적, 적 변경 시 prev 리셋)
         private readonly System.Collections.Generic.Dictionary<int, int> _prevEnemyByPair
             = new System.Collections.Generic.Dictionary<int, int>();

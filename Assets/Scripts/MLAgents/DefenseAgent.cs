@@ -176,6 +176,12 @@ namespace BoatAttack
         private bool _straightMode = false;  // Stage9: 직진 이탈 모드
         private bool _deployMode = false;   // Convoy-Deploy: 그물 전개 모드
         private float _deploySteerOverride = -0.5f;
+        private bool _convoyMode = false;   // FixedJoint 쌍동선: 차동 추력 모드
+
+        [Header("=== Convoy (FixedJoint) ===")]
+        [Tooltip("차동 추력 감도 (steering → 좌우 추력 차이 비율, 1.0=한쪽 정지/반대쪽 전속력)")]
+        [Range(0.1f, 2f)]
+        public float differentialSensitivity = 1.0f;
         private float _prevThrottle = 0f;
         private float _prevSteering = 0f;
 
@@ -305,6 +311,16 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// FixedJoint 쌍동선 모드: Agent1이 차동 추력으로 양쪽 엔진 제어
+        /// </summary>
+        public bool IsConvoyMode => _convoyMode;
+
+        public void SetConvoyMode(bool value)
+        {
+            _convoyMode = value;
+        }
+
+        /// <summary>
         /// 런타임 배치 시 에이전트 상태 리셋
         /// OnEpisodeBegin과 달리 ML-Agents 에피소드를 건드리지 않고 내부 플래그만 초기화
         /// </summary>
@@ -314,6 +330,7 @@ namespace BoatAttack
             _neutralized = false;
             _straightMode = false;
             _deployMode = false;
+            _convoyMode = false;
             assignedTargetIndex = -1; // Commander가 새로 배정
             _prevThrottle = 0f;
             _prevSteering = 0f;
@@ -325,6 +342,7 @@ namespace BoatAttack
         {
             _episodeEnded = false;
             _deployMode = false;
+            _convoyMode = false;
             assignedTargetIndex = -1; // Commander가 새로 배정
             // _neutralized는 여기서 리셋하지 않음
             // SetNeutralized(false)로만 해제 (DeployPairs/ResetScene에서 호출)
@@ -870,6 +888,33 @@ namespace BoatAttack
                 _engine.Turn(_deploySteerOverride);
                 _prevThrottle = maxThrottle;
                 _prevSteering = _deploySteerOverride;
+                return;
+            }
+
+            // FixedJoint 쌍동선 모드 — 차동 추력으로 양쪽 엔진 제어
+            if (_convoyMode && partnerAgent != null && partnerAgent._engine != null)
+            {
+                float tInput = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
+                float dInput = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
+
+                // throttle: action [-1,+1] → [0, maxThrottle]
+                float baseThrottle = (tInput + 1f) * 0.5f * maxThrottle;
+                // differential: steering 입력을 좌우 추력 차이로 변환
+                float diff = dInput * differentialSensitivity;
+
+                float myThrottle = Mathf.Clamp01(baseThrottle * (1f - diff * 0.5f));
+                float partnerThrottle = Mathf.Clamp01(baseThrottle * (1f + diff * 0.5f));
+
+                // 자기 엔진 (한쪽 hull)
+                _engine.Accelerate(myThrottle);
+                _engine.Turn(0f);  // 러더 미사용, 차동 추력으로만 선회
+
+                // 파트너 엔진 (반대쪽 hull)
+                partnerAgent._engine.Accelerate(partnerThrottle);
+                partnerAgent._engine.Turn(0f);
+
+                _prevThrottle = myThrottle;
+                _prevSteering = diff;
                 return;
             }
 

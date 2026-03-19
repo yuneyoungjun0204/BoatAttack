@@ -117,6 +117,10 @@ namespace BoatAttack
         [Tooltip("Convoy-Deploy 시스템 활성화")]
         public bool enableConvoyDeploy = true;
 
+        [Tooltip("쌍동선 모드 시 두 선박 간격 (m). 작을수록 밀착)")]
+        [Range(1f, 20f)]
+        public float convoySpawnSpacing = 5f;
+
         [Tooltip("Deploy 시작 후 최대 허용 스텝 (0=무제한)")]
         public int deployMaxSteps = 200;
 
@@ -973,7 +977,8 @@ namespace BoatAttack
                         if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                         if (pair.agent1 == null || pair.agent2 == null) continue;
 
-                        // Deploy 중이거나 Neutralized(EXIT 후 그물 유지) 쌍은 거리 체크 스킵
+                        // Convoy(Joint 연결), Deploy 중, Neutralized(EXIT 후 그물 유지) 쌍은 거리 체크 스킵
+                        if (pair.convoyJoint != null) continue;  // FixedJoint 연결 중
                         if (pair.isDeploying) continue;
                         if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
@@ -1156,7 +1161,9 @@ namespace BoatAttack
                     if (pair.agent1 == null) continue;
                     if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
 
-                    // Neutralized 쌍 스킵 (Convoy EXIT 후 그물 유지 중)
+                    // Convoy(Joint 연결), Deploy 중, Neutralized(EXIT) 쌍 스킵
+                    if (pair.convoyJoint != null) continue;
+                    if (pair.isDeploying) continue;
                     if (pair.agent1.IsNeutralized && pair.agent2 != null && pair.agent2.IsNeutralized) continue;
 
                     // Phantom 근접 체크 (Stage6에서만): 6쌍 중 가장 가까운 WebCenter와의 거리
@@ -1287,9 +1294,26 @@ namespace BoatAttack
                     if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                     if (pair.agent1 == null || pair.agent2 == null) continue;
 
-                    // Deploy 중인 쌍은 대형 보상 스킵 (분리 중이므로 대형 유지 보상이 방해됨)
+                    // Deploy/Neutralized(EXIT) 쌍은 보상 스킵
                     if (pair.isDeploying) continue;
+                    if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
+                    // === Convoy(FixedJoint) 쌍: Ray 보상만 지급 (대형 보상 불필요) ===
+                    if (pair.convoyJoint != null)
+                    {
+                        if (enableConvoyDeploy && motherShip != null && _enemyPool != null)
+                        {
+                            float convoyReward = CalculateConvoyRayReward(pair);
+                            if (Mathf.Abs(convoyReward) > 0.0001f)
+                            {
+                                pair.agent1.AddReward(convoyReward); // Agent1만 ML 활성
+                            }
+                            totalStepReward += convoyReward;
+                        }
+                        continue;
+                    }
+
+                    // === 일반 쌍: 기존 대형 보상 ===
                     var a1State = rewardCalculator.GetAgentState(pair.agent1);
                     var a2State = rewardCalculator.GetAgentState(pair.agent2);
 
@@ -1529,7 +1553,9 @@ namespace BoatAttack
                     // 배치 후 유예기간
                     if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
 
-                    // Neutralized 쌍 스킵 (Convoy EXIT 후 그물 유지 중)
+                    // Convoy(Joint 연결), Deploy 중, Neutralized(EXIT) 쌍 스킵
+                    if (pair.convoyJoint != null) continue;
+                    if (pair.isDeploying) continue;
                     if (pair.agent1 != null && pair.agent1.IsNeutralized
                         && pair.agent2 != null && pair.agent2.IsNeutralized) continue;
 
@@ -2706,23 +2732,35 @@ namespace BoatAttack
                     float nearestDist = GetNearestActiveEnemyDistToPair(pair);
                     if (nearestDist < rewardCalculator.deployRange)
                     {
+                        // 1. FixedJoint 파괴 (쌍동선 → 단동선 2척)
+                        launchZoneManager.DestroyConvoyJoint(pi);
+
+                        // 2. ConvoyMode 해제 + Agent2 활성화
+                        if (pair.agent1 != null) pair.agent1.SetConvoyMode(false);
+                        if (pair.agent2 != null) pair.agent2.SetNeutralized(false);
+
+                        // 3. 양쪽 분리 조향
                         pair.isDeploying = true;
                         pair.deployStartStep = _resetTimer;
 
-                        // Agent1, Agent2 동시에 양쪽으로 분리
                         if (pair.agent1 != null && pair.agent2 != null)
                         {
                             Vector3 lateral = pair.agent2.transform.position - pair.agent1.transform.position;
                             lateral.y = 0;
                             Vector3 fwd = pair.agent1.transform.forward;
                             float cross = fwd.x * lateral.z - fwd.z * lateral.x;
-                            // cross >= 0: Agent2가 왼쪽 → Agent1 오른쪽(+), Agent2 왼쪽(-)
                             float s = deploySteerStrength;
                             float agent1Steer = cross >= 0f ? s : -s;
                             float agent2Steer = cross >= 0f ? -s : s;
                             pair.agent1.SetDeployMode(true, agent1Steer);
                             pair.agent2.SetDeployMode(true, agent2Steer);
                         }
+
+                        // 4. Deploy 트리거 보너스
+                        if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.deployTriggerBonus);
+                        if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.deployTriggerBonus);
+
+                        Debug.Log($"[ConvoyDeploy] Pair {pi} DEPLOY: Joint destroyed, nearestEnemy={nearestDist:F0}m");
                     }
                     continue;
                 }
@@ -2744,11 +2782,19 @@ namespace BoatAttack
                     if (pair.agent2 != null) pair.agent2.SetDeployMode(false);
                     pair.isDeploying = false;
 
-                    // EXIT: 엔진만 정지 (Neutralized), 물리(파도/바람/부력)는 유지
+                    // EXIT: 속도 제거 + Neutralized (엔진 정지, 파도/부력은 유지)
                     if (pair.agent1 != null)
+                    {
+                        Rigidbody rb1 = pair.agent1.GetComponent<Rigidbody>();
+                        if (rb1 != null) { rb1.velocity = Vector3.zero; rb1.angularVelocity = Vector3.zero; }
                         pair.agent1.SetNeutralized(true);
+                    }
                     if (pair.agent2 != null)
+                    {
+                        Rigidbody rb2 = pair.agent2.GetComponent<Rigidbody>();
+                        if (rb2 != null) { rb2.velocity = Vector3.zero; rb2.angularVelocity = Vector3.zero; }
                         pair.agent2.SetNeutralized(true);
+                    }
 
                     Debug.Log($"[ConvoyDeploy] Pair {pi} EXIT: webWidth={webWidth:F1}m, " +
                               $"timeout={deployTimeout}, elapsed={_resetTimer - pair.deployStartStep}");
@@ -2775,6 +2821,64 @@ namespace BoatAttack
                 if (d < minDist) minDist = d;
             }
             return minDist;
+        }
+
+        /// <summary>
+        /// Convoy(FixedJoint) 쌍 전용 Ray 보상 계산
+        /// - Ray 차단 접근: 쌍 중심이 적→모선 Ray 위에 가까울수록 +
+        /// - Ray 수직 헤딩: 쌍 헤딩이 Ray에 수직일수록 + (deployRange 이내만)
+        /// </summary>
+        private float CalculateConvoyRayReward(DefensePair pair)
+        {
+            if (pair.agent1 == null || motherShip == null || _enemyPool == null) return 0f;
+
+            Vector3 pairPos = pair.agent1.transform.position;
+            if (pair.agent2 != null)
+                pairPos = (pairPos + pair.agent2.transform.position) * 0.5f;
+
+            Vector3 motherPos = motherShip.transform.position;
+            Vector3 pairFwd = pair.agent1.transform.forward;
+
+            float bestRayReward = 0f;
+            float bestPerpReward = 0f;
+            float nearestDist = float.MaxValue;
+
+            for (int e = 0; e < _enemyPool.Length; e++)
+            {
+                if (_enemyPool[e] == null || !_enemyPool[e].activeInHierarchy) continue;
+                if (IsEnemyNeutralized(_enemyPool[e])) continue;
+
+                Vector3 enemyPos = _enemyPool[e].transform.position;
+                float distToEnemy = Vector3.Distance(pairPos, enemyPos);
+                if (distToEnemy >= nearestDist) continue; // 가장 가까운 적 기준
+                nearestDist = distToEnemy;
+
+                // Ray 방향: 적 → 모선
+                Vector3 rayDir = new Vector3(motherPos.x - enemyPos.x, 0f, motherPos.z - enemyPos.z);
+                float rayLen = rayDir.magnitude;
+                if (rayLen < 0.01f) continue;
+                rayDir /= rayLen;
+
+                // 쌍 중심의 Ray 수직 거리 (SignedRayDist와 동일 계산)
+                Vector3 toWeb = new Vector3(pairPos.x - enemyPos.x, 0f, pairPos.z - enemyPos.z);
+                Vector3 perp = toWeb - Vector3.Dot(toWeb, rayDir) * rayDir;
+                float perpDist = perp.magnitude;
+
+                // Ray 접근 보상: perpDist가 0에 가까울수록 +
+                float k = 100f; // 정규화 상수 (DefenseAgent.rayNormK와 동일)
+                float srdNorm = perpDist / (perpDist + k); // 0~1
+                bestRayReward = (1f - srdNorm) * rewardCalculator.rayApproachReward;
+
+                // Ray 수직 헤딩 보상: deployRange 이내에서만
+                if (distToEnemy < rewardCalculator.deployRange)
+                {
+                    float dotFwdRay = Mathf.Abs(Vector3.Dot(
+                        new Vector3(pairFwd.x, 0f, pairFwd.z).normalized, rayDir));
+                    bestPerpReward = (1f - dotFwdRay) * rewardCalculator.rayPerpendicularReward;
+                }
+            }
+
+            return bestRayReward + bestPerpReward;
         }
 
         /// <summary>
