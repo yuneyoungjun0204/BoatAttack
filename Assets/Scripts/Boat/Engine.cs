@@ -59,6 +59,19 @@ namespace BoatAttack
         private float _turnVel;
         private float _currentAngle;
 
+        [Header("Convoy (Kinematic Sync)")]
+        [Tooltip("쌍동선 리더: pitch 토크 비활성, 파트너 위치 동기화 담당")]
+        [NonSerialized] public bool isConvoyLinked = false;
+
+        [Tooltip("쌍동선 종속선: 모든 물리(추력/안정화/바람/파도) 비활성, 리더에 의해 위치 동기화")]
+        [NonSerialized] public bool isConvoySecondary = false;
+
+        [Tooltip("쌍동선 파트너 엔진")]
+        [NonSerialized] public Engine convoyPartnerEngine = null;
+
+        [Tooltip("쌍동선 간격 (리더 right 방향, m)")]
+        [NonSerialized] public float convoySpacing = 5f;
+
         // 에피소드 시작 시 _yHeight 조건 무시용 카운터 (향후 사용 예정)
         #pragma warning disable CS0414
         private int _skipHeightCheckFrames = 0;
@@ -130,6 +143,22 @@ namespace BoatAttack
                 }
             }
             
+            // === 쌍동선 종속선: 모든 물리 스킵, 리더가 위치 동기화 담당 ===
+            if (isConvoySecondary)
+            {
+                // waterFactor만 갱신 (관측용)
+                if (_point.IsCreated)
+                {
+                    _point[0] = transform.TransformPoint(enginePosition);
+                    GerstnerWavesJobs.UpdateSamplePoints(ref _point, _guid);
+                    GerstnerWavesJobs.GetData(_guid, ref _heights, ref _normals);
+                    _yHeight = _heights[0].y - _point[0].y;
+                    if (float.IsNaN(_yHeight) || float.IsInfinity(_yHeight)) _yHeight = 0f;
+                }
+                WaterFactor = Mathf.Clamp01((_yHeight + 1.5f) / 1.0f);
+                return; // 추력/안정화/바람/파도 모두 스킵
+            }
+
             // 리셋 직후 안정화: y축 속도 제거 + 회전 제거 + 자세 강제 복원
             if (_stabilizeFrames > 0)
             {
@@ -252,6 +281,19 @@ namespace BoatAttack
             {
                 _yHeight = 0f;
             }
+
+            // === 쌍동선 리더: 파트너 위치 동기화 (velocity 기반 예측으로 1프레임 지연 보정) ===
+            if (isConvoyLinked && convoyPartnerEngine != null && convoyPartnerEngine.RB != null)
+            {
+                Rigidbody partnerRB = convoyPartnerEngine.RB;
+                // 물리 스텝 후 Agent1의 예측 위치 (현재 위치 + 속도 × dt)
+                Vector3 predictedPos = RB.position + RB.velocity * Time.fixedDeltaTime;
+                Vector3 lateralDir = RB.transform.right;
+                lateralDir.y = 0f;
+                lateralDir.Normalize();
+                partnerRB.MovePosition(predictedPos + lateralDir * convoySpacing);
+                partnerRB.MoveRotation(RB.rotation);
+            }
         }
 
         private void OnEnable()
@@ -330,12 +372,15 @@ namespace BoatAttack
         /// <param name="modifier">Acceleration modifier, adds force in the 0-1 range</param>
         public void Accelerate(float modifier)
         {
+            // 쌍동선 종속선: 추력 적용 안 함 (kinematic, 리더에 의해 위치 동기화)
+            if (isConvoySecondary) return;
+
             // ⚠️ NaN 방지: modifier 값 검증
             if (float.IsNaN(modifier) || float.IsInfinity(modifier))
             {
                 modifier = 0f;
             }
-            
+
             modifier = Mathf.Clamp(modifier, 0f, 1f); // clamp for reasonable values
 
             // _yHeight 기반 수면 감쇄: 엔진이 수면 위로 크게 나오면 추진력 감소
@@ -365,7 +410,12 @@ namespace BoatAttack
                 }
 
                 RB.AddForce(horsePower * modifier * waterFactor * forward, ForceMode.Acceleration);
-                RB.AddRelativeTorque(-Vector3.right * modifier * waterFactor, ForceMode.Acceleration);
+
+                // 쌍동선 리더: pitch-down 토크 비활성 (종속선 없으므로 불균형 없지만, 단일체 안정성 향상)
+                if (!isConvoyLinked)
+                {
+                    RB.AddRelativeTorque(-Vector3.right * modifier * waterFactor, ForceMode.Acceleration);
+                }
             }
         }
 
@@ -375,6 +425,9 @@ namespace BoatAttack
         /// <param name="modifier">Steering modifier, positive for right, negative for negative</param>
         public void Turn(float modifier)
         {
+            // 쌍동선 종속선: 조향 적용 안 함 (kinematic)
+            if (isConvoySecondary) return;
+
             // ⚠️ NaN 방지: modifier 값 검증
             if (float.IsNaN(modifier) || float.IsInfinity(modifier))
             {

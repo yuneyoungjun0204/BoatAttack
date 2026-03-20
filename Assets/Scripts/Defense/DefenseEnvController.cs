@@ -978,7 +978,7 @@ namespace BoatAttack
                         if (pair.agent1 == null || pair.agent2 == null) continue;
 
                         // Convoy(Joint 연결), Deploy 중, Neutralized(EXIT 후 그물 유지) 쌍은 거리 체크 스킵
-                        if (pair.convoyJoint != null) continue;  // FixedJoint 연결 중
+                        if (pair.isConvoyLinked) continue;  // FixedJoint 연결 중
                         if (pair.isDeploying) continue;
                         if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
@@ -1162,7 +1162,7 @@ namespace BoatAttack
                     if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
 
                     // Convoy(Joint 연결), Deploy 중, Neutralized(EXIT) 쌍 스킵
-                    if (pair.convoyJoint != null) continue;
+                    if (pair.isConvoyLinked) continue;
                     if (pair.isDeploying) continue;
                     if (pair.agent1.IsNeutralized && pair.agent2 != null && pair.agent2.IsNeutralized) continue;
 
@@ -1299,7 +1299,7 @@ namespace BoatAttack
                     if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
                     // === Convoy(FixedJoint) 쌍: Ray 보상만 지급 (대형 보상 불필요) ===
-                    if (pair.convoyJoint != null)
+                    if (pair.isConvoyLinked)
                     {
                         if (enableConvoyDeploy && motherShip != null && _enemyPool != null)
                         {
@@ -1554,7 +1554,7 @@ namespace BoatAttack
                     if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
 
                     // Convoy(Joint 연결), Deploy 중, Neutralized(EXIT) 쌍 스킵
-                    if (pair.convoyJoint != null) continue;
+                    if (pair.isConvoyLinked) continue;
                     if (pair.isDeploying) continue;
                     if (pair.agent1 != null && pair.agent1.IsNeutralized
                         && pair.agent2 != null && pair.agent2.IsNeutralized) continue;

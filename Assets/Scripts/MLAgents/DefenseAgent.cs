@@ -867,7 +867,9 @@ namespace BoatAttack
         {
             if (_engine == null || _engine.RB == null || _episodeEnded || _neutralized)
             {
-                Debug.LogWarning($"[{name}] OnAction BLOCKED: engine={_engine != null}, RB={_engine?.RB != null}, ended={_episodeEnded}, neutral={_neutralized}");
+                Debug.LogWarning($"[{name}] OnAction BLOCKED: engine={_engine != null}, RB={_engine?.RB != null}, " +
+                    $"ended={_episodeEnded}, neutral={_neutralized}, convoy={_convoyMode}, " +
+                    $"kinematic={_engine?.RB?.isKinematic}, secondary={_engine?.isConvoySecondary}");
                 return;
             }
 
@@ -891,30 +893,26 @@ namespace BoatAttack
                 return;
             }
 
-            // FixedJoint 쌍동선 모드 — 차동 추력으로 양쪽 엔진 제어
-            if (_convoyMode && partnerAgent != null && partnerAgent._engine != null)
+            // 쌍동선 모드 — 한 대의 배처럼 throttle+steering 제어 (Agent2는 kinematic 동기화)
+            if (_convoyMode)
             {
                 float tInput = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
-                float dInput = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
+                float sInput = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
 
-                // throttle: action [-1,+1] → [0, maxThrottle]
-                float baseThrottle = (tInput + 1f) * 0.5f * maxThrottle;
-                // differential: steering 입력을 좌우 추력 차이로 변환
-                float diff = dInput * differentialSensitivity;
+                // Throttle: [-1,+1] → [0, maxThrottle]
+                float convoyThrottle = (tInput + 1f) * 0.5f * maxThrottle;
+                // Steering: 일반 조향과 동일
+                float convoySteering = Mathf.Clamp(sInput * steeringSensitivity, -1f, 1f);
 
-                float myThrottle = Mathf.Clamp01(baseThrottle * (1f - diff * 0.5f));
-                float partnerThrottle = Mathf.Clamp01(baseThrottle * (1f + diff * 0.5f));
+                _engine.Accelerate(convoyThrottle);
+                _engine.Turn(convoySteering);
 
-                // 자기 엔진 (한쪽 hull)
-                _engine.Accelerate(myThrottle);
-                _engine.Turn(0f);  // 러더 미사용, 차동 추력으로만 선회
+                _prevThrottle = convoyThrottle;
+                _prevSteering = convoySteering;
 
-                // 파트너 엔진 (반대쪽 hull)
-                partnerAgent._engine.Accelerate(partnerThrottle);
-                partnerAgent._engine.Turn(0f);
-
-                _prevThrottle = myThrottle;
-                _prevSteering = diff;
+                if (enableDebugLog || CompletedEpisodes < 2)
+                    Debug.Log($"[{name}] CONVOY: throttle={convoyThrottle:F2}, steer={convoySteering:F2}, " +
+                        $"vel={_engine.RB?.velocity.magnitude:F1}, secondary={_engine.isConvoySecondary}");
                 return;
             }
 

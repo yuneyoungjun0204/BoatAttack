@@ -60,9 +60,11 @@ namespace BoatAttack
         // Convoy-Deploy 시스템
         [HideInInspector] public bool isDeploying = false;
         [HideInInspector] public int deployStartStep = -1;
-        [HideInInspector] public UnityEngine.FixedJoint convoyJoint = null; // 쌍동선 FixedJoint
-        [HideInInspector] public float _savedAngularDrag1 = 0f; // Joint 생성 전 원래 angularDrag
+        [HideInInspector] public UnityEngine.FixedJoint convoyJoint = null; // 레거시 (사용 안 함, null 체크 호환용)
+        [HideInInspector] public bool isConvoyLinked = false; // 쌍동선 Kinematic 연결 상태
+        [HideInInspector] public float _savedAngularDrag1 = 0f;
         [HideInInspector] public float _savedAngularDrag2 = 0f;
+        [HideInInspector] public bool _savedIsKinematic2 = false; // Agent2의 원래 isKinematic
     }
 
     /// <summary>
@@ -684,7 +686,7 @@ namespace BoatAttack
                 pair.hasEverHitRaycast = false;
                 pair.isDeploying = false;
                 pair.deployStartStep = -1;
-                if (pair.convoyJoint != null) { Destroy(pair.convoyJoint); pair.convoyJoint = null; }
+                CleanupConvoyState(pair);
 
                 // 활성화
                 SetPairActive(pi, true);
@@ -974,6 +976,8 @@ namespace BoatAttack
             else
             {
                 // "활성화": GameObject 활성화 (inactive 클론 대응) + kinematic 해제
+                // 주의: convoy 모드에서 Agent2는 kinematic 유지해야 하므로
+                //       CreateConvoyJoint에서 다시 설정함 (이 메서드는 convoy 전에 호출됨)
                 if (pair.agent1 != null)
                 {
                     if (!pair.agent1.gameObject.activeSelf)
@@ -1015,7 +1019,7 @@ namespace BoatAttack
                 pair.disarmStep = -1;
                 pair.isDeploying = false;
                 pair.deployStartStep = -1;
-                if (pair.convoyJoint != null) { Destroy(pair.convoyJoint); pair.convoyJoint = null; }
+                CleanupConvoyState(pair);
             }
         }
 
@@ -1292,7 +1296,7 @@ namespace BoatAttack
             pair.hasEverHitRaycast = false;
             pair.isDeploying = false;
             pair.deployStartStep = -1;
-            if (pair.convoyJoint != null) { Destroy(pair.convoyJoint); pair.convoyJoint = null; }
+            CleanupConvoyState(pair);
 
             // 3. 적군 참조 설정
             if (enemies != null)
@@ -1737,7 +1741,7 @@ namespace BoatAttack
             pair.hasEverHitRaycast = false;
             pair.isDeploying = false;
             pair.deployStartStep = -1;
-            if (pair.convoyJoint != null) { Destroy(pair.convoyJoint); pair.convoyJoint = null; }
+            CleanupConvoyState(pair);
 
             if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
             if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
@@ -1772,7 +1776,7 @@ namespace BoatAttack
             pair.hasEverHitRaycast = false;
             pair.isDeploying = false;
             pair.deployStartStep = -1;
-            if (pair.convoyJoint != null) { Destroy(pair.convoyJoint); pair.convoyJoint = null; }
+            CleanupConvoyState(pair);
 
             // neutralized 해제 (재배치 시 다시 사용 가능하도록)
             if (pair.agent1 != null) pair.agent1.SetNeutralized(false);
@@ -2440,34 +2444,51 @@ namespace BoatAttack
             Rigidbody rb2 = pair.agent2.GetComponent<Rigidbody>();
             if (rb1 == null || rb2 == null) return;
 
-            // 기존 Joint 정리
-            if (pair.convoyJoint != null) Destroy(pair.convoyJoint);
+            // 기존 convoy 정리
+            CleanupConvoyState(pair);
 
-            // FixedJoint 생성 (Agent1 → Agent2 연결)
-            pair.convoyJoint = rb1.gameObject.AddComponent<FixedJoint>();
-            pair.convoyJoint.connectedBody = rb2;
-            pair.convoyJoint.breakForce = Mathf.Infinity;
-            pair.convoyJoint.breakTorque = Mathf.Infinity;
-
-            // Anchor를 양쪽 hull의 연결 지점(서로를 향하는 쪽)으로 설정 → 대칭 토크
-            Vector3 midPoint = (rb1.position + rb2.position) * 0.5f;
-            pair.convoyJoint.anchor = rb1.transform.InverseTransformPoint(midPoint);
-            pair.convoyJoint.connectedAnchor = rb2.transform.InverseTransformPoint(midPoint);
-            pair.convoyJoint.autoConfigureConnectedAnchor = false;
-
-            // 파도 비대칭 토크 억제: angular drag 증가 (원래 값은 분리 시 복원)
+            // Agent2를 Kinematic으로 설정 (자체 물리 없음, Agent1에 의해 위치 동기화)
+            pair._savedIsKinematic2 = rb2.isKinematic;
             pair._savedAngularDrag1 = rb1.angularDrag;
             pair._savedAngularDrag2 = rb2.angularDrag;
-            rb1.angularDrag = Mathf.Max(rb1.angularDrag, 5f);
-            rb2.angularDrag = Mathf.Max(rb2.angularDrag, 5f);
+            rb2.isKinematic = true;
+            rb2.velocity = Vector3.zero;
+            rb2.angularVelocity = Vector3.zero;
+
+            // 쌍동선 간격 계산 (Agent1 → Agent2 방향, right 기준)
+            float spacing = Vector3.Dot(rb2.position - rb1.position, rb1.transform.right);
+
+            // 엔진 플래그: Agent1=리더, Agent2=종속
+            Engine eng1 = pair.agent1._engine;
+            Engine eng2 = pair.agent2._engine;
+            if (eng1 != null)
+            {
+                eng1.isConvoyLinked = true;
+                eng1.isConvoySecondary = false;
+                eng1.convoyPartnerEngine = eng2;
+                eng1.convoySpacing = spacing;
+            }
+            if (eng2 != null)
+            {
+                eng2.isConvoyLinked = true;
+                eng2.isConvoySecondary = true;
+                eng2.convoyPartnerEngine = eng1;
+            }
+
+            // convoy 상태 마킹 (FixedJoint는 사용하지 않음)
+            pair.isConvoyLinked = true;
 
             // Agent2: ML 비활성 (CONVOY에서는 Agent1만 제어)
             pair.agent2.SetNeutralized(true);
 
-            // Agent1: 차동 추력 모드 활성화
+            // Agent1: convoy 모드 활성화
             pair.agent1.SetConvoyMode(true);
 
-            Debug.Log($"[LaunchZoneManager] ConvoyJoint created: {pair.agent1.name} ↔ {pair.agent2.name}");
+            Debug.Log($"[LaunchZoneManager] ConvoyLink created (Kinematic): {pair.agent1.name} ↔ {pair.agent2.name}, " +
+                $"spacing={spacing:F1}m, rb2.kinematic={rb2.isKinematic}, " +
+                $"eng1.convoy={eng1?.isConvoyLinked}, eng2.secondary={eng2?.isConvoySecondary}, " +
+                $"a1.neutral={pair.agent1.IsNeutralized}, a2.neutral={pair.agent2.IsNeutralized}, " +
+                $"a1.convoy={pair.agent1.IsConvoyMode}");
         }
 
         /// <summary>
@@ -2477,17 +2498,61 @@ namespace BoatAttack
         {
             if (pairIndex < 0 || pairIndex >= _pairPool.Count) return;
             var pair = _pairPool[pairIndex];
-            if (pair.convoyJoint != null)
-            {
-                // angular drag 복원
-                Rigidbody rb1 = pair.agent1 != null ? pair.agent1.GetComponent<Rigidbody>() : null;
-                Rigidbody rb2 = pair.agent2 != null ? pair.agent2.GetComponent<Rigidbody>() : null;
-                if (rb1 != null) rb1.angularDrag = pair._savedAngularDrag1;
-                if (rb2 != null) rb2.angularDrag = pair._savedAngularDrag2;
+            if (!pair.isConvoyLinked) return;
 
-                Destroy(pair.convoyJoint);
-                pair.convoyJoint = null;
+            Rigidbody rb1 = pair.agent1 != null ? pair.agent1.GetComponent<Rigidbody>() : null;
+            Rigidbody rb2 = pair.agent2 != null ? pair.agent2.GetComponent<Rigidbody>() : null;
+
+            // angular drag 복원
+            if (rb1 != null) rb1.angularDrag = pair._savedAngularDrag1;
+            if (rb2 != null) rb2.angularDrag = pair._savedAngularDrag2;
+
+            // Agent2 kinematic 해제 + 속도 복사 (자연스러운 분리)
+            if (rb2 != null)
+            {
+                rb2.isKinematic = pair._savedIsKinematic2;
+                if (rb1 != null)
+                {
+                    rb2.velocity = rb1.velocity;
+                    rb2.angularVelocity = rb1.angularVelocity;
+                }
             }
+
+            // 마커 Joint + 엔진 플래그 정리
+            CleanupConvoyState(pair);
+        }
+
+        /// <summary>
+        /// 쌍동선 상태 정리: 마커 Joint 파괴 + 엔진 플래그 해제 + Agent2 kinematic 복원
+        /// </summary>
+        private void CleanupConvoyState(DefensePair pair)
+        {
+            // 엔진 플래그 해제
+            Engine eng1 = pair.agent1 != null ? pair.agent1._engine : null;
+            Engine eng2 = pair.agent2 != null ? pair.agent2._engine : null;
+            if (eng1 != null)
+            {
+                eng1.isConvoyLinked = false;
+                eng1.isConvoySecondary = false;
+                eng1.convoyPartnerEngine = null;
+            }
+            if (eng2 != null)
+            {
+                eng2.isConvoyLinked = false;
+                eng2.isConvoySecondary = false;
+                eng2.convoyPartnerEngine = null;
+            }
+
+            // Agent2 kinematic 복원 (DestroyConvoyJoint에서 이미 처리한 경우 중복 방지)
+            if (pair.agent2 != null)
+            {
+                Rigidbody rb2 = pair.agent2.GetComponent<Rigidbody>();
+                if (rb2 != null && rb2.isKinematic)
+                    rb2.isKinematic = pair._savedIsKinematic2;
+            }
+
+            // convoy 상태 해제
+            pair.isConvoyLinked = false;
         }
 
         #endregion
