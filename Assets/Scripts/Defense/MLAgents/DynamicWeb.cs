@@ -110,12 +110,32 @@ namespace BoatAttack
         [Tooltip("부표 표시 여부")]
         public bool showFloats = true;
 
+        [Header("Convoy Bar (쌍동선 연결 막대)")]
+        [Tooltip("Convoy 연결 막대 표시 여부")]
+        public bool showConvoyBar = true;
+
+        [Tooltip("막대 두께 (m)")]
+        [Range(0.1f, 20f)]
+        public float convoyBarThickness = 1.5f;
+
+        [Tooltip("막대 색상 (금속)")]
+        public Color convoyBarColor = new Color(0.55f, 0.55f, 0.55f, 1f); // 회색 금속
+
+        [Tooltip("분리 후 침몰 시간 (초)")]
+        [Range(1f, 10f)]
+        public float barSinkTime = 4f;
+
         private BoxCollider _collider;
         private MeshRenderer _renderer;
         private GameObject _visualObject;
         private Color _lastWebColor;
         private int _netUpdateCounter;  // 그물 메시 프레임 스킵용
         private bool _wasWebOpen = true; // convoy 접힘 상태 변경 추적
+
+        // Convoy 연결 막대
+        private GameObject _convoyBarObject;
+        private bool _convoyBarActive = false;
+
 
         // 어부 그물용
         private GameObject _netContainer;
@@ -175,6 +195,8 @@ namespace BoatAttack
             _renderer = null;
             _cachedNodes = null;
             _collider = null;
+            _convoyBarObject = null;
+            _convoyBarActive = false;
         }
 
         private void Initialize()
@@ -227,6 +249,10 @@ namespace BoatAttack
                 return;
 
             UpdateWebTransform();
+
+            // Convoy 막대 위치 갱신
+            if (_convoyBarActive)
+                UpdateConvoyBar();
 
             // 색상 변경 감지 및 업데이트
             if (_lastWebColor != webColor)
@@ -989,6 +1015,118 @@ namespace BoatAttack
             {
                 envController.OnEnemyHitWeb(attackBoat, this);
             }
+        }
+
+        // ===================== Convoy Bar (쌍동선 연결 막대) =====================
+
+        /// <summary>
+        /// Convoy 막대 생성 (두 선박 사이 금속 막대)
+        /// </summary>
+        public void CreateConvoyBar()
+        {
+            if (!showConvoyBar) return;
+            DestroyConvoyBar();
+
+            _convoyBarObject = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            _convoyBarObject.name = "ConvoyBar";
+            // DynamicWeb의 자식으로 설정 → GetComponentInParent<DynamicWeb>()로 자동 식별
+            _convoyBarObject.transform.SetParent(transform);
+
+            // 기본 CapsuleCollider 제거 → BoxCollider로 교체 (수평 Ray 판정 용이)
+            var defaultCol = _convoyBarObject.GetComponent<Collider>();
+            if (defaultCol != null) Destroy(defaultCol);
+
+            var boxCol = _convoyBarObject.AddComponent<BoxCollider>();
+            boxCol.isTrigger = true;
+            // Cylinder 기본 크기(직경1,높이2) 기준. Y=높이 방향(두 선박 잇는 축), X/Z=두께 방향
+            // X/Z를 크게 잡아 수평 Ray가 확실히 맞도록 (실제 크기는 localScale 곱해짐)
+            boxCol.size = new Vector3(40f, 2f, 40f);
+
+            // 금속 재질
+            var rend = _convoyBarObject.GetComponent<MeshRenderer>();
+            if (rend != null)
+            {
+                Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+                if (shader == null) shader = Shader.Find("Standard");
+                if (shader != null)
+                {
+                    Material mat = new Material(shader);
+                    mat.color = convoyBarColor;
+                    mat.SetFloat("_Smoothness", 0.75f); // 금속 광택
+                    mat.SetFloat("_Metallic", 0.85f);
+                    rend.material = mat;
+                }
+            }
+
+            _convoyBarActive = true;
+        }
+
+        /// <summary>
+        /// Convoy 막대 위치 갱신 (매 프레임, CONVOY 상태에서 호출)
+        /// </summary>
+        private void UpdateConvoyBar()
+        {
+            if (_convoyBarObject == null || !_convoyBarActive) return;
+            if (defenseShip1 == null || defenseShip2 == null) return;
+
+            Vector3 pos1 = defenseShip1.position;
+            Vector3 pos2 = defenseShip2.position;
+            float dist = Vector3.Distance(pos1, pos2);
+
+            // 중심 위치
+            _convoyBarObject.transform.position = (pos1 + pos2) * 0.5f;
+
+            // Cylinder는 Y축이 길이 방향 → 두 선박을 잇는 방향으로 회전
+            Vector3 dir = (pos2 - pos1).normalized;
+            if (dir.sqrMagnitude > 0.001f)
+            {
+                _convoyBarObject.transform.rotation = Quaternion.FromToRotation(Vector3.up, dir);
+            }
+
+            // Cylinder: localScale.y = 길이/2, x/z = 두께
+            _convoyBarObject.transform.localScale = new Vector3(
+                convoyBarThickness, dist * 0.5f, convoyBarThickness);
+        }
+
+        /// <summary>
+        /// Convoy 막대 분리 (Deploy 시 호출) — Rigidbody 추가 → 중력으로 침몰
+        /// </summary>
+        public void DetachConvoyBar()
+        {
+            if (_convoyBarObject == null) return;
+            _convoyBarActive = false;
+
+            // 부모 해제 (이미 null이지만 확인)
+            _convoyBarObject.transform.SetParent(null);
+
+            // Rigidbody 추가 → 중력으로 물에 빠짐
+            Rigidbody barRB = _convoyBarObject.AddComponent<Rigidbody>();
+            barRB.mass = 50f;
+            barRB.drag = 0.5f;         // 수중 저항
+            barRB.angularDrag = 0.3f;
+            barRB.useGravity = true;
+
+            // 약간의 회전 + 아래쪽 힘 (자연스러운 낙하)
+            barRB.AddTorque(Random.insideUnitSphere * 30f, ForceMode.Impulse);
+            barRB.AddForce(Vector3.down * 20f, ForceMode.Impulse);
+
+            // 일정 시간 후 파괴
+            Destroy(_convoyBarObject, barSinkTime);
+            _convoyBarObject = null;
+        }
+
+        /// <summary>
+        /// Convoy 막대 즉시 파괴 (리셋/비활성화 시)
+        /// </summary>
+        public void DestroyConvoyBar()
+        {
+            if (_convoyBarObject != null)
+            {
+                _convoyBarObject.SetActive(false);
+                Destroy(_convoyBarObject);
+                _convoyBarObject = null;
+            }
+            _convoyBarActive = false;
         }
 
         /// <summary>

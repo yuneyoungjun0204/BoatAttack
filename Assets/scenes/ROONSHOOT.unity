@@ -76429,8 +76429,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 50
-  minAllyDistance: 4
   allyWebCollisionPenalty: -2
   enemyBreachThreshold: 20
   enemyBreachPenalty: -2
@@ -76462,9 +76460,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.0011
-  optimalDistance: 40
-  distanceTolerance: 25
   approachRewardPerMeter: 0.0011
   headingAlignmentReward: 0.000001
   timePenalty: -0.001
@@ -95845,8 +95840,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 40
-  minAllyDistance: 4
   allyWebCollisionPenalty: -1
   enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
@@ -95878,9 +95871,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.001
-  optimalDistance: 50
-  distanceTolerance: 25
   approachRewardPerMeter: 0.001
   headingAlignmentReward: 0.0005
   timePenalty: -0.001
@@ -107245,8 +107235,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 40
-  minAllyDistance: 4
   allyWebCollisionPenalty: -1
   enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
@@ -107278,9 +107266,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.001
-  optimalDistance: 50
-  distanceTolerance: 25
   approachRewardPerMeter: 0.001
   headingAlignmentReward: 0.0005
   timePenalty: -0.001
@@ -302488,9 +302473,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.0011
-  optimalDistance: 40
-  distanceTolerance: 25
   approachRewardPerMeter: 0.0011
   headingAlignmentReward: 0.000001
   timePenalty: -0.001
@@ -302543,8 +302525,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 50
-  minAllyDistance: 4
   allyWebCollisionPenalty: -2
   enemyBreachThreshold: 20
   enemyBreachPenalty: -2
@@ -318053,8 +318033,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 40
-  minAllyDistance: 4
   allyWebCollisionPenalty: -1
   enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
@@ -318086,9 +318064,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.001
-  optimalDistance: 50
-  distanceTolerance: 25
   approachRewardPerMeter: 0.001
   headingAlignmentReward: 0.0005
   timePenalty: -0.001
@@ -325335,8 +325310,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 50
-  minAllyDistance: 4
   allyWebCollisionPenalty: -2
   enemyBreachThreshold: 20
   enemyBreachPenalty: -2
@@ -325368,9 +325341,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.0011
-  optimalDistance: 40
-  distanceTolerance: 25
   approachRewardPerMeter: 0.0011
   headingAlignmentReward: 0.000001
   timePenalty: -0.001
@@ -332538,8 +332508,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 40
-  minAllyDistance: 4
   allyWebCollisionPenalty: -1
   enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
@@ -332571,9 +332539,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.001
-  optimalDistance: 50
-  distanceTolerance: 25
   approachRewardPerMeter: 0.001
   headingAlignmentReward: 0.0005
   timePenalty: -0.001
@@ -332662,8 +332627,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 50
-  minAllyDistance: 4
   allyWebCollisionPenalty: -2
   enemyBreachThreshold: 20
   enemyBreachPenalty: -2
@@ -332695,9 +332658,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.0011
-  optimalDistance: 40
-  distanceTolerance: 25
   approachRewardPerMeter: 0.0011
   headingAlignmentReward: 0.000001
   timePenalty: -0.001
@@ -381846,8 +381806,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 50
-  minAllyDistance: 4
   allyWebCollisionPenalty: -2
   enemyBreachThreshold: 20
   enemyBreachPenalty: -2
@@ -381879,9 +381837,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.0011
-  optimalDistance: 40
-  distanceTolerance: 25
   approachRewardPerMeter: 0.0011
   headingAlignmentReward: 0.000001
   timePenalty: -0.001
@@ -445153,8 +445108,6 @@ MonoBehaviour:
   explosionScale: 23
   explosionDuration: 2
   endEpisodeOnAllEnemiesDestroyed: 1
-  maxAllyDistance: 40
-  minAllyDistance: 4
   allyWebCollisionPenalty: -1
   enemyBreachThreshold: 20
   enemyBreachPenalty: -1.1
@@ -445186,9 +445139,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45b0120affbd8f34e82e117897879b13, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  formationReward: 0.001
-  optimalDistance: 50
-  distanceTolerance: 25
   approachRewardPerMeter: 0.001
   headingAlignmentReward: 0.0005
   timePenalty: -0.001

@@ -142,6 +142,11 @@ namespace BoatAttack
         [Tooltip("원통 색상")]
         public Color cylinderColor = new Color(0.2f, 0.5f, 1f, 0.25f);
 
+        [Header("Convoy Settings (쌍동선)")]
+        [Tooltip("쌍동선 두 선박 간 간격 (m). 클수록 멀리 배치")]
+        [Range(3f, 30f)]
+        public float convoySpacing = 5f;
+
         [Header("Web Settings (DynamicWeb 생성 시 적용)")]
         [Tooltip("Web 높이")]
         public float webHeight = 15f;
@@ -2455,8 +2460,10 @@ namespace BoatAttack
             rb2.velocity = Vector3.zero;
             rb2.angularVelocity = Vector3.zero;
 
-            // 쌍동선 간격 계산 (Agent1 → Agent2 방향, right 기준)
-            float spacing = Vector3.Dot(rb2.position - rb1.position, rb1.transform.right);
+            // Inspector에서 설정한 간격 사용 + Agent2 위치를 Agent1 오른쪽으로 강제 배치
+            float spacing = convoySpacing;
+            rb2.position = rb1.position + rb1.transform.right * spacing;
+            rb2.rotation = rb1.rotation;
 
             // 엔진 플래그: Agent1=리더, Agent2=종속
             Engine eng1 = pair.agent1._engine;
@@ -2484,6 +2491,13 @@ namespace BoatAttack
             // Agent1: convoy 모드 활성화
             pair.agent1.SetConvoyMode(true);
 
+            // Convoy 연결 막대 생성
+            if (pair.webObject != null)
+            {
+                var dw = pair.webObject.GetComponent<DynamicWeb>();
+                if (dw != null) dw.CreateConvoyBar();
+            }
+
             Debug.Log($"[LaunchZoneManager] ConvoyLink created (Kinematic): {pair.agent1.name} ↔ {pair.agent2.name}, " +
                 $"spacing={spacing:F1}m, rb2.kinematic={rb2.isKinematic}, " +
                 $"eng1.convoy={eng1?.isConvoyLinked}, eng2.secondary={eng2?.isConvoySecondary}, " +
@@ -2507,7 +2521,7 @@ namespace BoatAttack
             if (rb1 != null) rb1.angularDrag = pair._savedAngularDrag1;
             if (rb2 != null) rb2.angularDrag = pair._savedAngularDrag2;
 
-            // Agent2 kinematic 해제 + 속도 복사 (자연스러운 분리)
+            // Agent2 kinematic 해제 + 속도/회전 완전 복사 (자연스러운 분리)
             if (rb2 != null)
             {
                 rb2.isKinematic = pair._savedIsKinematic2;
@@ -2515,8 +2529,22 @@ namespace BoatAttack
                 {
                     rb2.velocity = rb1.velocity;
                     rb2.angularVelocity = rb1.angularVelocity;
+                    rb2.rotation = rb1.rotation; // 정확히 같은 회전 상태
                 }
             }
+
+            // Convoy 막대 분리 (중력으로 침몰)
+            if (pair.webObject != null)
+            {
+                var dw = pair.webObject.GetComponent<DynamicWeb>();
+                if (dw != null) dw.DetachConvoyBar();
+            }
+
+            // 양쪽 엔진 리셋 (동일 조건에서 분리 시작 → 대칭 기동)
+            if (pair.agent1 != null && pair.agent1._engine != null)
+                pair.agent1._engine.OnEpisodeReset();
+            if (pair.agent2 != null && pair.agent2._engine != null)
+                pair.agent2._engine.OnEpisodeReset();
 
             // 마커 Joint + 엔진 플래그 정리
             CleanupConvoyState(pair);
@@ -2527,6 +2555,13 @@ namespace BoatAttack
         /// </summary>
         private void CleanupConvoyState(DefensePair pair)
         {
+            // Convoy 막대 즉시 파괴 (리셋/비활성화 시)
+            if (pair.webObject != null)
+            {
+                var dw = pair.webObject.GetComponent<DynamicWeb>();
+                if (dw != null) dw.DestroyConvoyBar();
+            }
+
             // 엔진 플래그 해제
             Engine eng1 = pair.agent1 != null ? pair.agent1._engine : null;
             Engine eng2 = pair.agent2 != null ? pair.agent2._engine : null;

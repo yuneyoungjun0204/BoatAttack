@@ -374,11 +374,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4534809148113994, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
       propertyPath: m_LocalScale.y
-      value: 3
+      value: 2
       objectReference: {fileID: 0}
     - target: {fileID: 4534809148113994, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
       propertyPath: m_LocalScale.z
-      value: 1.2
+      value: 1.5
       objectReference: {fileID: 0}
     - target: {fileID: 4534809148113994, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
       propertyPath: m_LocalPosition.x
@@ -730,13 +730,9 @@ MonoBehaviour:
   steeringSensitivity: 1.112
   speedMultiplier: 1
   inputSmoothing: 0.2
-  partnerNormK: 50
   enemyNormK: 700
   motherNormK: 1000
-  partnerRScale: 1
-  partnerFScale: 1
-  partnerDistScale: 1
-  partnerHdgScale: 1
+  rayNormK: 100
   enemyDistScale: 1
   bearingNormK: 10
   motherDistScale: 1
@@ -763,6 +759,7 @@ MonoBehaviour:
   lastAllyBufferObs: []
   _totalReward: 0
   _lastStepReward: 0
+  differentialSensitivity: 1
 --- !u!114 &7411346295538081491
 MonoBehaviour:
   m_ObjectHideFlags: 0

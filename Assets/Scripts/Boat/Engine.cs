@@ -434,7 +434,7 @@ namespace BoatAttack
                 modifier = 0f;
             }
             
-            modifier = Mathf.Clamp(modifier, -1f, 1f); // clamp for reasonable values
+            modifier = Mathf.Clamp(modifier, -3f, 3f); // Deploy 시 급선회 허용 (기본 ML은 -1~1)
 
             // _yHeight 기반 수면 감쇄 (리셋 직후는 Accelerate에서 카운트다운)
             float turnWaterFactor = (_skipHeightCheckFrames > 0) ? 1f : Mathf.Clamp01((_yHeight + 1.5f) / 1.0f);

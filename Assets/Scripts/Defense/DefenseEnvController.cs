@@ -124,9 +124,9 @@ namespace BoatAttack
         [Tooltip("Deploy 시작 후 최대 허용 스텝 (0=무제한)")]
         public int deployMaxSteps = 200;
 
-        [Tooltip("Deploy 시 조타 강도 (0~1, 1=최대 회전)")]
-        [Range(0f, 1f)]
-        public float deploySteerStrength = 1f;
+        [Tooltip("Deploy 시 조타 강도 (0~3, 1=기본, 3=최대 급선회)")]
+        [Range(0f, 3f)]
+        public float deploySteerStrength = 3f;
 
         [Tooltip("포획 후 그물+선박 유지 (다중 포획 허용, false=기존 방식: 포획 후 비활성화)")]
         public bool keepWebAfterCapture = true;
@@ -1007,17 +1007,6 @@ namespace BoatAttack
                         bool shouldDisable = false;
                         string disableReason = null;
 
-                        if (rewardCalculator.maxAllyDistance > 0f && allyDist > rewardCalculator.maxAllyDistance)
-                        {
-                            shouldDisable = true;
-                            disableReason = $"거리 초과 (dist={allyDist:F1}, max={rewardCalculator.maxAllyDistance})";
-                        }
-                        if (rewardCalculator.minAllyDistance > 0f && allyDist < rewardCalculator.minAllyDistance)
-                        {
-                            shouldDisable = true;
-                            disableReason = $"거리 부족 (dist={allyDist:F1}, min={rewardCalculator.minAllyDistance})";
-                        }
-
                         // 좌/우 교차 체크: 유예 후 고정 기준에서 agent1의 좌/우가 뒤바뀌었는지
                         if (!shouldDisable && pair.prevLateralDir.sqrMagnitude > 0.5f)
                         {
@@ -1050,21 +1039,9 @@ namespace BoatAttack
                 }
                 else if (defenseAgent1 != null && defenseAgent2 != null)
                 {
-                    // 레거시 단일 쌍: 기존 동작 유지
+                    // 레거시 단일 쌍: 위치 교차 체크만 유지
                     Vector3 pos1 = defenseAgent1.transform.position;
                     Vector3 pos2 = defenseAgent2.transform.position;
-                    float allyDist = Vector3.Distance(pos1, pos2);
-
-                    if (rewardCalculator.maxAllyDistance > 0f && allyDist > rewardCalculator.maxAllyDistance)
-                    {
-                        RestartEpisode($"AllyDistanceExceeded(dist={allyDist:F1},max={rewardCalculator.maxAllyDistance})", rewardCalculator.collisionPenalty);
-                        return;
-                    }
-                    if (rewardCalculator.minAllyDistance > 0f && allyDist < rewardCalculator.minAllyDistance)
-                    {
-                        RestartEpisode($"AllyDistanceTooClose(dist={allyDist:F1},min={rewardCalculator.minAllyDistance})", rewardCalculator.collisionPenalty);
-                        return;
-                    }
 
                     // 위치 교차 체크
                     bool agent1CurrentlyOnLeft;
@@ -1167,37 +1144,6 @@ namespace BoatAttack
                     if (pair.agent1.IsNeutralized && pair.agent2 != null && pair.agent2.IsNeutralized) continue;
 
                     // Phantom 근접 체크 (Stage6에서만): 6쌍 중 가장 가까운 WebCenter와의 거리
-                    if (currentStage == TrainingStage.Stage6_PhantomFormation && pair.agent1.lastPhantomValid && pair.agent2 != null)
-                    {
-                        Vector3 pCenter = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
-                        // 실제 아군 agent1/agent2 각각에 대해 phantom 그물 선분 거리 체크
-                        float minPhantomDist = float.MaxValue;
-                        var phantoms = pair.agent1.phantomPairs;
-                        if (phantoms != null)
-                        {
-                            Vector3 a1Pos = pair.agent1.transform.position;
-                            Vector3 a2Pos = pair.agent2 != null ? pair.agent2.transform.position : a1Pos;
-                            for (int phi = 0; phi < pair.agent1.phantomCount; phi++)
-                            {
-                                if (!phantoms[phi].isValid) continue;
-                                // agent1↔agent2 선분까지의 거리 (그물 충돌)
-                                float d1 = PointToSegmentDistanceXZ(a1Pos, phantoms[phi].agent1Pos, phantoms[phi].agent2Pos);
-                                float d2 = PointToSegmentDistanceXZ(a2Pos, phantoms[phi].agent1Pos, phantoms[phi].agent2Pos);
-                                float d = Mathf.Min(d1, d2);
-                                if (d < minPhantomDist) minPhantomDist = d;
-                            }
-                        }
-
-                        if (rewardCalculator.phantomMinDistance > 0f && minPhantomDist < rewardCalculator.phantomMinDistance)
-                        {
-                            pair.agent1.AddReward(rewardCalculator.phantomViolationPenalty);
-                            pair.agent2.AddReward(rewardCalculator.phantomViolationPenalty);
-                            DisableOrDisarmPair(pi);
-                            Debug.LogWarning($"[DefenseEnv] Pair {pi} phantom 그물 충돌, dist={minPhantomDist:F1}m, step={_resetTimer}");
-                            continue;
-                        }
-                    }
-
                     // 적 추월 체크: 활성 적 중 가장 먼 적이 아군보다 모선에 가까우면 = 모든 적에게 추월당함
                     Vector3 pairCenter = pair.agent2 != null
                         ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f

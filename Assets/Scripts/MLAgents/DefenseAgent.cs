@@ -97,16 +97,11 @@ namespace BoatAttack
         public float inputSmoothing = 1.0f;
 
         [Header("Observation NormK (출력 0.5 지점 거리)")]
-        [Range(1f, 1000f)] public float partnerNormK = 50f;
         [Range(1f, 1000f)] public float enemyNormK = 250f;
         [Range(1f, 1000f)] public float motherNormK = 500f;
         [Range(1f, 500f)]  public float rayNormK = 100f;     // Web→Ray 수직거리 정규화 (k=100m에서 ±0.5)
 
         [Header("Observation Scale (정규화 후 가중치)")]
-        [Range(0f, 5f)] public float partnerRScale = 1f;
-        [Range(0f, 5f)] public float partnerFScale = 1f;
-        [Range(0f, 5f)] public float partnerDistScale = 1f;
-        [Range(0f, 5f)] public float partnerHdgScale = 1f;
         [Range(0f, 5f)] public float enemyDistScale = 1f;
         [Tooltip("베어링 유리함수 k값 (작을수록 정면 민감도↑, 0.5지점=k도)")]
         [Range(5f, 90f)] public float bearingNormK = 30f;
@@ -465,17 +460,18 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 관측 수집 (VectorSensor 6개 + AllyBufferSensor 최대3 + EnemyBufferSensor 전체적)
-        /// VectorSensor: 파트너(3: dist,brg,hdg) + 모선거리(1) + 자기상태(2) = 6
+        /// 관측 수집 (VectorSensor 3개 + AllyBufferSensor 최대10 + EnemyBufferSensor 최대10)
+        /// VectorSensor: 모선거리(1) + 자기상태(2) = 3
+        /// (파트너 관측 제거: CONVOY에서 kinematic 고정, DEPLOY/EXIT에서 규칙 기반)
         /// AllyBufferSensor: 아군쌍+트랩 최대10개, 각 3개 (dist, bearing, webLength)
-        /// EnemyBufferSensor: 활성 적군 최대10대, 각 4개 (Dist, SignedBrg, Hdg, SignedRayDist) — neutralized 제외
+        /// EnemyBufferSensor: 활성 적군 최대10대, 각 4개 (Dist, SignedBrg, Hdg, SignedRayDist)
         /// </summary>
         public override void CollectObservations(VectorSensor sensor)
         {
             collectObsCallCount++;
 
-            // 6: 파트너(3: dist,brg,hdg) + 모선거리(1) + 자기상태(2: throttle,steering)
-            const int VECTOR_OBS_COUNT = 3 + 1 + 2;
+            // 3: 모선거리(1) + 자기상태(2: throttle,steering)
+            const int VECTOR_OBS_COUNT = 1 + 2;
             if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
                 lastObservations = new float[VECTOR_OBS_COUNT];
             int oi = 0;
@@ -496,21 +492,7 @@ namespace BoatAttack
             Vector3 myRight = transform.right;
             float myAngle = transform.eulerAngles.y;
 
-            // 1. 파트너 (3: Dist, SignedBrg, Hdg) — 페어 내 고정 파트너
-            if (partnerAgent != null && partnerAgent._engine != null && partnerAgent._engine.RB != null)
-            {
-                Vector3 toPartner = partnerAgent.transform.position - myPos;
-                float pDist = toPartner.magnitude;
-                AddObs(sensor, NormalizePosition(pDist, partnerNormK) * partnerDistScale, ref oi);
-                AddObs(sensor, ComputeSignedBearing(myForward, toPartner) * partnerRScale, ref oi);
-                AddObs(sensor, NormalizeAngle(myAngle, partnerAgent.transform.eulerAngles.y) * partnerHdgScale, ref oi);
-            }
-            else
-            {
-                for (int i = 0; i < 3; i++) AddObs(sensor, 0f, ref oi);
-            }
-
-            // 2. 모선과의 거리 (1: 정규화)
+            // 1. 모선과의 거리 (1: 정규화)
             if (motherShip != null)
             {
                 float motherDist = Vector3.Distance(myPos, motherShip.transform.position);

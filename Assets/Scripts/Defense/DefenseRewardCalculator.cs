@@ -4,21 +4,12 @@ namespace BoatAttack
 {
     /// <summary>
     /// 보상 계산기
-    /// 매 스텝: 대형 유지
-    /// 이벤트: 포획/모선충돌/아군충돌 (EnvController에서 직접 참조)
+    /// CONVOY: 쌍동선 (kinematic 고정) → 대형 유지 보상 불필요
+    /// 이벤트: 포획/모선충돌 (EnvController에서 직접 참조)
     /// </summary>
     public class DefenseRewardCalculator : MonoBehaviour
     {
         [Header("=== 매 스텝 보상 ===")]
-        [Tooltip("대형 유지 보상 (아군 간격이 적정 범위 내일 때)")]
-        public float formationReward = 0.001f;
-
-        [Tooltip("아군 간 최적 거리 (m)")]
-        public float optimalDistance = 50f;
-
-        [Tooltip("거리 허용 범위 (±m) - 최적 거리 기준")]
-        public float distanceTolerance = 25f;
-
         [Tooltip("추력 보상 계수 (throttle × 계수 = 매 스텝 보상, 가속할수록 보상)")]
         public float throttleRewardCoeff = 0.0002f;
 
@@ -34,12 +25,6 @@ namespace BoatAttack
 
         [Tooltip("모선 충돌 페널티 (적이 모선에 충돌)")]
         public float motherShipHitPenalty = -1.0f;
-
-        [Tooltip("충돌 페널티 (아군끼리/모선/거리초과 등)")]
-        public float collisionPenalty = -0.5f;
-
-        [Tooltip("아군 Web 충돌 페널티")]
-        public float allyWebCollisionPenalty = -0.3f;
 
         [Tooltip("적군 방어선 돌파 페널티")]
         public float enemyBreachPenalty = -1.0f;
@@ -81,25 +66,17 @@ namespace BoatAttack
         [Tooltip("근접 포획 보너스 활성화 거리 (m)")]
         public float proximityThreshold = 30f;
 
-        [Header("=== 거리 제한 ===")]
-        [Tooltip("아군 간 최대 허용 거리 (초과 시 쌍 무력화)")]
-        public float maxAllyDistance = 100f;
+        [Header("=== 충돌 페널티 ===")]
+        [Tooltip("충돌 페널티 (아군 간 물리 충돌)")]
+        public float collisionPenalty = -0.5f;
 
-        [Tooltip("아군 간 최소 허용 거리 (미만 시 쌍 무력화)")]
-        public float minAllyDistance = 4f;
+        [Tooltip("아군 Web 충돌 페널티")]
+        public float allyWebCollisionPenalty = -0.3f;
 
-        [Header("=== Phantom 페널티 ===")]
-        [Tooltip("가상 아군쌍 접근 시 최소 허용 거리 (m)")]
-        public float phantomMinDistance = 30f;
-
-        [Tooltip("가상 아군쌍 침범 페널티")]
-        public float phantomViolationPenalty = -0.5f;
-
-        [Header("=== 쌍 간 근접 페널티 ===")]
-        [Tooltip("다른 쌍과의 최소 허용 거리 (m) — 이 이내로 접근하면 연속 페널티")]
+        [Tooltip("쌍 간 최소 허용 거리 (m)")]
         public float pairProximityMinDistance = 40f;
 
-        [Tooltip("쌍 간 근접 페널티 계수 (거리 1m 침범당 페널티)")]
+        [Tooltip("쌍 간 근접 페널티 계수")]
         public float pairProximityPenaltyCoeff = -0.001f;
 
         [Header("=== 적 추월 페널티 ===")]
@@ -116,7 +93,7 @@ namespace BoatAttack
         [Tooltip("Deploy 트리거 발동 시 일회성 보너스 (양 에이전트에 지급)")]
         public float deployTriggerBonus = 0.3f;
 
-        [Header("=== Convoy Ray 보상 (FixedJoint 모드) ===")]
+        [Header("=== Convoy Ray 보상 ===")]
         [Tooltip("Ray 차단 접근 보상 (|SignedRayDist|→0 유도, 매 스텝)")]
         public float rayApproachReward = 0.002f;
 
@@ -161,26 +138,16 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 쌍별 매 스텝 보상 계산 (멀티 쌍 대응)
-        /// 대형 유지만 계산 (차단/접근/시간 보상은 제거됨)
+        /// 쌍별 매 스텝 보상 계산
+        /// CONVOY: 대형 유지 제거 (kinematic 고정), 담당 적 추적만 유지
         /// </summary>
         public float CalculatePairStepReward(int pairIdx, AgentState agent1, AgentState agent2,
             float interceptDist, float alongDist, int enemyIdx = -1)
         {
-            float reward = 0f;
-
-            // 대형 유지: 아군 간 거리가 적정 범위(optimalDistance ± tolerance) 내면 보상
-            float allyDist = Vector3.Distance(agent1.position, agent2.position);
-            float error = Mathf.Abs(allyDist - optimalDistance);
-            if (error <= distanceTolerance)
-            {
-                reward += formationReward * (1f - error / distanceTolerance);
-            }
-
             // 담당 적 변경 추적 (외부에서 사용 가능)
             _prevEnemyByPair[pairIdx] = enemyIdx;
 
-            return reward;
+            return 0f;
         }
 
         /// <summary>
