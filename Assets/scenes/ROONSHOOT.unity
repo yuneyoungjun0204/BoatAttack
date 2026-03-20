@@ -30005,7 +30005,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_SensorName: PairBuffer
-  m_ObservableSize: 6
+  m_ObservableSize: 3
   m_MaxNumObservables: 10
 --- !u!114 &202823441
 MonoBehaviour:
@@ -30020,7 +30020,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_SensorName: EnemyBuffer
-  m_ObservableSize: 5
+  m_ObservableSize: 4
   m_MaxNumObservables: 10
 --- !u!114 &202823442
 MonoBehaviour:
@@ -44524,7 +44524,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 643977674}
   webAnchor1: {fileID: 587119040}
   webAnchor2: {fileID: 620801159}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -95443,7 +95443,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 1259883284}
   webAnchor1: {fileID: 1468334292}
   webAnchor2: {fileID: 19464731}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -154390,7 +154390,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 1909582895}
   webAnchor1: {fileID: 952427314}
   webAnchor2: {fileID: 412328600}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -173062,7 +173062,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 1600800857}
   webAnchor1: {fileID: 1206934611}
   webAnchor2: {fileID: 1956508010}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -227039,7 +227039,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 2134568638}
   webAnchor1: {fileID: 2059573059}
   webAnchor2: {fileID: 823740060}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -297395,7 +297395,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 1088485461}
   webAnchor1: {fileID: 1073259243}
   webAnchor2: {fileID: 789212266}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -382548,7 +382548,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 88788752}
   webAnchor1: {fileID: 371172282}
   webAnchor2: {fileID: 781742181}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -397624,7 +397624,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 1655510746}
   webAnchor1: {fileID: 216660506}
   webAnchor2: {fileID: 450047260}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -406448,7 +406448,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 467350009}
   webAnchor1: {fileID: 336494525}
   webAnchor2: {fileID: 746727808}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1
@@ -436338,7 +436338,7 @@ MonoBehaviour:
   defenseShip2: {fileID: 1368899141}
   webAnchor1: {fileID: 1801242786}
   webAnchor2: {fileID: 37882906}
-  webHeight: 5
+  webHeight: 10
   webThickness: 0.5
   webColor: {r: 0.21293166, g: 0.23135734, b: 0.8207547, a: 0.3}
   isTrigger: 1

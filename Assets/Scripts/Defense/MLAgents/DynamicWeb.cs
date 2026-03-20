@@ -36,8 +36,8 @@ namespace BoatAttack
         public Color webColor = new Color(0.95f, 0.95f, 0.92f, 0.9f); // 흰색 나일론
 
         [Tooltip("충돌 판정용 두께 배율 (비주얼보다 두껍게)")]
-        [Range(1f, 20f)]
-        public float colliderThicknessMultiplier = 10f;
+        [Range(1f, 50f)]
+        public float colliderThicknessMultiplier = 20f;
 
         [Header("Collision")]
         [Tooltip("Trigger 충돌 사용")]
@@ -262,28 +262,28 @@ namespace BoatAttack
 
             if (_collider != null)
             {
-                // 충돌 판정용: 두께를 넓혀 고속 적군 tunneling 방지
-                _collider.size = new Vector3(webThickness * colliderThicknessMultiplier, webHeight, distance);
+                // 충돌 판정용: 두께+길이를 넓혀 끝부분 누락 및 tunneling 방지
+                float extendedLength = distance + webThickness * colliderThicknessMultiplier;
+                _collider.size = new Vector3(webThickness * colliderThicknessMultiplier, webHeight, extendedLength);
             }
 
-            // Convoy 접힘: 선박 간격 < minWebActiveDist이면 collider/시각 비활성
-            bool webOpen = distance >= minWebActiveDist;
-            if (webOpen != _wasWebOpen)
+            // 그물 collider/시각 항상 활성 (접힘 효과 제거 — raycast 차단 보상 활성화)
+            if (!_wasWebOpen)
             {
-                if (_collider != null) _collider.enabled = webOpen;
-                if (_netContainer != null) _netContainer.SetActive(webOpen);
-                if (_visualObject != null) _visualObject.SetActive(webOpen);
-                _wasWebOpen = webOpen;
+                if (_collider != null) _collider.enabled = true;
+                if (_netContainer != null) _netContainer.SetActive(true);
+                if (_visualObject != null) _visualObject.SetActive(true);
+                _wasWebOpen = true;
             }
 
             // 어부 그물 시각화 업데이트 (3프레임마다 — 성능 최적화)
-            if (webOpen && useFishingNetVisual && _netContainer != null)
+            if (useFishingNetVisual && _netContainer != null)
             {
                 _netUpdateCounter++;
                 if (_netUpdateCounter % 3 == 0)
                     UpdateFishingNetVisual(pos1, pos2, distance);
             }
-            else if (webOpen && _visualObject != null)
+            else if (_visualObject != null)
             {
                 // 기존 Cube 비주얼
                 _visualObject.transform.localScale = new Vector3(webThickness, webHeight, distance);
@@ -1008,6 +1008,17 @@ namespace BoatAttack
 
             Gizmos.color = Color.yellow;
             Gizmos.DrawWireSphere(centerPos, 1f);
+
+            // 콜라이더 영역 시각화 (실제 충돌 판정 범위)
+            if (_collider != null && _collider.enabled)
+            {
+                Gizmos.color = new Color(0f, 1f, 0f, 0.15f);
+                Gizmos.matrix = transform.localToWorldMatrix;
+                Gizmos.DrawCube(_collider.center, _collider.size);
+                Gizmos.color = new Color(0f, 1f, 0f, 0.5f);
+                Gizmos.DrawWireCube(_collider.center, _collider.size);
+                Gizmos.matrix = Matrix4x4.identity;
+            }
         }
     }
 }

@@ -316,9 +316,8 @@ namespace BoatAttack
         private Cinemachine.CinemachineDollyCart[] _poolDollyCarts;
         private float[] _poolNoiseSeed;
         private float _poolTemplateY; // 템플릿 높이(y) 저장
+        private LineRenderer[] _enemyRayLines; // Raycast 시각화용
 
-        // Raycast 차단 시각화 (적→모선)
-        private LineRenderer[] _enemyRayLines;
 
         [Header("Multi-Environment")]
         [Tooltip("환경 루트 Transform (Island Level 등). 비어있으면 부모 또는 자기 자신 사용")]
@@ -1343,6 +1342,48 @@ namespace BoatAttack
                 totalStepReward = stepReward;
             }
 
+
+            // 쌍 간 근접 페널티: 다른 쌍과 가까우면 연속 페널티 (충돌 전 회피 유도)
+            if (launchZoneManager != null && launchZoneManager.IsInitialized
+                && rewardCalculator.pairProximityPenaltyCoeff < 0f
+                && rewardCalculator.pairProximityMinDistance > 0f
+                && _resetTimer % 5 == 0)
+            {
+                int poolCount = launchZoneManager.GetCurrentPoolCount();
+                for (int pi = 0; pi < poolCount; pi++)
+                {
+                    var pairA = launchZoneManager.GetPair(pi);
+                    if (pairA == null || !pairA.isActive || pairA.agent1 == null) continue;
+
+                    Vector3 centerA = pairA.agent2 != null
+                        ? (pairA.agent1.transform.position + pairA.agent2.transform.position) * 0.5f
+                        : pairA.agent1.transform.position;
+
+                    for (int pj = pi + 1; pj < poolCount; pj++)
+                    {
+                        var pairB = launchZoneManager.GetPair(pj);
+                        if (pairB == null || !pairB.isActive || pairB.agent1 == null) continue;
+
+                        Vector3 centerB = pairB.agent2 != null
+                            ? (pairB.agent1.transform.position + pairB.agent2.transform.position) * 0.5f
+                            : pairB.agent1.transform.position;
+
+                        float dist = Vector3.Distance(centerA, centerB);
+                        if (dist < rewardCalculator.pairProximityMinDistance)
+                        {
+                            float violation = rewardCalculator.pairProximityMinDistance - dist;
+                            float penalty = rewardCalculator.pairProximityPenaltyCoeff * violation;
+                            // 양쪽 쌍 모두에 페널티
+                            pairA.agent1.AddReward(penalty);
+                            if (pairA.agent2 != null) pairA.agent2.AddReward(penalty);
+                            pairB.agent1.AddReward(penalty);
+                            if (pairB.agent2 != null) pairB.agent2.AddReward(penalty);
+                            totalStepReward += penalty * 2f;
+                        }
+                    }
+                }
+            }
+
             // Raycast 차단 보상 + 시각화: 각 활성 적에서 모선 방향으로 Ray (5스텝 간격)
             if (motherShip != null && _enemyPool != null && rewardCalculator.raycastInterceptReward > 0f && _resetTimer % 5 == 0)
             {
@@ -1352,7 +1393,6 @@ namespace BoatAttack
                 {
                     if (_enemyPool[ei] == null || !_enemyPool[ei].activeSelf)
                     {
-                        // 비활성 적은 Ray 숨기기
                         if (_enemyRayLines != null && ei < _enemyRayLines.Length && _enemyRayLines[ei] != null)
                             _enemyRayLines[ei].enabled = false;
                         continue;
@@ -1407,7 +1447,6 @@ namespace BoatAttack
                         {
                             // 수직 차단 보너스: Web 방향과 적→모선 방향이 수직일수록 보너스
                             float perpBonus = 1f;
-                            // 중앙 차단 보너스: hit 지점이 Web 중심에 가까울수록 보너스
                             float centerBonus = 1f;
 
                             if (dw.defenseShip1 != null && dw.defenseShip2 != null)
@@ -1417,7 +1456,7 @@ namespace BoatAttack
                                 float perpScore = 1f - Mathf.Abs(Vector3.Dot(webDir, rayDir));
                                 perpBonus = 1f + rewardCalculator.perpendicularBonusCoeff * perpScore;
 
-                                // 중앙 보너스: hit 지점 ↔ Web 중심 거리 / Web 반길이
+                                // 중앙 보너스: hit 지점이 Web 중심에 가까울수록
                                 Vector3 webCenter = (dw.defenseShip1.position + dw.defenseShip2.position) * 0.5f;
                                 float webHalfLen = Vector3.Distance(dw.defenseShip1.position, dw.defenseShip2.position) * 0.5f;
                                 if (webHalfLen > 0.1f)
@@ -1429,7 +1468,7 @@ namespace BoatAttack
                                 }
                             }
 
-                            // 위협도 가중치: 적이 모선에 가까울수록 보상 증가 (1.0 ~ 2.0)
+                            // 위협도 가중치: 적이 모선에 가까울수록 보상 증가
                             float threatWeight = 1f + Mathf.Clamp01(1f - distToMother / 500f);
                             float reward = rewardCalculator.raycastInterceptReward * perpBonus * centerBonus * threatWeight;
                             agent.AddReward(reward);
@@ -1438,64 +1477,7 @@ namespace BoatAttack
                             totalStepReward += reward;
                         }
 
-                        // 타임아웃 타이머 갱신: hit한 Web의 pair를 찾아서 lastRaycastHitStep 갱신
-                        if (launchZoneManager != null && launchZoneManager.IsInitialized)
-                        {
-                            for (int pi = 0; pi < launchZoneManager.GetCurrentPoolCount(); pi++)
-                            {
-                                var p = launchZoneManager.GetPair(pi);
-                                if (p == null || !p.isActive) continue;
-                                if (p.webObject != null && p.webObject.GetComponent<DynamicWeb>() == dw)
-                                {
-                                    p.lastRaycastHitStep = _resetTimer;
-                                    p.hasEverHitRaycast = true;
-                                    break;
-                                }
-                            }
-                        }
-
                         break; // 한 적당 하나의 Web만
-                    }
-
-                    // 미차단 페널티: 타임아웃 방식으로 대체 (매-스텝 누적 음수 제거)
-                    // if (!hitWeb) { ... }
-
-                    // 근접 포획 보너스 (Bridge Reward): Web중심↔적 거리가 임계값 이내일 때
-                    if (rewardCalculator.proximityBridgeCoeff > 0f && rewardCalculator.proximityThreshold > 0f
-                        && launchZoneManager != null && launchZoneManager.IsInitialized)
-                    {
-                        float bestProxReward = 0f;
-                        DefenseAgent bestProxAgent = null;
-
-                        for (int pi = 0; pi < launchZoneManager.GetCurrentPoolCount(); pi++)
-                        {
-                            var pair = launchZoneManager.GetPair(pi);
-                            if (pair == null || !pair.isActive || pair.isDisarmed || pair.webObject == null) continue;
-                            var dw = pair.webObject.GetComponent<DynamicWeb>();
-                            if (dw == null || dw.defenseShip1 == null || dw.defenseShip2 == null) continue;
-
-                            Vector3 webCenter = (dw.defenseShip1.position + dw.defenseShip2.position) * 0.5f;
-                            float dist = Vector3.Distance(webCenter, enemyPos);
-
-                            if (dist < rewardCalculator.proximityThreshold)
-                            {
-                                float proxReward = rewardCalculator.proximityBridgeCoeff
-                                    * (1f - dist / rewardCalculator.proximityThreshold);
-                                if (proxReward > bestProxReward)
-                                {
-                                    bestProxReward = proxReward;
-                                    bestProxAgent = pair.agent1;
-                                }
-                            }
-                        }
-
-                        if (bestProxAgent != null && bestProxReward > 0f)
-                        {
-                            bestProxAgent.AddReward(bestProxReward);
-                            if (bestProxAgent.partnerAgent != null)
-                                bestProxAgent.partnerAgent.AddReward(bestProxReward);
-                            totalStepReward += bestProxReward;
-                        }
                     }
 
                     // Ray 색상: Web에 닿으면 초록, 아니면 빨강
@@ -1510,82 +1492,6 @@ namespace BoatAttack
                         {
                             _enemyRayLines[ei].startColor = new Color(1f, 0f, 0f, 0.5f);
                             _enemyRayLines[ei].endColor = new Color(1f, 0f, 0f, 0.1f);
-                        }
-                    }
-                }
-            }
-
-            // 레이캐스트 타임아웃 체크: 일정 스텝간 미차단 시 페어 비활성화
-            if (rewardCalculator.raycastTimeoutSteps > 0
-                && launchZoneManager != null && launchZoneManager.IsInitialized)
-            {
-                int poolCount = launchZoneManager.GetCurrentPoolCount();
-                for (int pi = 0; pi < poolCount; pi++)
-                {
-                    var pair = launchZoneManager.GetPair(pi);
-                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
-                    if (pair.lastRaycastHitStep < 0) continue; // 아직 배치 안 됨
-
-                    // 배치 후 유예기간
-                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
-
-                    // Neutralized 쌍 스킵 (Convoy EXIT 후 그물 유지 중)
-                    if (pair.agent1 != null && pair.agent1.IsNeutralized
-                        && pair.agent2 != null && pair.agent2.IsNeutralized) continue;
-
-                    int stepsSinceHit = _resetTimer - pair.lastRaycastHitStep;
-                    int effectiveTimeout = pair.hasEverHitRaycast
-                        ? rewardCalculator.raycastTimeoutSteps / 2
-                        : rewardCalculator.raycastTimeoutSteps;
-                    if (stepsSinceHit > effectiveTimeout)
-                    {
-                        if (pair.agent1 != null)
-                            pair.agent1.AddReward(rewardCalculator.raycastTimeoutPenalty);
-                        if (pair.agent2 != null)
-                            pair.agent2.AddReward(rewardCalculator.raycastTimeoutPenalty);
-
-                        Debug.Log($"[RaycastTimeout] Pair {pi} 비활성화: {stepsSinceHit}스텝간 미차단 (limit={effectiveTimeout}, everHit={pair.hasEverHitRaycast})");
-                        DisableOrDisarmPair(pi);
-                    }
-                }
-            }
-
-            // 쌍 간 근접 페널티: 다른 쌍과 가까우면 연속 페널티 (충돌 전 회피 유도)
-            if (launchZoneManager != null && launchZoneManager.IsInitialized
-                && rewardCalculator.pairProximityPenaltyCoeff < 0f
-                && rewardCalculator.pairProximityMinDistance > 0f
-                && _resetTimer % 5 == 0)
-            {
-                int poolCount = launchZoneManager.GetCurrentPoolCount();
-                for (int pi = 0; pi < poolCount; pi++)
-                {
-                    var pairA = launchZoneManager.GetPair(pi);
-                    if (pairA == null || !pairA.isActive || pairA.agent1 == null) continue;
-
-                    Vector3 centerA = pairA.agent2 != null
-                        ? (pairA.agent1.transform.position + pairA.agent2.transform.position) * 0.5f
-                        : pairA.agent1.transform.position;
-
-                    for (int pj = pi + 1; pj < poolCount; pj++)
-                    {
-                        var pairB = launchZoneManager.GetPair(pj);
-                        if (pairB == null || !pairB.isActive || pairB.agent1 == null) continue;
-
-                        Vector3 centerB = pairB.agent2 != null
-                            ? (pairB.agent1.transform.position + pairB.agent2.transform.position) * 0.5f
-                            : pairB.agent1.transform.position;
-
-                        float dist = Vector3.Distance(centerA, centerB);
-                        if (dist < rewardCalculator.pairProximityMinDistance)
-                        {
-                            float violation = rewardCalculator.pairProximityMinDistance - dist;
-                            float penalty = rewardCalculator.pairProximityPenaltyCoeff * violation;
-                            // 양쪽 쌍 모두에 페널티
-                            pairA.agent1.AddReward(penalty);
-                            if (pairA.agent2 != null) pairA.agent2.AddReward(penalty);
-                            pairB.agent1.AddReward(penalty);
-                            if (pairB.agent2 != null) pairB.agent2.AddReward(penalty);
-                            totalStepReward += penalty * 2f;
                         }
                     }
                 }
@@ -2903,7 +2809,8 @@ namespace BoatAttack
                 CreateTrapFromWeb(pair);
             }
 
-            launchZoneManager.DisablePair(pairIdx, m_AgentGroup);
+            // 그물 미전개 쌍은 즉시 풀로 회수 (HIDDEN_POS), 전개 완료 쌍은 현재 위치 정지
+            launchZoneManager.ReturnPairToPool(pairIdx, m_AgentGroup, false);
         }
 
         /// <summary>
@@ -3060,7 +2967,14 @@ namespace BoatAttack
             for (int i = 0; i < poolCount; i++)
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
+                if (pair == null || pair.agent1 == null) continue;
+
+                // 활성 쌍 OR Neutralized 그물 전개 중인 쌍 둘 다 커버로 인식
+                bool isOperational = pair.isActive && !pair.isDisarmed;
+                bool isWebDeployed = !pair.isActive
+                    && pair.agent1.IsNeutralized
+                    && pair.webObject != null && pair.webObject.activeSelf;
+                if (!isOperational && !isWebDeployed) continue;
 
                 Vector3 allyCenter = pair.agent2 != null
                     ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f
@@ -3295,8 +3209,6 @@ namespace BoatAttack
             _poolExplosions = new SimpleExplosionOnCollision[poolSize];
             _poolDollyCarts = new Cinemachine.CinemachineDollyCart[poolSize];
             _poolNoiseSeed = new float[poolSize];
-
-            // Raycast 시각화용 LineRenderer 배열
             _enemyRayLines = new LineRenderer[poolSize];
 
             // 씬에서 템플릿 찾기 (3단계 fallback)
@@ -3609,9 +3521,15 @@ namespace BoatAttack
                             ? formationSpawner.GetLastDiversionaryAngles()
                             : null;
 
+                        // maxAllyPairsPerEpisode 적용: 초기 배치도 상한 제한
+                        pairCount = Mathf.Min(pairCount, maxAllyPairsPerEpisode);
+
                         launchZoneManager.DeployPairs(
                             _currentFormation, _currentEnemyApproachAngle,
                             divAngles, pairCount, motherPos, m_AgentGroup);
+
+                        // 초기 배치 수를 에피소드 카운터에 반영
+                        _allyPairsCreatedThisEpisode += launchZoneManager.GetActivePairCount();
 
                         // 경량 모드 적용 (배치 후 모든 Web에 적용)
                         ApplyLightweightMode();

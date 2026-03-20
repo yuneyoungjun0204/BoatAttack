@@ -670,7 +670,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_BrainParameters:
     VectorObservationSize: 6
-    NumStackedVectorObservations: 1
+    NumStackedVectorObservations: 3
     m_ActionSpec:
       m_NumContinuousActions: 2
       BranchSizes: 
@@ -731,8 +731,9 @@ MonoBehaviour:
   speedMultiplier: 1
   inputSmoothing: 0.2
   partnerNormK: 50
-  enemyNormK: 700
+  enemyNormK: 800
   motherNormK: 1000
+  rayNormK: 100
   partnerRScale: 1
   partnerFScale: 1
   partnerDistScale: 1

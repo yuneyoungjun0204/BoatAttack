@@ -831,12 +831,8 @@ namespace BoatAttack
                 }
             }
 
-            // 2. 풀 상한 체크 (Neutralized 쌍은 제외 — 그물 유지 중이므로 풀 슬롯 차지 안 함)
-            int effectiveCount = 0;
-            for (int i = 0; i < _pairPool.Count; i++)
-            {
-                if (!IsPairNeutralized(_pairPool[i])) effectiveCount++;
-            }
+            // 2. 풀 상한 체크 (Neutralized 포함 — 총 쌍 수 제한)
+            int effectiveCount = _pairPool.Count;
             if (effectiveCount >= maxPairCount)
             {
                 Debug.LogWarning($"[GetOrCreate] 풀 상한 도달: effective={effectiveCount}/{maxPairCount} (total={_pairPool.Count})");
@@ -1194,7 +1190,8 @@ namespace BoatAttack
         public bool DeploySinglePair(Vector3 motherPos, float approachAngleDeg, SimpleMultiAgentGroup agentGroup, int forceZoneIdx = -1)
         {
             if (!_initialized || _pairPool == null) return false;
-            if (_pairPool.Count >= maxPairCount && GetInactivePairCount() == 0) return false;
+            // 총 쌍 수 상한 체크 (활성+비활성+Neutralized 모두 포함)
+            if (_pairPool.Count >= maxPairCount && FindInactivePairIndex() < 0) return false;
 
             // 1. 스폰 위치 계산 (쿨다운 중인 구역은 다음 가까운 구역으로)
             int currentStep = envController != null ? envController.CurrentStep : 0;
@@ -1257,6 +1254,13 @@ namespace BoatAttack
             }
             else
             {
+                // 새 쌍 생성 전 상한 재확인
+                if (_pairPool.Count >= maxPairCount)
+                {
+                    Debug.LogWarning($"[DeploySingle] 풀 상한 도달: {_pairPool.Count}/{maxPairCount}, 생성 불가");
+                    return false;
+                }
+
                 if (defenseBoatPrefab == null)
                 {
                     Debug.LogError("[DeploySingle] defenseBoatPrefab이 null! Inspector에서 할당하세요.");
@@ -1485,14 +1489,12 @@ namespace BoatAttack
         {
             if (_pairPool == null) return 0;
             int existingInactive = 0;
-            int effectiveCount = 0;
             for (int i = 0; i < _pairPool.Count; i++)
             {
                 if (!_pairPool[i].isActive) existingInactive++;
-                if (!IsPairNeutralized(_pairPool[i])) effectiveCount++;
             }
-            // 아직 생성되지 않은 쌍도 "사용 가능"에 포함 (Neutralized는 슬롯 차지 안 함)
-            int canCreate = Mathf.Max(0, maxPairCount - effectiveCount);
+            // 총 풀 크기 기준 생성 가능 수 (Neutralized 포함)
+            int canCreate = Mathf.Max(0, maxPairCount - _pairPool.Count);
             return existingInactive + canCreate;
         }
 

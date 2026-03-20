@@ -11,16 +11,25 @@ namespace BoatAttack
     {
         [Header("=== 매 스텝 보상 ===")]
         [Tooltip("대형 유지 보상 (아군 간격이 적정 범위 내일 때)")]
-        public float formationReward = 0.001f;
+        public float formationReward = 0.005f;
 
         [Tooltip("아군 간 최적 거리 (m)")]
         public float optimalDistance = 50f;
 
         [Tooltip("거리 허용 범위 (±m) - 최적 거리 기준")]
-        public float distanceTolerance = 25f;
+        public float distanceTolerance = 35f;
+
+        [Tooltip("대형 이탈 시 연속 페널티 계수 (허용 범위 밖 1m당)")]
+        public float formationViolationPenalty = -0.0005f;
+
+        [Tooltip("대형 이탈 페널티 최대값 (스텝당 이 이상 감소 안 함)")]
+        public float formationViolationMaxPenalty = -0.01f;
 
         [Tooltip("추력 보상 계수 (throttle × 계수 = 매 스텝 보상, 가속할수록 보상)")]
         public float throttleRewardCoeff = 0.0002f;
+
+        [Tooltip("생존 보상 (매 스텝 활성 상태 유지 시)")]
+        public float survivalReward = 0.001f;
 
         [Header("=== 이벤트 보상 ===")]
         [Tooltip("포획 성공 (적이 Web에 충돌)")]
@@ -53,26 +62,26 @@ namespace BoatAttack
         [Tooltip("모든 적군 제압 시 추가 보너스")]
         public float allClearBonus = 2.0f;
 
+        [Header("=== Raycast 차단 보상 ===")]
+        [Tooltip("적→모선 Ray를 Web이 물리적으로 차단 시 보상 (Physics.RaycastAll)")]
+        public float raycastInterceptReward = 0.002f;
+
+        [Tooltip("수직 차단 보너스 계수 (Web이 Ray에 수직일수록 ×(1+coeff))")]
+        public float perpendicularBonusCoeff = 0.5f;
+
+        [Tooltip("중앙 차단 보너스 계수 (hit 지점이 Web 중심에 가까울수록 ×(1+coeff))")]
+        public float centerBonusCoeff = 0.5f;
+
+        [Header("=== Ray 수직 접근 보상 (기하학적) ===")]
+        [Tooltip("적→모선 Ray에 수직 접근할수록 보상 (interceptDist 기반, Web 상태 무관)")]
+        public float rayApproachReward = 0.002f;
+
+        [Tooltip("Ray 접근 보상 정규화 거리 (m) — 이 거리에서 보상 0.5배")]
+        public float rayApproachNormK = 200f;
+
         [Header("=== 커버리지 보상 ===")]
         [Tooltip("적군 커버리지 거리 감소 1m당 그룹 보상")]
         public float coverageRewardPerMeter = 0.001f;
-
-        [Header("=== Raycast 차단 보상 ===")]
-        [Tooltip("적→모선 Ray가 Web에 닿을 때 해당 쌍에 매 스텝 보상")]
-        public float raycastInterceptReward = 0.002f;
-
-        [Tooltip("수직 차단 보너스 계수 (perpScore × 계수가 보상 배율에 추가)")]
-        public float perpendicularBonusCoeff = 0.5f;
-
-        [Tooltip("중앙 차단 보너스 계수 (centerScore × 계수가 보상 배율에 추가)")]
-        public float centerBonusCoeff = 0.5f;
-
-        [Header("=== 레이캐스트 타임아웃 ===")]
-        [Tooltip("레이캐스트 미차단 허용 스텝 수 (0=비활성화). 50스텝≈5초@timescale10")]
-        public int raycastTimeoutSteps = 50;
-
-        [Tooltip("타임아웃 비활성화 시 페널티")]
-        public float raycastTimeoutPenalty = -0.5f;
 
         [Header("=== 근접 포획 보너스 (Bridge Reward) ===")]
         [Tooltip("Web중심↔적 거리가 임계값 이내일 때 보상 계수")]
@@ -83,7 +92,7 @@ namespace BoatAttack
 
         [Header("=== 거리 제한 ===")]
         [Tooltip("아군 간 최대 허용 거리 (초과 시 쌍 무력화)")]
-        public float maxAllyDistance = 100f;
+        public float maxAllyDistance = 130f;
 
         [Tooltip("아군 간 최소 허용 거리 (미만 시 쌍 무력화)")]
         public float minAllyDistance = 4f;
@@ -104,7 +113,7 @@ namespace BoatAttack
 
         [Header("=== 적 추월 페널티 ===")]
         [Tooltip("적이 아군보다 모선에 가까울 때 페널티")]
-        public float enemyOvertakePenalty = -1.0f;
+        public float enemyOvertakePenalty = -0.1f;
 
         [Header("=== Convoy / Deploy ===")]
         [Tooltip("적이 이 거리(m) 이내 진입 시 그물 전개 시작")]
@@ -152,19 +161,39 @@ namespace BoatAttack
 
         /// <summary>
         /// 쌍별 매 스텝 보상 계산 (멀티 쌍 대응)
-        /// 대형 유지만 계산 (차단/접근/시간 보상은 제거됨)
+        /// 대형 유지 + Ray 수직 접근 보상
         /// </summary>
         public float CalculatePairStepReward(int pairIdx, AgentState agent1, AgentState agent2,
             float interceptDist, float alongDist, int enemyIdx = -1)
         {
             float reward = 0f;
 
+            // 생존 보상: 매 스텝 활성 상태 유지
+            reward += survivalReward;
+
             // 대형 유지: 아군 간 거리가 적정 범위(optimalDistance ± tolerance) 내면 보상
             float allyDist = Vector3.Distance(agent1.position, agent2.position);
             float error = Mathf.Abs(allyDist - optimalDistance);
             if (error <= distanceTolerance)
             {
+                // 범위 내: 보상 (가까울수록 높음)
                 reward += formationReward * (1f - error / distanceTolerance);
+            }
+            else
+            {
+                // 범위 밖: 초과 거리에 비례하는 연속 페널티 (클램프로 폭주 방지)
+                float violation = error - distanceTolerance;
+                float penaltyRaw = formationViolationPenalty * violation;
+                reward += Mathf.Max(penaltyRaw, formationViolationMaxPenalty);
+            }
+
+            // Ray 수직 접근 보상: interceptDist가 작을수록(Ray에 가까울수록) 높은 보상
+            // alongDist > 0 = Web이 적 전방에 있을 때만 (적 뒤에 있으면 무의미)
+            if (rayApproachReward > 0f && interceptDist < float.MaxValue && alongDist > 0f)
+            {
+                // dist/(dist+k) 정규화 → 1에서 빼서 가까울수록 높은 값
+                float normDist = interceptDist / (interceptDist + rayApproachNormK);
+                reward += rayApproachReward * (1f - normDist);
             }
 
             // 담당 적 변경 추적 (외부에서 사용 가능)
