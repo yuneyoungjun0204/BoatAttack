@@ -20,9 +20,6 @@ namespace BoatAttack
         [Tooltip("모선으로부터 진수구역 거리 (m)")]
         public float distance = 100f;
 
-        [Tooltip("쌍의 좌우 펼침 각도 (±도)")]
-        public float pairSpreadDeg = 1.7f;
-
         [Tooltip("에피소드마다 방위각 jitter (±도, 과적합 방지)")]
         public float angleJitter = 10f;
     }
@@ -79,9 +76,6 @@ namespace BoatAttack
         [Range(1, 40)]
         public int zoneCount = 10;
 
-        [Tooltip("쌍의 좌우 펼침 각도 (±도)")]
-        public float pairSpreadDeg = 1.7f;
-
         [Tooltip("에피소드마다 방위각 jitter (±도, 과적합 방지)")]
         public float angleJitter = 10f;
 
@@ -100,6 +94,10 @@ namespace BoatAttack
         [Tooltip("초기 출동 쌍 수 (나머지는 예비로 대기, 0=activePairCount 전부 출동)")]
         [Range(0, 20)]
         public int initialDeployCount = 0;
+
+        [Tooltip("에피소드 당 최대 배치 쌍 수 (0=무제한). 초기+추가 배치 합산")]
+        [Range(0, 50)]
+        public int maxTotalPairsPerEpisode = 0;
 
         [Tooltip("같은 진수구역에서 연속 출동 최소 간격 (스텝)")]
         public int zoneDeployCooldown = 100;
@@ -577,34 +575,38 @@ namespace BoatAttack
             GameObject[] enemies = envController != null ? envController.enemyShips : null;
 
             // 3-1. 1단계: 모든 쌍의 pairCenter + zoneDir 먼저 계산
-            var spawnInfos = new List<(int poolIdx, Vector3 pairCenter, Vector3 zoneDir, float pairWidth, int zoneIdx)>();
+            var spawnInfos = new List<(int poolIdx, Vector3 pairCenter, Vector3 zoneDir, int zoneIdx)>();
             foreach (var kvp in zoneAssignments)
             {
                 int zoneIdx = kvp.Key;
                 List<int> pairIndices = kvp.Value;
                 LaunchZone zone = launchZones[zoneIdx];
 
-                // 양동: 각 구역이 담당하는 적 방향(구역 방위각) 기준 배치
-                // 집중/파상: 1쌍이면 적 접근 각도, 여러 쌍이면 구역 방위각
-                float zoneAngleDeg;
+                // 적 접근 각도를 직접 사용 (구역 양자화 오차 제거)
+                // 양동: 각 구역이 담당하는 적 방향 사용, 집중/파상: approachAngleDeg 사용
+                float spawnAngleDeg;
                 if (formationType == FormationType.Diversionary)
-                    zoneAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
-                else if (pairIndices.Count == 1)
-                    zoneAngleDeg = approachAngleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+                {
+                    // 양동은 각 구역이 서로 다른 적 방향을 담당하므로 구역 각도 유지
+                    spawnAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+                }
                 else
-                    zoneAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
-                float zoneAngleRad = zoneAngleDeg * Mathf.Deg2Rad;
-                Vector3 zoneDir = new Vector3(Mathf.Sin(zoneAngleRad), 0f, Mathf.Cos(zoneAngleRad));
+                {
+                    // 집중/파상: 쌍 수와 무관하게 항상 적 접근 각도 기준
+                    spawnAngleDeg = approachAngleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+                }
+                float spawnAngleRad = spawnAngleDeg * Mathf.Deg2Rad;
+                Vector3 zoneDir = new Vector3(Mathf.Sin(spawnAngleRad), 0f, Mathf.Cos(spawnAngleRad));
 
-                // 타원 거리 계산 (jitter 적용된 각도 기준)
-                float zoneDist = GetEllipseDistance(zoneAngleDeg);
+                // 타원 거리 계산 (적 접근 각도 + jitter 기준)
+                float zoneDist = GetEllipseDistance(spawnAngleDeg);
 
                 // 적 접근 방향에 수직인 횡대열 축 계산
                 Vector3 lateralDir = new Vector3(zoneDir.z, 0f, -zoneDir.x); // 90° 회전
 
-                // 쌍 간 횡 간격 (쌍 내 2대 좌우폭 + 여유)
-                float pairWidth = 2f * zoneDist * Mathf.Tan(zone.pairSpreadDeg * Mathf.Deg2Rad);
-                float lateralSpacing = pairWidth + 10f; // 쌍 간 최소 10m 여유
+                // 쌍 간 횡 간격 (convoySpawnSpacing + 여유)
+                float spawnSpacing = envController != null ? envController.convoySpawnSpacing : 10f;
+                float lateralSpacing = spawnSpacing + 10f;
 
                 // 중심 기준 횡 오프셋 계산 (0이 중앙)
                 float totalWidth = (pairIndices.Count - 1) * lateralSpacing;
@@ -618,7 +620,7 @@ namespace BoatAttack
                     float lateralOffset = startOffset + j * lateralSpacing;
                     Vector3 pairCenter = motherPos + zoneDir * zoneDist + lateralDir * lateralOffset;
 
-                    spawnInfos.Add((pi, pairCenter, zoneDir, pairWidth, zoneIdx));
+                    spawnInfos.Add((pi, pairCenter, zoneDir, zoneIdx));
                 }
             }
 
@@ -629,7 +631,7 @@ namespace BoatAttack
 
             for (int i = 0; i < spawnInfos.Count; i++)
             {
-                var (pi, pairCenter, zoneDir, pairWidth, zoneIdx) = spawnInfos[i];
+                var (pi, pairCenter, zoneDir, zoneIdx) = spawnInfos[i];
                 DefensePair pair = _pairPool[pi];
                 pair.assignedZoneIndex = zoneIdx;
 
@@ -665,10 +667,7 @@ namespace BoatAttack
                 Vector3 spawnForward = rot * Vector3.forward;
                 Vector3 webLateral = new Vector3(-spawnForward.z, 0f, spawnForward.x);
 
-                // Convoy 모드: 좁은 간격으로 오버라이드
-                float spawnWidth = pairWidth;
-                if (envController != null && envController.enableConvoyDeploy)
-                    spawnWidth = envController.convoySpawnSpacing;
+                float spawnWidth = envController != null ? envController.convoySpawnSpacing : 10f;
 
                 Vector3 pos1 = pairCenter + webLateral * (-spawnWidth * 0.5f);
                 pos1.y = _templateAgent1Y;
@@ -724,7 +723,6 @@ namespace BoatAttack
             float[] diversionaryAngles, int pairCount)
         {
             var assignments = new Dictionary<int, List<int>>();
-            var usedZones = new HashSet<int>();
 
             bool isFleet = envController != null && (envController.currentStage == TrainingStage.Stage7_FleetManeuver
                 || envController.currentStage == TrainingStage.Stage8_TacticalFullObs
@@ -732,41 +730,59 @@ namespace BoatAttack
 
             if (formationType == FormationType.Diversionary && diversionaryAngles != null && diversionaryAngles.Length > 1)
             {
-                // 양동: 라운드 로빈으로 각 방향에 1쌍씩 균등 배정
+                // 양동: 각 방향에 최소 1쌍 보장 → 나머지 라운드 로빈
                 int dirCount = diversionaryAngles.Length;
-                int pairIdx = 0;
 
-                // 각 방향별 가장 가까운 구역 미리 계산
-                int[] bestZonePerDir = new int[dirCount];
+                // 각 방향별 가장 가까운 구역 계산 (중복 방지: 이미 선점된 구역은 차순위)
                 float[] dirAnglesDeg = new float[dirCount];
+                int[] bestZonePerDir = new int[dirCount];
+                var usedZonesDiv = new HashSet<int>();
+
+                for (int d = 0; d < dirCount; d++)
+                    dirAnglesDeg[d] = diversionaryAngles[d] * Mathf.Rad2Deg;
+
+                // 1단계: 각 방향에 고유 구역 배정 (중복 시 차순위 구역 사용)
                 for (int d = 0; d < dirCount; d++)
                 {
-                    dirAnglesDeg[d] = diversionaryAngles[d] * Mathf.Rad2Deg;
-                    bestZonePerDir[d] = FindClosestZone(dirAnglesDeg[d]);
+                    var sorted = GetZonesSortedByAngle(dirAnglesDeg[d]);
+                    bestZonePerDir[d] = -1;
+                    foreach (int zi in sorted)
+                    {
+                        float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAnglesDeg[d], launchZones[zi].angleDeg));
+                        if (angleDiff > 90f) break;
+                        if (!usedZonesDiv.Contains(zi))
+                        {
+                            bestZonePerDir[d] = zi;
+                            usedZonesDiv.Add(zi);
+                            break;
+                        }
+                    }
                 }
 
-                // 라운드 로빈: 방향 0→1→2→0→1→2→... 순서로 1쌍씩 배정
+                // 2단계: 각 방향에 최소 1쌍 배정
+                int pairIdx = 0;
+                for (int d = 0; d < dirCount && pairIdx < pairCount; d++)
+                {
+                    if (bestZonePerDir[d] < 0) continue;
+                    int zoneIdx = bestZonePerDir[d];
+                    if (!assignments.ContainsKey(zoneIdx))
+                        assignments[zoneIdx] = new List<int>();
+                    assignments[zoneIdx].Add(pairIdx);
+                    pairIdx++;
+                }
+
+                // 3단계: 남은 쌍은 라운드 로빈으로 균등 추가
                 int dirSlot = 0;
-                int failCount = 0; // 연속 실패 카운트 (무한루프 방지)
-                while (pairIdx < pairCount && failCount < dirCount)
+                while (pairIdx < pairCount && dirSlot < pairCount * dirCount)
                 {
                     int d = dirSlot % dirCount;
-                    int zoneIdx = bestZonePerDir[d];
-                    float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAnglesDeg[d], launchZones[zoneIdx].angleDeg));
-
-                    if (angleDiff <= 90f)
-                    {
-                        if (!assignments.ContainsKey(zoneIdx))
-                            assignments[zoneIdx] = new List<int>();
-                        assignments[zoneIdx].Add(pairIdx);
-                        pairIdx++;
-                        failCount = 0;
-                    }
-                    else
-                    {
-                        failCount++;
-                    }
                     dirSlot++;
+                    if (bestZonePerDir[d] < 0) continue;
+                    int zoneIdx = bestZonePerDir[d];
+                    if (!assignments.ContainsKey(zoneIdx))
+                        assignments[zoneIdx] = new List<int>();
+                    assignments[zoneIdx].Add(pairIdx);
+                    pairIdx++;
                 }
             }
             else
@@ -1221,6 +1237,7 @@ namespace BoatAttack
         {
             if (!_initialized || _pairPool == null) return false;
             if (_pairPool.Count >= maxPairCount && GetInactivePairCount() == 0) return false;
+            if (maxTotalPairsPerEpisode > 0 && _totalPairsDeployed >= maxTotalPairsPerEpisode) return false;
 
             // 1. 스폰 위치 계산 (쿨다운 중인 구역은 다음 가까운 구역으로)
             int currentStep = envController != null ? envController.CurrentStep : 0;
@@ -1249,13 +1266,14 @@ namespace BoatAttack
             if (zoneIdx >= launchZones.Length) zoneIdx = 0;
             LaunchZone zone = launchZones[zoneIdx];
 
-            float zoneAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
-            float zoneAngleRad = zoneAngleDeg * Mathf.Deg2Rad;
-            Vector3 zoneDir = new Vector3(Mathf.Sin(zoneAngleRad), 0f, Mathf.Cos(zoneAngleRad));
-            float zoneDist = GetEllipseDistance(zoneAngleDeg);
+            // 적 접근 각도를 직접 사용 (구역 양자화 오차 제거) + jitter
+            float spawnAngleDeg = approachAngleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+            float spawnAngleRad = spawnAngleDeg * Mathf.Deg2Rad;
+            Vector3 zoneDir = new Vector3(Mathf.Sin(spawnAngleRad), 0f, Mathf.Cos(spawnAngleRad));
+            float zoneDist = GetEllipseDistance(spawnAngleDeg);
 
-            float pairSpacing = 10f; // 쌍 내 2선박 간격 (m)
             Vector3 pairCenter = motherPos + zoneDir * zoneDist;
+            float tempSpacing = envController != null ? envController.convoySpawnSpacing : 10f;
 
             // 2. 기존 비활성 쌍 재사용 또는 프리팹에서 새로 생성
             int pairIdx;
@@ -1267,9 +1285,9 @@ namespace BoatAttack
 
             // 임시 위치 (회전 계산 후 재설정)
             Vector3 tempLateral = new Vector3(zoneDir.z, 0f, -zoneDir.x);
-            Vector3 pos1 = pairCenter + tempLateral * (-pairSpacing * 0.5f);
+            Vector3 pos1 = pairCenter + tempLateral * (-tempSpacing * 0.5f);
             pos1.y = _templateAgent1Y;
-            Vector3 pos2 = pairCenter + tempLateral * (pairSpacing * 0.5f);
+            Vector3 pos2 = pairCenter + tempLateral * (tempSpacing * 0.5f);
             pos2.y = _templateAgent2Y;
 
             int existingInactive = FindInactivePairIndex();
@@ -1347,10 +1365,7 @@ namespace BoatAttack
             Vector3 spawnFwd = rot * Vector3.forward;
             Vector3 lateralDir = new Vector3(-spawnFwd.z, 0f, spawnFwd.x);
 
-            // Convoy 모드: 좁은 간격으로 오버라이드
-            float singleSpawnWidth = pairSpacing;
-            if (envController != null && envController.enableConvoyDeploy)
-                singleSpawnWidth = envController.convoySpawnSpacing;
+            float singleSpawnWidth = envController != null ? envController.convoySpawnSpacing : 10f;
 
             pos1 = pairCenter + lateralDir * (-singleSpawnWidth * 0.5f);
             pos1.y = _templateAgent1Y;
@@ -1926,7 +1941,6 @@ namespace BoatAttack
                 {
                     angleDeg = i * angleStep,
                     distance = GetEllipseDistance(i * angleStep),
-                    pairSpreadDeg = this.pairSpreadDeg,
                     angleJitter = this.angleJitter,
                 };
             }

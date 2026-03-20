@@ -98,14 +98,12 @@ namespace BoatAttack
 
         [Header("Observation NormK (출력 0.5 지점 거리)")]
         [Range(1f, 1000f)] public float enemyNormK = 250f;
-        [Range(1f, 1000f)] public float motherNormK = 500f;
         [Range(1f, 500f)]  public float rayNormK = 100f;     // Web→Ray 수직거리 정규화 (k=100m에서 ±0.5)
 
         [Header("Observation Scale (정규화 후 가중치)")]
         [Range(0f, 5f)] public float enemyDistScale = 1f;
         [Tooltip("베어링 유리함수 k값 (작을수록 정면 민감도↑, 0.5지점=k도)")]
         [Range(5f, 90f)] public float bearingNormK = 30f;
-        [Range(0f, 5f)] public float motherDistScale = 1f;
 
         [Header("Self State (자기 기동 상태)")]
         [Range(1f, 50f)] public float speedNormK = 10f;
@@ -460,9 +458,8 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 관측 수집 (VectorSensor 3개 + AllyBufferSensor 최대10 + EnemyBufferSensor 최대10)
-        /// VectorSensor: 모선거리(1) + 자기상태(2) = 3
-        /// (파트너 관측 제거: CONVOY에서 kinematic 고정, DEPLOY/EXIT에서 규칙 기반)
+        /// 관측 수집 (VectorSensor 0개 + AllyBufferSensor 최대10 + EnemyBufferSensor 최대10)
+        /// VectorSensor: 없음 (모든 정보가 BufferSensor의 상대값으로 충분)
         /// AllyBufferSensor: 아군쌍+트랩 최대10개, 각 3개 (dist, bearing, webLength)
         /// EnemyBufferSensor: 활성 적군 최대10대, 각 4개 (Dist, SignedBrg, Hdg, SignedRayDist)
         /// </summary>
@@ -470,20 +467,14 @@ namespace BoatAttack
         {
             collectObsCallCount++;
 
-            // 3: 모선거리(1) + 자기상태(2: throttle,steering)
-            const int VECTOR_OBS_COUNT = 1 + 2;
-            if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
-                lastObservations = new float[VECTOR_OBS_COUNT];
+            const int VECTOR_OBS_COUNT = 0;
+            if (lastObservations == null)
+                lastObservations = new float[1];
             int oi = 0;
 
             if (_engine == null || _engine.RB == null)
             {
-                for (int i = 0; i < VECTOR_OBS_COUNT; i++)
-                {
-                    sensor.AddObservation(0f);
-                    lastObservations[i] = 0f;
-                }
-                lastObservationsCount = VECTOR_OBS_COUNT;
+                lastObservationsCount = 0;
                 return;
             }
 
@@ -491,21 +482,6 @@ namespace BoatAttack
             Vector3 myForward = transform.forward;
             Vector3 myRight = transform.right;
             float myAngle = transform.eulerAngles.y;
-
-            // 1. 모선과의 거리 (1: 정규화)
-            if (motherShip != null)
-            {
-                float motherDist = Vector3.Distance(myPos, motherShip.transform.position);
-                AddObs(sensor, NormalizePosition(motherDist, motherNormK) * motherDistScale, ref oi);
-            }
-            else
-            {
-                AddObs(sensor, 0f, ref oi);
-            }
-
-            // 3. 자기 기동 상태 (2: prevThrottle, prevSteering)
-            AddObs(sensor, _prevThrottle, ref oi);
-            AddObs(sensor, _prevSteering, ref oi);
 
             // 4. AllyBufferSensor: 가까운 아군 쌍 최대 3개
             CollectAllyPairBufferObs(myPos, myForward);

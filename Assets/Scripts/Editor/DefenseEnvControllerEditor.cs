@@ -188,10 +188,10 @@ namespace BoatAttack
 
             lzm.launchZones = new LaunchZone[]
             {
-                new LaunchZone { angleDeg = 0f,   distance = 100f, pairSpreadDeg = 1.7f, angleJitter = 10f },
-                new LaunchZone { angleDeg = 90f,  distance = 100f, pairSpreadDeg = 1.7f, angleJitter = 10f },
-                new LaunchZone { angleDeg = 180f, distance = 100f, pairSpreadDeg = 1.7f, angleJitter = 10f },
-                new LaunchZone { angleDeg = 270f, distance = 100f, pairSpreadDeg = 1.7f, angleJitter = 10f },
+                new LaunchZone { angleDeg = 0f,   distance = 100f, angleJitter = 10f },
+                new LaunchZone { angleDeg = 90f,  distance = 100f, angleJitter = 10f },
+                new LaunchZone { angleDeg = 180f, distance = 100f, angleJitter = 10f },
+                new LaunchZone { angleDeg = 270f, distance = 100f, angleJitter = 10f },
             };
 
             lzm.maxPairCount = 6;

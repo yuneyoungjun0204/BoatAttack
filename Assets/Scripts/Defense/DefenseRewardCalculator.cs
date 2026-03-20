@@ -52,6 +52,9 @@ namespace BoatAttack
         [Tooltip("중앙 차단 보너스 계수 (centerScore × 계수가 보상 배율에 추가)")]
         public float centerBonusCoeff = 0.5f;
 
+        [Tooltip("적→모선 Ray가 차단 없이 모선에 직통할 때 팀 전체 매 스텝 페널티 (적 1대당)")]
+        public float raycastDirectHitPenalty = -0.002f;
+
         [Header("=== 레이캐스트 타임아웃 ===")]
         [Tooltip("레이캐스트 미차단 허용 스텝 수 (0=비활성화). 50스텝≈5초@timescale10")]
         public int raycastTimeoutSteps = 50;

@@ -54,27 +54,15 @@ namespace BoatAttack
         private int _lastCallCount = -1; // collectObsCallCount 변화 추적
         private int _staleFrames = 0;    // 관측 갱신 없이 경과한 프레임 수
 
-        // VectorSensor 6개: Partner(4) + Self(2)
-        private static readonly string[] Labels =
-        {
-            "Partner R", "Partner F", "Partner Dist", "Partner Hdg",
-            "Throttle", "Steering"
-        };
+        // VectorSensor 0개 (BufferSensor만 사용)
+        private static readonly string[] Labels = { };
 
         // EnemyBuffer: 4개씩 (Dist, SignedBrg, Hdg, SignedRayDist)
         private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "Hdg", "RayD" };
-        // AllyBuffer: 2개씩 (Dist, Brg)
-        private static readonly string[] AllyObsSuffix = { "Dist", "Brg" };
+        // AllyBuffer: 3개씩 (Dist, Brg, WebLen)
+        private static readonly string[] AllyObsSuffix = { "Dist", "Brg", "Web" };
 
-        private static readonly Color[] GraphColors =
-        {
-            new Color(1f, 0.8f, 0.2f),      // Partner R
-            new Color(1f, 0.6f, 0.1f),      // Partner F
-            new Color(0.85f, 0.5f, 0.1f),   // Partner Dist
-            new Color(0.9f, 0.4f, 0.1f),    // Partner Hdg
-            new Color(0.6f, 0.8f, 0.3f),    // Throttle
-            new Color(0.5f, 0.7f, 0.4f),    // Steering
-        };
+        private static readonly Color[] GraphColors = { };
 
         // P키 포커스 모드: -1=전체, 0~N=해당 인덱스만 확대
         private int _focusIndex = -1;
@@ -784,13 +772,13 @@ namespace BoatAttack
                 return $"E{enemyNum} {EnemyObsSuffix[comp]}";
             }
 
-            // 아군 버퍼 영역 (2개씩: Dist, Brg)
+            // 아군 버퍼 영역 (3개씩: Dist, Brg, WebLen)
             int allyIdx = bufferIdx - enemyCount;
             int allyCount = (targetAgent != null) ? targetAgent.lastAllyBufferObs.Count : 0;
             if (allyIdx >= 0 && allyIdx < allyCount)
             {
-                int allyNum = allyIdx / 2;
-                int comp = allyIdx % 2;
+                int allyNum = allyIdx / 3;
+                int comp = allyIdx % 3;
                 return $"A{allyNum} {AllyObsSuffix[comp]}";
             }
 

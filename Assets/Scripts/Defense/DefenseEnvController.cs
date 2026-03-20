@@ -1427,8 +1427,15 @@ namespace BoatAttack
                         break; // 한 적당 하나의 Web만
                     }
 
-                    // 미차단 페널티: 타임아웃 방식으로 대체 (매-스텝 누적 음수 제거)
-                    // if (!hitWeb) { ... }
+                    // 미차단 페널티: Ray가 Web을 통과하지 않고 모선에 직통 → 팀 전체에 페널티
+                    if (!hitWeb && rewardCalculator.raycastDirectHitPenalty < 0f)
+                    {
+                        float threatWeight = 1f + Mathf.Clamp01(1f - distToMother / 500f);
+                        float penalty = rewardCalculator.raycastDirectHitPenalty * threatWeight;
+                        if (m_AgentGroup != null)
+                            m_AgentGroup.AddGroupReward(penalty);
+                        totalStepReward += penalty;
+                    }
 
                     // 근접 포획 보너스 (Bridge Reward): Web중심↔적 거리가 임계값 이내일 때
                     if (rewardCalculator.proximityBridgeCoeff > 0f && rewardCalculator.proximityThreshold > 0f
@@ -2657,6 +2664,10 @@ namespace BoatAttack
         [Tooltip("Stage8 한 번 호출 시 최대 출동 쌍 수 (0이면 무제한)")]
         public int stage8MaxDeployPerCall = 3;
 
+        [Tooltip("레인 클러스터링 폭 (°). 이 각도 이내 적들은 1쌍이 커버 가능하다고 판단")]
+        [Range(5f, 60f)]
+        public float laneClusterWidth = 10f;
+
         /// <summary>
         /// Convoy-Deploy: 활성 쌍의 Deploy 전환 및 EXIT 처리
         /// - CONVOY → DEPLOY: 가장 가까운 적이 deployRange 이내 → 양쪽 분리
@@ -3050,13 +3061,8 @@ namespace BoatAttack
             // 2. 방위각 순 정렬
             enemies.Sort((a, b) => a.angle.CompareTo(b.angle));
 
-            // 3. 레인 폭 계산: 100m 웹이 평균 거리에서 커버하는 각도
-            float avgDist = 0f;
-            for (int i = 0; i < enemies.Count; i++) avgDist += enemies[i].dist;
-            avgDist /= enemies.Count;
-            float webThreshold = rewardCalculator != null ? rewardCalculator.webDeployedThreshold : 100f;
-            float laneWidth = 2f * Mathf.Atan2(webThreshold * 0.5f, avgDist) * Mathf.Rad2Deg;
-            if (laneWidth < 10f) laneWidth = 10f; // 최소 레인 폭
+            // 3. 레인 폭: Inspector에서 설정한 고정값 사용
+            float laneWidth = laneClusterWidth;
 
             // 4. Greedy 클러스터링: laneWidth 내의 적들을 한 레인으로
             var lanes = new System.Collections.Generic.List<(float centerAngle, int enemyCount)>();
