@@ -132,7 +132,7 @@ namespace BoatAttack
         public bool keepWebAfterCapture = true;
 
         [Tooltip("아군 페어 소진 시 에피소드 종료 비활성화 (true=페어 소진해도 에피소드 유지)")]
-        public bool disableNoPairsEndEpisode = true;
+        public bool disableNoPairsEndEpisode = false;
 
         [Header("Agents")]
         [Tooltip("방어 에이전트 1")]
@@ -1244,18 +1244,9 @@ namespace BoatAttack
                     if (pair.isDeploying) continue;
                     if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
-                    // === Convoy(FixedJoint) 쌍: Ray 보상만 지급 (대형 보상 불필요) ===
+                    // === Convoy(FixedJoint) 쌍: 보상 없이 스킵 (시간 페널티만 적용) ===
                     if (pair.isConvoyLinked)
                     {
-                        if (enableConvoyDeploy && motherShip != null && _enemyPool != null)
-                        {
-                            float convoyReward = CalculateConvoyRayReward(pair);
-                            if (Mathf.Abs(convoyReward) > 0.0001f)
-                            {
-                                pair.agent1.AddReward(convoyReward); // Agent1만 ML 활성
-                            }
-                            totalStepReward += convoyReward;
-                        }
                         continue;
                     }
 
@@ -1311,6 +1302,13 @@ namespace BoatAttack
                     }
                 }
                 totalStepReward = stepReward;
+            }
+
+            // 시간 페널티: 매 스텝 팀 전체에 부여 (빠른 포획 유도)
+            if (rewardCalculator.timePenalty < 0f && m_AgentGroup != null)
+            {
+                m_AgentGroup.AddGroupReward(rewardCalculator.timePenalty);
+                totalStepReward += rewardCalculator.timePenalty;
             }
 
             // Raycast 차단 보상 + 시각화: 각 활성 적에서 모선 방향으로 Ray (5스텝 간격)
@@ -1448,10 +1446,10 @@ namespace BoatAttack
                         {
                             var pair = launchZoneManager.GetPair(pi);
                             if (pair == null || !pair.isActive || pair.isDisarmed || pair.webObject == null) continue;
-                            var dw = pair.webObject.GetComponent<DynamicWeb>();
-                            if (dw == null || dw.defenseShip1 == null || dw.defenseShip2 == null) continue;
+                            var pdw = pair.webObject.GetComponent<DynamicWeb>();
+                            if (pdw == null || pdw.defenseShip1 == null || pdw.defenseShip2 == null) continue;
 
-                            Vector3 webCenter = (dw.defenseShip1.position + dw.defenseShip2.position) * 0.5f;
+                            Vector3 webCenter = (pdw.defenseShip1.position + pdw.defenseShip2.position) * 0.5f;
                             float dist = Vector3.Distance(webCenter, enemyPos);
 
                             if (dist < rewardCalculator.proximityThreshold)
@@ -1493,6 +1491,7 @@ namespace BoatAttack
             }
 
             // 레이캐스트 타임아웃 체크: 일정 스텝간 미차단 시 페어 비활성화
+            // 매 스텝 체크 (raycast 보상은 5스텝 간격이지만 타임아웃은 매 스텝)
             if (rewardCalculator.raycastTimeoutSteps > 0
                 && launchZoneManager != null && launchZoneManager.IsInitialized)
             {
@@ -1501,21 +1500,23 @@ namespace BoatAttack
                 {
                     var pair = launchZoneManager.GetPair(pi);
                     if (pair == null || !pair.isActive || pair.isDisarmed) continue;
-                    if (pair.lastRaycastHitStep < 0) continue; // 아직 배치 안 됨
+                    if (pair.lastRaycastHitStep < 0) continue;
 
-                    // 배치 후 유예기간
                     if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
 
-                    // Convoy(Joint 연결), Deploy 중, Neutralized(EXIT) 쌍 스킵
-                    if (pair.isConvoyLinked) continue;
+                    // Convoy 쌍도 타임아웃 적용 (Deploy 전에도 올바른 위치에 접근해야 함)
                     if (pair.isDeploying) continue;
                     if (pair.agent1 != null && pair.agent1.IsNeutralized
                         && pair.agent2 != null && pair.agent2.IsNeutralized) continue;
 
                     int stepsSinceHit = _resetTimer - pair.lastRaycastHitStep;
-                    int effectiveTimeout = pair.hasEverHitRaycast
-                        ? rewardCalculator.raycastTimeoutSteps / 2
+                    // Convoy 쌍은 이동 중이므로 타임아웃 2배 유예
+                    int baseTimeout = pair.isConvoyLinked
+                        ? rewardCalculator.raycastTimeoutSteps * 2
                         : rewardCalculator.raycastTimeoutSteps;
+                    int effectiveTimeout = pair.hasEverHitRaycast
+                        ? baseTimeout / 2
+                        : baseTimeout;
                     if (stepsSinceHit > effectiveTimeout)
                     {
                         if (pair.agent1 != null)
@@ -1523,7 +1524,11 @@ namespace BoatAttack
                         if (pair.agent2 != null)
                             pair.agent2.AddReward(rewardCalculator.raycastTimeoutPenalty);
 
-                        Debug.Log($"[RaycastTimeout] Pair {pi} 비활성화: {stepsSinceHit}스텝간 미차단 (limit={effectiveTimeout}, everHit={pair.hasEverHitRaycast})");
+                        // Convoy 상태 정리 (convoy 해제 후 비활성화)
+                        if (pair.isConvoyLinked)
+                            launchZoneManager.CleanupConvoyState(pair);
+
+                        Debug.Log($"[RaycastTimeout] Pair {pi} 비활성화: {stepsSinceHit}스텝간 미차단 (limit={effectiveTimeout}, convoy={pair.isConvoyLinked}, everHit={pair.hasEverHitRaycast})");
                         DisableOrDisarmPair(pi);
                     }
                 }
@@ -2778,64 +2783,6 @@ namespace BoatAttack
                 if (d < minDist) minDist = d;
             }
             return minDist;
-        }
-
-        /// <summary>
-        /// Convoy(FixedJoint) 쌍 전용 Ray 보상 계산
-        /// - Ray 차단 접근: 쌍 중심이 적→모선 Ray 위에 가까울수록 +
-        /// - Ray 수직 헤딩: 쌍 헤딩이 Ray에 수직일수록 + (deployRange 이내만)
-        /// </summary>
-        private float CalculateConvoyRayReward(DefensePair pair)
-        {
-            if (pair.agent1 == null || motherShip == null || _enemyPool == null) return 0f;
-
-            Vector3 pairPos = pair.agent1.transform.position;
-            if (pair.agent2 != null)
-                pairPos = (pairPos + pair.agent2.transform.position) * 0.5f;
-
-            Vector3 motherPos = motherShip.transform.position;
-            Vector3 pairFwd = pair.agent1.transform.forward;
-
-            float bestRayReward = 0f;
-            float bestPerpReward = 0f;
-            float nearestDist = float.MaxValue;
-
-            for (int e = 0; e < _enemyPool.Length; e++)
-            {
-                if (_enemyPool[e] == null || !_enemyPool[e].activeInHierarchy) continue;
-                if (IsEnemyNeutralized(_enemyPool[e])) continue;
-
-                Vector3 enemyPos = _enemyPool[e].transform.position;
-                float distToEnemy = Vector3.Distance(pairPos, enemyPos);
-                if (distToEnemy >= nearestDist) continue; // 가장 가까운 적 기준
-                nearestDist = distToEnemy;
-
-                // Ray 방향: 적 → 모선
-                Vector3 rayDir = new Vector3(motherPos.x - enemyPos.x, 0f, motherPos.z - enemyPos.z);
-                float rayLen = rayDir.magnitude;
-                if (rayLen < 0.01f) continue;
-                rayDir /= rayLen;
-
-                // 쌍 중심의 Ray 수직 거리 (SignedRayDist와 동일 계산)
-                Vector3 toWeb = new Vector3(pairPos.x - enemyPos.x, 0f, pairPos.z - enemyPos.z);
-                Vector3 perp = toWeb - Vector3.Dot(toWeb, rayDir) * rayDir;
-                float perpDist = perp.magnitude;
-
-                // Ray 접근 보상: perpDist가 0에 가까울수록 +
-                float k = 100f; // 정규화 상수 (DefenseAgent.rayNormK와 동일)
-                float srdNorm = perpDist / (perpDist + k); // 0~1
-                bestRayReward = (1f - srdNorm) * rewardCalculator.rayApproachReward;
-
-                // Ray 수직 헤딩 보상: deployRange 이내에서만
-                if (distToEnemy < rewardCalculator.deployRange)
-                {
-                    float dotFwdRay = Mathf.Abs(Vector3.Dot(
-                        new Vector3(pairFwd.x, 0f, pairFwd.z).normalized, rayDir));
-                    bestPerpReward = (1f - dotFwdRay) * rewardCalculator.rayPerpendicularReward;
-                }
-            }
-
-            return bestRayReward + bestPerpReward;
         }
 
         /// <summary>

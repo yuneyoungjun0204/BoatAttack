@@ -13,6 +13,9 @@ namespace BoatAttack
         [Tooltip("추력 보상 계수 (throttle × 계수 = 매 스텝 보상, 가속할수록 보상)")]
         public float throttleRewardCoeff = 0.0002f;
 
+        [Tooltip("시간 페널티 (매 스텝, 빠른 포획 유도)")]
+        public float timePenalty = -0.001f;
+
         [Header("=== 이벤트 보상 ===")]
         [Tooltip("포획 성공 (적이 Web에 충돌)")]
         public float captureReward = 1.0f;
@@ -95,13 +98,6 @@ namespace BoatAttack
 
         [Tooltip("Deploy 트리거 발동 시 일회성 보너스 (양 에이전트에 지급)")]
         public float deployTriggerBonus = 0.3f;
-
-        [Header("=== Convoy Ray 보상 ===")]
-        [Tooltip("Ray 차단 접근 보상 (|SignedRayDist|→0 유도, 매 스텝)")]
-        public float rayApproachReward = 0.002f;
-
-        [Tooltip("Ray 수직 헤딩 보상 (쌍 헤딩 ⊥ Ray 유도, 매 스텝)")]
-        public float rayPerpendicularReward = 0.001f;
 
         // 이전 스텝의 담당 적 인덱스 (쌍별 추적, 적 변경 시 prev 리셋)
         private readonly System.Collections.Generic.Dictionary<int, int> _prevEnemyByPair

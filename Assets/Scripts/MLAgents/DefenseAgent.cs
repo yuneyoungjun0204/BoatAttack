@@ -98,7 +98,7 @@ namespace BoatAttack
 
         [Header("Observation NormK (출력 0.5 지점 거리)")]
         [Range(1f, 1000f)] public float enemyNormK = 250f;
-        [Range(1f, 500f)]  public float rayNormK = 100f;     // Web→Ray 수직거리 정규화 (k=100m에서 ±0.5)
+        // rayNormK 제거됨 (LOS 관측 제거)
 
         [Header("Observation Scale (정규화 후 가중치)")]
         [Range(0f, 5f)] public float enemyDistScale = 1f;
@@ -203,7 +203,7 @@ namespace BoatAttack
             if (enemyBufferSensor == null)
                 enemyBufferSensor = gameObject.AddComponent<BufferSensorComponent>();
             enemyBufferSensor.SensorName = "EnemyBufferSensor";
-            enemyBufferSensor.ObservableSize = 4;   // Dist, SignedBrg, Hdg, SignedRayDist
+            enemyBufferSensor.ObservableSize = 3;   // Dist, SignedBrg, Hdg
             enemyBufferSensor.MaxNumObservables = 10; // 최대 10대 관측
 
             // 아군 쌍 BufferSensor: 가변 개수 (실제 쌍 + phantom, 최대 PHANTOM_MAX+6)
@@ -397,35 +397,6 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// Web 중심에서 적→모선 Ray까지의 signed 수직 거리 (유리유계 정규화)
-        /// 반환: 0=Ray 위, +1=오른쪽 멀리, -1=왼쪽 멀리 (Ray 진행방향 기준 좌/우)
-        /// motherShip이 null이면 0 반환
-        /// </summary>
-        private float ComputeSignedRayDist(Vector3 webPos, Vector3 enemyPos, float k)
-        {
-            if (motherShip == null) return 0f;
-            Vector3 motherPos = motherShip.transform.position;
-
-            // XZ 평면만 사용 (선박은 수평 이동)
-            Vector3 rayDir = new Vector3(motherPos.x - enemyPos.x, 0f, motherPos.z - enemyPos.z);
-            float rayLen = rayDir.magnitude;
-            if (rayLen < 0.01f) return 0f;
-            rayDir /= rayLen;
-
-            Vector3 toWeb = new Vector3(webPos.x - enemyPos.x, 0f, webPos.z - enemyPos.z);
-            // Ray 위 투영 제거 → 수직 성분만 남김
-            Vector3 perp = toWeb - Vector3.Dot(toWeb, rayDir) * rayDir;
-            float perpDist = perp.magnitude;
-
-            // 2D cross product로 좌(-)우(+) 판별
-            float crossY = rayDir.x * perp.z - rayDir.z * perp.x;
-            float sign = crossY >= 0f ? 1f : -1f;
-
-            // 유리유계 정규화: x/(|x|+k) → ±1 수렴
-            return sign * perpDist / (perpDist + k);
-        }
-
-        /// <summary>
         /// 배정된 적군 반환 (Commander가 지정한 타겟 or 가장 가까운 적 fallback)
         /// 조건: 적군이 아군보다 모선에 더 가까워야 매칭 가능 (더 먼 적은 절대 매칭 불가)
         /// </summary>
@@ -461,7 +432,7 @@ namespace BoatAttack
         /// 관측 수집 (VectorSensor 0개 + AllyBufferSensor 최대10 + EnemyBufferSensor 최대10)
         /// VectorSensor: 없음 (모든 정보가 BufferSensor의 상대값으로 충분)
         /// AllyBufferSensor: 아군쌍+트랩 최대10개, 각 3개 (dist, bearing, webLength)
-        /// EnemyBufferSensor: 활성 적군 최대10대, 각 4개 (Dist, SignedBrg, Hdg, SignedRayDist)
+        /// EnemyBufferSensor: 활성 적군 최대10대, 각 3개 (Dist, SignedBrg, Hdg)
         /// </summary>
         public override void CollectObservations(VectorSensor sensor)
         {
@@ -486,15 +457,10 @@ namespace BoatAttack
             // 4. AllyBufferSensor: 가까운 아군 쌍 최대 3개
             CollectAllyPairBufferObs(myPos, myForward);
 
-            // 5. EnemyBufferSensor: 모든 활성 적군 (4개/적: Dist, SignedBrg, Hdg, SignedRayDist) — 거리순 정렬
+            // 5. EnemyBufferSensor: 모든 활성 적군 (3개/적: Dist, SignedBrg, Hdg) — 거리순 정렬
             lastEnemyBufferObs.Clear();
             if (enemyBufferSensor != null && enemyShips != null)
             {
-                // Web 중심: 내 위치 + 파트너 위치의 평균 (파트너 없으면 내 위치)
-                Vector3 webCenter = partnerAgent != null
-                    ? (myPos + partnerAgent.transform.position) * 0.5f
-                    : myPos;
-
                 // 활성 적군을 거리순 정렬
                 var enemyByDist = new List<(int idx, float dist)>();
                 for (int i = 0; i < enemyShips.Length; i++)
@@ -520,12 +486,8 @@ namespace BoatAttack
                     // hdg: 내 헤딩과 적 헤딩의 차이
                     // ±180°(정면대치, 기본상황) → 0, 0°(동방향) → ±1
                     float hdg = NormalizeHeadingDiff(myAngle, enemy.transform.eulerAngles.y);
-                    // signedRayDist: Web이 적→모선 Ray 기준 왼쪽(-)·오른쪽(+)으로 얼마나 떨어졌는지
-                    // 0 = Ray 위에 정확히 위치, ±1 = 매우 멀리 이탈 (유리유계 정규화)
-                    float srd = ComputeSignedRayDist(webCenter, enemy.transform.position, rayNormK);
-
-                    enemyBufferSensor.AppendObservation(new float[] { d, brg, hdg, srd });
-                    lastEnemyBufferObs.Add(d); lastEnemyBufferObs.Add(brg); lastEnemyBufferObs.Add(hdg); lastEnemyBufferObs.Add(srd);
+                    enemyBufferSensor.AppendObservation(new float[] { d, brg, hdg });
+                    lastEnemyBufferObs.Add(d); lastEnemyBufferObs.Add(brg); lastEnemyBufferObs.Add(hdg);
                 }
             }
 

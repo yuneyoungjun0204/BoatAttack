@@ -568,8 +568,9 @@ namespace BoatAttack
             }
 
             // 2. 진수구역별 쌍 배정
+            Dictionary<int, float> zoneDirAngles;
             Dictionary<int, List<int>> zoneAssignments = AssignPairsToZones(
-                formationType, approachAngleDeg, diversionaryAngles, pairCount);
+                formationType, approachAngleDeg, diversionaryAngles, pairCount, out zoneDirAngles);
 
             // 3. 각 진수구역에 배정된 쌍 배치 (2단계: 위치 결정 → Voronoi 배정)
             GameObject[] enemies = envController != null ? envController.enemyShips : null;
@@ -583,12 +584,12 @@ namespace BoatAttack
                 LaunchZone zone = launchZones[zoneIdx];
 
                 // 적 접근 각도를 직접 사용 (구역 양자화 오차 제거)
-                // 양동: 각 구역이 담당하는 적 방향 사용, 집중/파상: approachAngleDeg 사용
+                // 양동: 실제 적 방향 각도 사용, 집중/파상: approachAngleDeg 사용
                 float spawnAngleDeg;
-                if (formationType == FormationType.Diversionary)
+                if (formationType == FormationType.Diversionary && zoneDirAngles.ContainsKey(zoneIdx))
                 {
-                    // 양동은 각 구역이 서로 다른 적 방향을 담당하므로 구역 각도 유지
-                    spawnAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+                    // 양동: 구역에 배정된 실제 적 접근 방향으로 진수 (구역 양자화 오차 제거)
+                    spawnAngleDeg = zoneDirAngles[zoneIdx] + Random.Range(-zone.angleJitter, zone.angleJitter);
                 }
                 else
                 {
@@ -718,11 +719,14 @@ namespace BoatAttack
         /// <summary>
         /// 포메이션에 따라 쌍을 진수구역에 배정
         /// </summary>
+        /// <param name="zoneDirAngles">out: 양동 시 구역별 실제 적 방향 각도 (zoneIdx → angleDeg)</param>
         private Dictionary<int, List<int>> AssignPairsToZones(
             FormationType formationType, float approachAngleDeg,
-            float[] diversionaryAngles, int pairCount)
+            float[] diversionaryAngles, int pairCount,
+            out Dictionary<int, float> zoneDirAngles)
         {
             var assignments = new Dictionary<int, List<int>>();
+            zoneDirAngles = new Dictionary<int, float>();
 
             bool isFleet = envController != null && (envController.currentStage == TrainingStage.Stage7_FleetManeuver
                 || envController.currentStage == TrainingStage.Stage8_TacticalFullObs
@@ -757,6 +761,13 @@ namespace BoatAttack
                             break;
                         }
                     }
+                }
+
+                // 구역 → 적 방향 각도 매핑 저장
+                for (int d = 0; d < dirCount; d++)
+                {
+                    if (bestZonePerDir[d] >= 0)
+                        zoneDirAngles[bestZonePerDir[d]] = dirAnglesDeg[d];
                 }
 
                 // 2단계: 각 방향에 최소 1쌍 배정
@@ -2567,7 +2578,7 @@ namespace BoatAttack
         /// <summary>
         /// 쌍동선 상태 정리: 마커 Joint 파괴 + 엔진 플래그 해제 + Agent2 kinematic 복원
         /// </summary>
-        private void CleanupConvoyState(DefensePair pair)
+        public void CleanupConvoyState(DefensePair pair)
         {
             // Convoy 막대 즉시 파괴 (리셋/비활성화 시)
             if (pair.webObject != null)
