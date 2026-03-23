@@ -82,6 +82,36 @@ namespace BoatAttack
         [Tooltip("Waypoint 추적 모드일 때 모선 접근 거리 (이 거리 이내면 모선을 직접 추적)")]
         public float directChaseDistance = 50f;
 
+        [Header("=== Self-Play 모드 ===")]
+        [Tooltip("Self-Play 학습 모드 (true: ML이 미세 조정, false: 기존 스크립트)")]
+        public bool selfPlayMode = true;
+
+        [Tooltip("Self-Play 시 throttle 오프셋 범위 (0~이 값, 감속만)")]
+        [Range(0f, 0.5f)]
+        public float selfPlayThrottleRange = 0.6f;
+
+        [Tooltip("Self-Play 시 steering 오프셋 범위")]
+        [Range(0f, 0.5f)]
+        public float selfPlaySteeringRange = 0.4f;
+
+        [Tooltip("Self-Play 시 Web 근접 페널티 시작 거리 (m)")]
+        public float webAvoidanceThreshold = 40f;
+
+        [Tooltip("Self-Play 시 Web 근접 페널티 계수")]
+        public float webAvoidancePenalty = -0.002f;
+
+        [Tooltip("Self-Play 시 포획당했을 때 페널티")]
+        public float capturedPenalty = -5.0f;
+
+        [Tooltip("Self-Play 시 모선 도달 보상")]
+        public float motherShipReachReward = 5.0f;
+
+        /// <summary>Self-Play 관측 수 (모선거리, 모선각도, Web거리, Web방위)</summary>
+        private const int SELF_PLAY_OBS_COUNT = 4;
+
+        /// <summary>EnvController 참조 (Self-Play용)</summary>
+        private DefenseEnvController _envController;
+
         [Header("Rush Movement (모선 돌진)")]
         [Tooltip("돌진 모드 활성화 (followWaypoints=false 시 사용)")]
         public bool enableRush = true;
@@ -192,6 +222,35 @@ namespace BoatAttack
             Debug.Log($"[AttackAgent] Waypoint 초기화 완료: 첫 waypoint = {_currentWaypointPosition}");
         }
 
+        public override void Initialize()
+        {
+            base.Initialize();
+            if (selfPlayMode)
+            {
+                // TeamId 자동 설정
+                var bp = GetComponent<Unity.MLAgents.Policies.BehaviorParameters>();
+                if (bp != null)
+                {
+                    bp.TeamId = 1; // 적군 팀
+                    bp.BehaviorName = "Attack";
+                }
+
+                // DecisionRequester 자동 추가
+                var dr = GetComponent<Unity.MLAgents.DecisionRequester>();
+                if (dr == null)
+                {
+                    dr = gameObject.AddComponent<Unity.MLAgents.DecisionRequester>();
+                    dr.DecisionPeriod = 5;
+                    dr.TakeActionsBetweenDecisions = true;
+                }
+
+                // EnvController 찾기
+                _envController = GetComponentInParent<DefenseEnvController>();
+                if (_envController == null)
+                    _envController = FindObjectOfType<DefenseEnvController>();
+            }
+        }
+
         public override void OnEpisodeBegin()
         {
             // 에피소드 시작 시 초기화
@@ -230,6 +289,13 @@ namespace BoatAttack
 
         public override void CollectObservations(VectorSensor sensor)
         {
+            // === Self-Play 모드: 간소화된 4개 관측 ===
+            if (selfPlayMode)
+            {
+                CollectSelfPlayObservations(sensor);
+                return;
+            }
+
             if (targetMotherShip == null || _engine == null)
             {
                 // 관측 불가능한 경우 0으로 채움
@@ -244,33 +310,33 @@ namespace BoatAttack
             Vector3 toTarget = targetMotherShip.transform.position - transform.position;
             float distance = toTarget.magnitude;
             Vector3 direction = toTarget.normalized;
-            
+
             sensor.AddObservation(distance / maxRewardDistance); // 거리 (0~1)
             sensor.AddObservation(direction.x); // 방향 X
             sensor.AddObservation(direction.z); // 방향 Z (Y는 무시)
-            
+
             // 2. 자신의 속도 (정규화)
             float speed = _engine.RB.velocity.magnitude;
             sensor.AddObservation(Mathf.Clamp01(speed / 20f)); // 최대 속도 20 가정
-            
+
             // 3. 자신의 방향 (forward 벡터)
             Vector3 forward = transform.forward;
             sensor.AddObservation(forward.x);
             sensor.AddObservation(forward.z);
-            
+
             // 4. 모선 방향으로의 각도 (정규화)
             float angleToTarget = Vector3.SignedAngle(transform.forward, direction, Vector3.up);
             sensor.AddObservation(angleToTarget / 180f); // -1 ~ 1
-            
+
             // 5. Raycast로 주변 장애물 감지
             for (int i = 0; i < raycastCount; i++)
             {
                 float angle = (360f / raycastCount) * i;
                 Vector3 rayDirection = Quaternion.Euler(0, angle, 0) * transform.forward;
-                
+
                 RaycastHit hit;
                 bool hasHit = Physics.Raycast(transform.position, rayDirection, out hit, raycastDistance);
-                
+
                 if (hasHit)
                 {
                     sensor.AddObservation(1f - (hit.distance / raycastDistance)); // 거리 (0~1, 가까울수록 1)
@@ -285,10 +351,74 @@ namespace BoatAttack
             }
         }
 
+        /// <summary>
+        /// Self-Play 관측: 모선(거리, 각도) + 가장 가까운 Web(거리, 방위) = 4개
+        /// </summary>
+        private void CollectSelfPlayObservations(VectorSensor sensor)
+        {
+            Vector3 myPos = transform.position;
+            Vector3 myForward = transform.forward;
+
+            // 1. 모선 거리 (정규화: dist/(dist+k))
+            float motherDist = 0f;
+            float motherAngle = 0f;
+            if (targetMotherShip != null)
+            {
+                Vector3 toMother = targetMotherShip.transform.position - myPos;
+                toMother.y = 0f;
+                motherDist = toMother.magnitude;
+                motherAngle = Vector3.SignedAngle(myForward, toMother, Vector3.up) / 180f; // -1~+1
+            }
+            float normK = 200f;
+            sensor.AddObservation(motherDist / (motherDist + normK)); // 0~1
+            sensor.AddObservation(motherAngle);                       // -1~+1
+
+            // 2. 가장 가까운 Web(아군 쌍) 거리 + 방위
+            float nearestWebDist = 1f; // 정규화된 최대값 (멀리 = 안전)
+            float nearestWebBrg = 0f;
+            if (_envController != null && _envController.launchZoneManager != null
+                && _envController.launchZoneManager.IsInitialized)
+            {
+                float bestDist = float.MaxValue;
+                int poolCount = _envController.launchZoneManager.GetCurrentPoolCount();
+                for (int i = 0; i < poolCount; i++)
+                {
+                    var pair = _envController.launchZoneManager.GetPair(i);
+                    if (pair == null || !pair.isActive) continue;
+                    if (pair.agent1 == null) continue;
+
+                    // Web 중심: 두 에이전트의 중간점
+                    Vector3 webCenter = pair.agent1.transform.position;
+                    if (pair.agent2 != null)
+                        webCenter = (webCenter + pair.agent2.transform.position) * 0.5f;
+
+                    float dist = Vector3.Distance(myPos, webCenter);
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        Vector3 toWeb = webCenter - myPos;
+                        toWeb.y = 0f;
+                        nearestWebBrg = Vector3.SignedAngle(myForward, toWeb, Vector3.up) / 180f;
+                    }
+                }
+                if (bestDist < float.MaxValue)
+                    nearestWebDist = bestDist / (bestDist + normK);
+            }
+            sensor.AddObservation(nearestWebDist);  // 0~1 (가까울수록 0)
+            sensor.AddObservation(nearestWebBrg);    // -1~+1
+        }
+
         public override void OnActionReceived(ActionBuffers actions)
         {
             if (_engine == null || _hasExploded)
             {
+                return;
+            }
+
+            // === Self-Play 모드: 자동 조향 + ML 오프셋 ===
+            if (selfPlayMode)
+            {
+                OnActionReceivedSelfPlay(actions);
                 return;
             }
 
@@ -436,10 +566,107 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// Self-Play 모드 액션 처리: 자동 조향 + ML 오프셋
+        /// </summary>
+        private void OnActionReceivedSelfPlay(ActionBuffers actions)
+        {
+            // 기본: 모선 방향으로 최대 속도 직진
+            float baseThrottle = 1.0f;
+            float baseSteering = 0f;
+
+            if (targetMotherShip != null)
+            {
+                Vector3 toMother = targetMotherShip.transform.position - transform.position;
+                toMother.y = 0f;
+                float angleToMother = Vector3.SignedAngle(transform.forward, toMother, Vector3.up);
+                baseSteering = Mathf.Clamp(angleToMother / 45f, -1f, 1f);
+            }
+
+            // ML 오프셋: 감속 + 좌우 미세 조정
+            float throttleOffset = actions.ContinuousActions[0] * selfPlayThrottleRange; // -0.3~+0.3
+            float steeringOffset = actions.ContinuousActions[1] * selfPlaySteeringRange; // -0.2~+0.2
+
+            float finalThrottle = Mathf.Clamp(baseThrottle + throttleOffset, 0.5f, 1.0f);
+            float finalSteering = Mathf.Clamp(baseSteering + steeringOffset, -1f, 1f);
+
+            _engine.Accelerate(finalThrottle);
+            _engine.Turn(finalSteering);
+
+            // Self-Play 보상 계산
+            CalculateSelfPlayReward();
+        }
+
+        /// <summary>
+        /// Self-Play 보상: Δdist 접근 + Web 근접 페널티 + 시간 페널티
+        /// </summary>
+        private void CalculateSelfPlayReward()
+        {
+            if (targetMotherShip == null) return;
+
+            float currentDistance = Vector3.Distance(transform.position, targetMotherShip.transform.position);
+            float reward = 0f;
+
+            // 1. 모선 접근 보상 (Δdist)
+            float deltaD = _lastDistance - currentDistance; // 양수 = 접근
+            reward += deltaD * distanceRewardMultiplier;
+
+            // 2. 시간 페널티
+            reward += timePenalty;
+
+            // 3. Web 근접 페널티: 가장 가까운 Web이 threshold 이내면 페널티
+            if (_envController != null && _envController.launchZoneManager != null
+                && _envController.launchZoneManager.IsInitialized && webAvoidanceThreshold > 0f)
+            {
+                float bestDist = float.MaxValue;
+                int poolCount = _envController.launchZoneManager.GetCurrentPoolCount();
+                for (int i = 0; i < poolCount; i++)
+                {
+                    var pair = _envController.launchZoneManager.GetPair(i);
+                    if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+
+                    Vector3 webCenter = pair.agent1.transform.position;
+                    if (pair.agent2 != null)
+                        webCenter = (webCenter + pair.agent2.transform.position) * 0.5f;
+
+                    float dist = Vector3.Distance(transform.position, webCenter);
+                    if (dist < bestDist) bestDist = dist;
+                }
+                if (bestDist < webAvoidanceThreshold)
+                {
+                    float proximity = 1f - bestDist / webAvoidanceThreshold; // 0~1
+                    reward += webAvoidancePenalty * proximity;
+                }
+            }
+
+            AddReward(reward);
+            _totalReward = GetCumulativeReward();
+            _lastDistance = currentDistance;
+        }
+
+        /// <summary>
+        /// Self-Play: 포획당했을 때 외부에서 호출
+        /// </summary>
+        public void OnCapturedBySelfPlay()
+        {
+            if (!selfPlayMode) return;
+            AddReward(capturedPenalty);
+        }
+
+        /// <summary>
+        /// Self-Play: 모선 도달 시 외부에서 호출
+        /// </summary>
+        public void OnReachedMotherShipSelfPlay()
+        {
+            if (!selfPlayMode) return;
+            AddReward(motherShipReachReward);
+        }
+
+        /// <summary>
         /// 관측 크기 계산 (디버깅용)
         /// </summary>
         private int GetObservationSize()
         {
+            if (selfPlayMode) return SELF_PLAY_OBS_COUNT;
             // 모선 정보: 5 (거리, 방향x2, 각도, 속도)
             // 자신 정보: 2 (방향x2)
             // Raycast: raycastCount * 2 (거리, 타입)

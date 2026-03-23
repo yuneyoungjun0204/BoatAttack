@@ -4,8 +4,8 @@ using WaterSystem;
 public class EnvironmentController : MonoBehaviour
 {
     [Header("=== Wave Settings ===")]
-    [Range(0f, 5f)] public float waveStrength = 1.0f;
-    [Range(0.1f, 3f)] public float waveSpeed = 1.0f;
+    [Range(0f, 100f)] public float waveStrength = 1.0f;
+    [Range(0.1f, 100f)] public float waveSpeed = 1.0f;
     [Range(0f, 360f)] public float waveDirection = 0f;
 
     [Header("=== Wind Settings ===")]

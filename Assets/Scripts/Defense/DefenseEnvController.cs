@@ -1730,6 +1730,18 @@ namespace BoatAttack
                 }
             }
             
+            // 4.5단계: Self-Play 적군 에이전트 에피소드 종료
+            if (_enemyPool != null)
+            {
+                for (int i = 0; i < _enemyPool.Length; i++)
+                {
+                    if (_enemyPool[i] == null) continue;
+                    var attackAgent = _enemyPool[i].GetComponent<AttackAgent>();
+                    if (attackAgent != null && attackAgent.selfPlayMode)
+                        attackAgent.EndEpisode();
+                }
+            }
+
             // 5단계: 환경 리셋
             ResetScene();
         }
@@ -1955,6 +1967,11 @@ namespace BoatAttack
                 commanderAgent.OnEnemyCaptured();
             }
 
+            // Self-Play: 포획당한 적군에 페널티
+            var capturedAttack = enemyBoat.GetComponent<AttackAgent>();
+            if (capturedAttack != null)
+                capturedAttack.OnCapturedBySelfPlay();
+
             // 해당 적만 무력화 (비활성화)
             DisableEnemy(enemyBoat);
 
@@ -2169,6 +2186,11 @@ namespace BoatAttack
                 if (defenseAgent1 != null) defenseAgent1.AddReward(penalty);
                 if (defenseAgent2 != null) defenseAgent2.AddReward(penalty);
             }
+
+            // Self-Play: 모선 도달 적군에 보상
+            var reachedAttack = enemyBoat.GetComponent<AttackAgent>();
+            if (reachedAttack != null)
+                reachedAttack.OnReachedMotherShipSelfPlay();
 
             // 해당 적만 무력화 (비활성화)
             DisableEnemy(enemyBoat);

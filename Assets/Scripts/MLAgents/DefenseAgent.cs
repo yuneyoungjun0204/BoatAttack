@@ -189,6 +189,9 @@ namespace BoatAttack
 
         private new void Awake()
         {
+            var bp = GetComponent<Unity.MLAgents.Policies.BehaviorParameters>();
+            if (bp != null) bp.TeamId = 0; // 아군 팀 (Self-Play 대응)
+
             if (TryGetComponent(out _boat))
             {
                 _engine = _boat.engine;

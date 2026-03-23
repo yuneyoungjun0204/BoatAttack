@@ -60,7 +60,7 @@ namespace BoatAttack
 
         [Header("=== 레이캐스트 타임아웃 ===")]
         [Tooltip("레이캐스트 미차단 허용 스텝 수 (0=비활성화). 50스텝≈5초@timescale10")]
-        public int raycastTimeoutSteps = 50;
+        public int raycastTimeoutSteps = 500;
 
         [Tooltip("타임아웃 비활성화 시 페널티")]
         public float raycastTimeoutPenalty = -0.5f;
@@ -103,6 +103,10 @@ namespace BoatAttack
         private readonly System.Collections.Generic.Dictionary<int, int> _prevEnemyByPair
             = new System.Collections.Generic.Dictionary<int, int>();
 
+        // 이전 스텝의 차단 거리 (Δdist 보상용)
+        private readonly System.Collections.Generic.Dictionary<int, float> _prevInterceptDist
+            = new System.Collections.Generic.Dictionary<int, float>();
+
         /// <summary>
         /// 에이전트 상태
         /// </summary>
@@ -143,10 +147,34 @@ namespace BoatAttack
         public float CalculatePairStepReward(int pairIdx, AgentState agent1, AgentState agent2,
             float interceptDist, float alongDist, int enemyIdx = -1)
         {
-            // 담당 적 변경 추적 (외부에서 사용 가능)
+            // 담당 적 변경 시 prev 리셋
+            if (_prevEnemyByPair.TryGetValue(pairIdx, out int prevIdx) && prevIdx != enemyIdx)
+            {
+                _prevInterceptDist.Remove(pairIdx);
+            }
             _prevEnemyByPair[pairIdx] = enemyIdx;
 
-            return 0f;
+            float reward = 0f;
+
+            // 1. 차단 위치 접근 보상: 적→모선 Ray에 가까워질수록 +
+            if (interceptDist < float.MaxValue && coverageRewardPerMeter > 0f)
+            {
+                if (_prevInterceptDist.TryGetValue(pairIdx, out float prevDist))
+                {
+                    float delta = prevDist - interceptDist; // 양수 = 접근
+                    reward += delta * coverageRewardPerMeter;
+                }
+                _prevInterceptDist[pairIdx] = interceptDist;
+            }
+
+            // 2. 추력 보상: 전진할수록 +
+            if (throttleRewardCoeff > 0f)
+            {
+                float avgSpeed = (agent1.speed + agent2.speed) * 0.5f;
+                reward += Mathf.Clamp01(avgSpeed / 15f) * throttleRewardCoeff;
+            }
+
+            return reward;
         }
 
         /// <summary>
@@ -155,6 +183,7 @@ namespace BoatAttack
         public void Reset()
         {
             _prevEnemyByPair.Clear();
+            _prevInterceptDist.Clear();
         }
     }
 }

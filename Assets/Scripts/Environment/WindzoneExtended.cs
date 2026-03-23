@@ -103,6 +103,20 @@ public class WindzoneExtended : MonoBehaviour
     }
 
     /// <summary>
+    /// _instance가 없으면 씬의 WindZone에 자동 부착
+    /// </summary>
+    static void EnsureInstance()
+    {
+        if (_instance != null) return;
+        var wz = FindObjectOfType<WindZone>();
+        if (wz != null && wz.GetComponent<WindzoneExtended>() == null)
+        {
+            _instance = wz.gameObject.AddComponent<WindzoneExtended>();
+            Debug.Log("[WindzoneExtended] 씬의 WindZone에 자동 부착됨");
+        }
+    }
+
+    /// <summary>
     /// 에피소드 리셋 시 호출하여 바람 방향/세기를 재랜덤화 (도메인 랜덤화)
     /// </summary>
     public static void RandomizeWind() => RandomizeWind(-1f, -1f);
@@ -112,6 +126,8 @@ public class WindzoneExtended : MonoBehaviour
     /// </summary>
     public static void RandomizeWind(float spdMin, float spdMax)
     {
+        EnsureInstance();
+
         // 매 에피소드 방향/속도 랜덤화
         float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
         WindDirection = new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle));
@@ -147,6 +163,8 @@ public class WindzoneExtended : MonoBehaviour
     public float windSpeedMax = 15f;
 
     [Header("Wave Randomization")]
+    [Tooltip("파도 랜덤화 활성화 (false면 인스펙터 파도 설정 유지)")]
+    public bool enableWaveRandomization = true;
     public float waveAmplitudeMin = 0.1f;
     public float waveAmplitudeMax = 1.5f;
     public float waveWavelengthMin = 2f;
@@ -159,7 +177,10 @@ public class WindzoneExtended : MonoBehaviour
     {
         if (Water.Instance == null) return;
 
-        float ampMin = 0.1f, ampMax = 1.5f, lenMin = 2f, lenMax = 10f;
+        // 파도 랜덤화 비활성화 시 인스펙터 설정 유지
+        if (_instance != null && !_instance.enableWaveRandomization) return;
+
+        float ampMin = 1.0f, ampMax = 5.0f, lenMin = 5f, lenMax = 20f;
         if (_instance != null)
         {
             ampMin = _instance.waveAmplitudeMin;
