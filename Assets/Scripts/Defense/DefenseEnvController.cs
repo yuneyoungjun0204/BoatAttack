@@ -132,7 +132,7 @@ namespace BoatAttack
         public bool keepWebAfterCapture = true;
 
         [Tooltip("아군 페어 소진 시 에피소드 종료 비활성화 (true=페어 소진해도 에피소드 유지)")]
-        public bool disableNoPairsEndEpisode = false;
+        public bool disableNoPairsEndEpisode = true;
 
         [Header("Agents")]
         [Tooltip("방어 에이전트 1")]

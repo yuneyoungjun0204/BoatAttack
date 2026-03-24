@@ -948,6 +948,20 @@ namespace BoatAttack
             if (_episodeEnded || _neutralized || _straightMode)
                 return;
 
+            // 적군 선박 충돌 → 포획으로 처리
+            if (collision.gameObject.CompareTag("attack_boat"))
+            {
+                Transform envRoot = transform.parent != null ? transform.parent : transform;
+                DefenseEnvController ctrl = envRoot.GetComponentInChildren<DefenseEnvController>();
+                if (ctrl != null)
+                {
+                    // webObject의 DynamicWeb을 넘겨서 개별 보너스도 부여
+                    DynamicWeb dw = webObject != null ? webObject.GetComponent<DynamicWeb>() : null;
+                    ctrl.OnEnemyHitWeb(collision.gameObject, dw);
+                }
+                return;
+            }
+
             var otherAgent = collision.gameObject.GetComponent<DefenseAgent>();
             bool isMotherShip = collision.gameObject.CompareTag("MotherShip");
 

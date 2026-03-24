@@ -569,8 +569,9 @@ namespace BoatAttack
 
             // 2. 진수구역별 쌍 배정
             Dictionary<int, float> zoneDirAngles;
+            Dictionary<int, float> pairDirAngles; // 쌍별 스폰 각도 (pairIdx → angleDeg)
             Dictionary<int, List<int>> zoneAssignments = AssignPairsToZones(
-                formationType, approachAngleDeg, diversionaryAngles, pairCount, out zoneDirAngles);
+                formationType, approachAngleDeg, diversionaryAngles, pairCount, out zoneDirAngles, out pairDirAngles);
 
             // 3. 각 진수구역에 배정된 쌍 배치 (2단계: 위치 결정 → Voronoi 배정)
             GameObject[] enemies = envController != null ? envController.enemyShips : null;
@@ -582,28 +583,6 @@ namespace BoatAttack
                 int zoneIdx = kvp.Key;
                 List<int> pairIndices = kvp.Value;
                 LaunchZone zone = launchZones[zoneIdx];
-
-                // 적 접근 각도를 직접 사용 (구역 양자화 오차 제거)
-                // 양동: 실제 적 방향 각도 사용, 집중/파상: approachAngleDeg 사용
-                float spawnAngleDeg;
-                if (formationType == FormationType.Diversionary && zoneDirAngles.ContainsKey(zoneIdx))
-                {
-                    // 양동: 구역에 배정된 실제 적 접근 방향으로 진수 (구역 양자화 오차 제거)
-                    spawnAngleDeg = zoneDirAngles[zoneIdx] + Random.Range(-zone.angleJitter, zone.angleJitter);
-                }
-                else
-                {
-                    // 집중/파상: 쌍 수와 무관하게 항상 적 접근 각도 기준
-                    spawnAngleDeg = approachAngleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
-                }
-                float spawnAngleRad = spawnAngleDeg * Mathf.Deg2Rad;
-                Vector3 zoneDir = new Vector3(Mathf.Sin(spawnAngleRad), 0f, Mathf.Cos(spawnAngleRad));
-
-                // 타원 거리 계산 (적 접근 각도 + jitter 기준)
-                float zoneDist = GetEllipseDistance(spawnAngleDeg);
-
-                // 적 접근 방향에 수직인 횡대열 축 계산
-                Vector3 lateralDir = new Vector3(zoneDir.z, 0f, -zoneDir.x); // 90° 회전
 
                 // 쌍 간 횡 간격 (convoySpawnSpacing + 여유)
                 float spawnSpacing = envController != null ? envController.convoySpawnSpacing : 10f;
@@ -617,6 +596,22 @@ namespace BoatAttack
                 {
                     int pi = GetOrCreateInactivePair();
                     if (pi < 0) break;
+
+                    // 양동: 쌍별 실제 적 방향 사용, 그 외: approachAngleDeg 사용
+                    int pairLogicalIdx = pairIndices[j];
+                    float spawnAngleDeg;
+                    if (formationType == FormationType.Diversionary && pairDirAngles.ContainsKey(pairLogicalIdx))
+                    {
+                        spawnAngleDeg = pairDirAngles[pairLogicalIdx] + Random.Range(-zone.angleJitter, zone.angleJitter);
+                    }
+                    else
+                    {
+                        spawnAngleDeg = approachAngleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+                    }
+                    float spawnAngleRad = spawnAngleDeg * Mathf.Deg2Rad;
+                    Vector3 zoneDir = new Vector3(Mathf.Sin(spawnAngleRad), 0f, Mathf.Cos(spawnAngleRad));
+                    float zoneDist = GetEllipseDistance(spawnAngleDeg);
+                    Vector3 lateralDir = new Vector3(zoneDir.z, 0f, -zoneDir.x);
 
                     float lateralOffset = startOffset + j * lateralSpacing;
                     Vector3 pairCenter = motherPos + zoneDir * zoneDist + lateralDir * lateralOffset;
@@ -723,10 +718,11 @@ namespace BoatAttack
         private Dictionary<int, List<int>> AssignPairsToZones(
             FormationType formationType, float approachAngleDeg,
             float[] diversionaryAngles, int pairCount,
-            out Dictionary<int, float> zoneDirAngles)
+            out Dictionary<int, float> zoneDirAngles, out Dictionary<int, float> pairDirAngles)
         {
             var assignments = new Dictionary<int, List<int>>();
             zoneDirAngles = new Dictionary<int, float>();
+            pairDirAngles = new Dictionary<int, float>();
 
             bool isFleet = envController != null && (envController.currentStage == TrainingStage.Stage7_FleetManeuver
                 || envController.currentStage == TrainingStage.Stage8_TacticalFullObs
@@ -745,7 +741,7 @@ namespace BoatAttack
                 for (int d = 0; d < dirCount; d++)
                     dirAnglesDeg[d] = diversionaryAngles[d] * Mathf.Rad2Deg;
 
-                // 1단계: 각 방향에 고유 구역 배정 (중복 시 차순위 구역 사용)
+                // 1단계: 각 방향에 가장 가까운 구역 배정 (같은 구역 공유 허용)
                 for (int d = 0; d < dirCount; d++)
                 {
                     var sorted = GetZonesSortedByAngle(dirAnglesDeg[d]);
@@ -754,13 +750,10 @@ namespace BoatAttack
                     {
                         float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAnglesDeg[d], launchZones[zi].angleDeg));
                         if (angleDiff > 90f) break;
-                        if (!usedZonesDiv.Contains(zi))
-                        {
-                            bestZonePerDir[d] = zi;
-                            usedZonesDiv.Add(zi);
-                            break;
-                        }
+                        bestZonePerDir[d] = zi;
+                        break;
                     }
+                    Debug.Log($"[LaunchZone] Diversionary dir {d}: angle={dirAnglesDeg[d]:F1}° → zone={bestZonePerDir[d]}");
                 }
 
                 // 구역 → 적 방향 각도 매핑 저장
@@ -770,7 +763,7 @@ namespace BoatAttack
                         zoneDirAngles[bestZonePerDir[d]] = dirAnglesDeg[d];
                 }
 
-                // 2단계: 각 방향에 최소 1쌍 배정
+                // 2단계: 각 방향에 최소 1쌍 배정 (쌍별 각도 저장)
                 int pairIdx = 0;
                 for (int d = 0; d < dirCount && pairIdx < pairCount; d++)
                 {
@@ -779,6 +772,7 @@ namespace BoatAttack
                     if (!assignments.ContainsKey(zoneIdx))
                         assignments[zoneIdx] = new List<int>();
                     assignments[zoneIdx].Add(pairIdx);
+                    pairDirAngles[pairIdx] = dirAnglesDeg[d]; // 쌍별 실제 적 방향
                     pairIdx++;
                 }
 
@@ -793,6 +787,7 @@ namespace BoatAttack
                     if (!assignments.ContainsKey(zoneIdx))
                         assignments[zoneIdx] = new List<int>();
                     assignments[zoneIdx].Add(pairIdx);
+                    pairDirAngles[pairIdx] = dirAnglesDeg[d]; // 쌍별 실제 적 방향
                     pairIdx++;
                 }
             }
