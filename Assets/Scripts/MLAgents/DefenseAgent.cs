@@ -452,26 +452,28 @@ namespace BoatAttack
                 return;
             }
 
-            Vector3 myPos = transform.position;
-            Vector3 myForward = transform.forward;
-            Vector3 myRight = transform.right;
-            float myAngle = transform.eulerAngles.y;
+            // Web 중심 기준: 자기 쌍의 agent1+agent2 중점을 관측 원점으로 사용
+            Vector3 partnerPos = (partnerAgent != null) ? partnerAgent.transform.position : transform.position;
+            Vector3 webCenter = (transform.position + partnerPos) * 0.5f;
+            Vector3 webForward = ((transform.forward + (partnerAgent != null ? partnerAgent.transform.forward : transform.forward)) * 0.5f).normalized;
+            if (webForward.sqrMagnitude < 0.01f) webForward = transform.forward;
+            float webAngle = Quaternion.LookRotation(webForward).eulerAngles.y;
 
             // 4. AllyBufferSensor: 가까운 아군 쌍 최대 3개
-            CollectAllyPairBufferObs(myPos, myForward);
+            CollectAllyPairBufferObs(webCenter, webForward);
 
             // 5. EnemyBufferSensor: 모든 활성 적군 (3개/적: Dist, SignedBrg, Hdg) — 거리순 정렬
             lastEnemyBufferObs.Clear();
             if (enemyBufferSensor != null && enemyShips != null)
             {
-                // 활성 적군을 거리순 정렬
+                // 활성 적군을 거리순 정렬 (Web 중심 기준)
                 var enemyByDist = new List<(int idx, float dist)>();
                 for (int i = 0; i < enemyShips.Length; i++)
                 {
                     if (enemyShips[i] == null || !enemyShips[i].activeInHierarchy) continue;
                     // 무력화된 적 제외 (트랩/포획됨)
                     if (envController != null && envController.IsEnemyNeutralized(enemyShips[i])) continue;
-                    float d = Vector3.Distance(myPos, enemyShips[i].transform.position);
+                    float d = Vector3.Distance(webCenter, enemyShips[i].transform.position);
                     enemyByDist.Add((i, d));
                 }
                 enemyByDist.Sort((a, b) => a.dist.CompareTo(b.dist));
@@ -481,14 +483,14 @@ namespace BoatAttack
                 for (int ei = 0; ei < count; ei++)
                 {
                     var enemy = enemyShips[enemyByDist[ei].idx];
-                    Vector3 rel = enemy.transform.position - myPos;
+                    Vector3 rel = enemy.transform.position - webCenter;
                     float dist = rel.magnitude;
 
                     float d = NormalizePosition(dist, enemyNormK) * enemyDistScale;
-                    float brg = ComputeSignedBearing(myForward, rel);
-                    // hdg: 내 헤딩과 적 헤딩의 차이
+                    float brg = ComputeSignedBearing(webForward, rel);
+                    // hdg: Web 헤딩과 적 헤딩의 차이
                     // ±180°(정면대치, 기본상황) → 0, 0°(동방향) → ±1
-                    float hdg = NormalizeHeadingDiff(myAngle, enemy.transform.eulerAngles.y);
+                    float hdg = NormalizeHeadingDiff(webAngle, enemy.transform.eulerAngles.y);
                     enemyBufferSensor.AppendObservation(new float[] { d, brg, hdg });
                     lastEnemyBufferObs.Add(d); lastEnemyBufferObs.Add(brg); lastEnemyBufferObs.Add(hdg);
                 }

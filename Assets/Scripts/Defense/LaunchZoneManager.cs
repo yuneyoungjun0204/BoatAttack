@@ -596,6 +596,7 @@ namespace BoatAttack
                 {
                     int pi = GetOrCreateInactivePair();
                     if (pi < 0) break;
+                    _pairPool[pi].isActive = true; // 즉시 예약 — 같은 쌍 중복 반환 방지
 
                     // 양동: 쌍별 실제 적 방향 사용, 그 외: approachAngleDeg 사용
                     int pairLogicalIdx = pairIndices[j];
@@ -662,6 +663,8 @@ namespace BoatAttack
                 // 2대 좌우 배치: 스폰 방향(rot)에 수직으로 배치 → 그물이 펴짐
                 Vector3 spawnForward = rot * Vector3.forward;
                 Vector3 webLateral = new Vector3(-spawnForward.z, 0f, spawnForward.x);
+                // 50% 확률로 좌우 반전 → Agent1/2 배치 편향 제거
+                if (Random.value < 0.5f) webLateral = -webLateral;
 
                 float spawnWidth = envController != null ? envController.convoySpawnSpacing : 10f;
 
@@ -832,7 +835,10 @@ namespace BoatAttack
             {
                 float diffA = Mathf.Abs(Mathf.DeltaAngle(angleDeg, launchZones[a].angleDeg));
                 float diffB = Mathf.Abs(Mathf.DeltaAngle(angleDeg, launchZones[b].angleDeg));
-                return diffA.CompareTo(diffB);
+                int cmp = diffA.CompareTo(diffB);
+                if (cmp != 0) return cmp;
+                // 동점: 랜덤 → 시계/반시계 편향 제거
+                return Random.value < 0.5f ? -1 : 1;
             });
 
             return sorted;
@@ -1370,6 +1376,8 @@ namespace BoatAttack
             // 스폰 방향에 수직으로 agent1/2 배치 → 그물이 펴짐
             Vector3 spawnFwd = rot * Vector3.forward;
             Vector3 lateralDir = new Vector3(-spawnFwd.z, 0f, spawnFwd.x);
+            // 50% 확률로 좌우 반전 → Agent1/2 배치 편향 제거
+            if (Random.value < 0.5f) lateralDir = -lateralDir;
 
             float singleSpawnWidth = envController != null ? envController.convoySpawnSpacing : 10f;
 

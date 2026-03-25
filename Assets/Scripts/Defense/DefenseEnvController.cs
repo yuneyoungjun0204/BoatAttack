@@ -982,8 +982,8 @@ namespace BoatAttack
                         if (pair.isDeploying) continue;
                         if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
-                        // 배치 후 유예기간 (10스텝) 동안 거리 체크 건너뛰기
-                        bool inGrace = pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10;
+                        // 배치 후 유예기간 (50스텝) 동안 거리 체크 건너뛰기
+                        bool inGrace = pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50;
                         if (inGrace) continue;
 
                         Vector3 p1 = pair.agent1.transform.position;
@@ -1136,7 +1136,7 @@ namespace BoatAttack
                     DefensePair pair = launchZoneManager.GetPair(pi);
                     if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                     if (pair.agent1 == null) continue;
-                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
+                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50) continue;
 
                     // Convoy(Joint 연결), Deploy 중, Neutralized(EXIT) 쌍 스킵
                     if (pair.isConvoyLinked) continue;
@@ -1502,7 +1502,7 @@ namespace BoatAttack
                     if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                     if (pair.lastRaycastHitStep < 0) continue;
 
-                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
+                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50) continue;
 
                     // Convoy 쌍도 타임아웃 적용 (Deploy 전에도 올바른 위치에 접근해야 함)
                     if (pair.isDeploying) continue;
@@ -2091,8 +2091,8 @@ namespace BoatAttack
                 {
                     DefensePair hitPair = launchZoneManager.GetPair(hitPairIdx);
 
-                    // 배치 후 유예기간 (10스텝) 동안 충돌 무시
-                    if (hitPair != null && hitPair.deployStep >= 0 && (_resetTimer - hitPair.deployStep) < 10)
+                    // 배치 후 유예기간 (50스텝) 동안 충돌 무시
+                    if (hitPair != null && hitPair.deployStep >= 0 && (_resetTimer - hitPair.deployStep) < 50)
                         return;
 
                     // Disarmed 쌍은 직진 이탈 중이므로 충돌 무시
@@ -3205,7 +3205,7 @@ namespace BoatAttack
                 if (pairIdx >= 0)
                 {
                     DefensePair pair = launchZoneManager.GetPair(pairIdx);
-                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10)
+                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50)
                         return; // 배치 유예기간
                     if (pair?.agent1 != null) pair.agent1.AddReward(penalty);
                     if (pair?.agent2 != null) pair.agent2.AddReward(penalty);
@@ -3235,9 +3235,9 @@ namespace BoatAttack
                 int pairIdx = launchZoneManager.FindPairIndex(collidedAgent);
                 if (pairIdx >= 0)
                 {
-                    // 배치 후 유예기간 (10스텝) 동안 충돌 무시
+                    // 배치 후 유예기간 (50스텝) 동안 충돌 무시
                     DefensePair pair = launchZoneManager.GetPair(pairIdx);
-                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10)
+                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50)
                         return;
 
                     // 해당 쌍에만 페널티
