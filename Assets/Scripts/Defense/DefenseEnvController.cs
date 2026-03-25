@@ -147,7 +147,11 @@ namespace BoatAttack
         
         [Tooltip("보상 계산기")]
         public DefenseRewardCalculator rewardCalculator;
-        
+
+        [Header("Trajectory Logging")]
+        [Tooltip("경로 기록기 (선택)")]
+        public TrajectoryLogger trajectoryLogger;
+
         [Header("Performance")]
         [Tooltip("경량 모드: 그물 메시 비활성화 (단순 Cube로 대체)")]
         public bool lightweightMode = true;
@@ -508,6 +512,10 @@ namespace BoatAttack
 
         private void Start()
         {
+            // TrajectoryLogger 자동 탐색
+            if (trajectoryLogger == null)
+                trajectoryLogger = GetComponentInChildren<TrajectoryLogger>();
+
             // 초기 Stage 저장
             _lastStage = currentStage;
 
@@ -947,6 +955,10 @@ namespace BoatAttack
                 return;
             
             _resetTimer++;
+
+            // 경로 기록
+            if (trajectoryLogger != null)
+                trajectoryLogger.RecordStep(_resetTimer, launchZoneManager, _enemyPool, _neutralizedEnemies);
 
             // 적군 돌진 이동 (동적 스폰 + enableEnemyRush 활성 시)
             if (useDynamicSpawn && enableEnemyRush && motherShip != null)
@@ -1649,6 +1661,10 @@ namespace BoatAttack
                 detail = $" | allyDist={dist:F1}m, pos1={p1}, pos2={p2}";
             }
             Debug.LogWarning($"[DefenseEnv] ★ EPISODE END ★ reason={reason}, step={_resetTimer}, reward={finalReward}, ep={_episodeNumber}{detail}");
+
+            // 경로 기록 저장
+            if (trajectoryLogger != null)
+                trajectoryLogger.SaveAndReset(reason, motherShip != null ? motherShip.transform.position : Vector3.zero);
 
             // 충돌 횟수 초기화 (에피소드 종료 시 즉시 리셋)
             _totalCollisionCount = 0;
@@ -3760,6 +3776,10 @@ namespace BoatAttack
             // 코루틴 실행 완료 플래그 해제 및 에피소드 활성화
             _isResettingPositions = false;
             _episodeActive = true;
+
+            // 경로 기록 시작
+            if (trajectoryLogger != null)
+                trajectoryLogger.BeginEpisode(_episodeNumber, _currentFormation.ToString());
 
             // // 배치 결과 확인 로그 (비활성화)
             // if (launchZoneManager != null)
