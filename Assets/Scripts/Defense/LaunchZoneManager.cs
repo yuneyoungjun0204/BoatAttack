@@ -153,6 +153,15 @@ namespace BoatAttack
                     pair.agent2.motherShip = motherShip;
                 }
 
+                // LOS 가이던스 좌우 구분 + EnvController의 토글 전파
+                pair.agent1.isLeftAgent = true;
+                pair.agent2.isLeftAgent = false;
+                if (envController != null)
+                {
+                    pair.agent1.useLOSGuidance = envController.useLOSGuidance;
+                    pair.agent2.useLOSGuidance = envController.useLOSGuidance;
+                }
+
                 // 적군 배열 (envController에서 업데이트됨)
                 if (envController != null)
                 {
@@ -256,8 +265,8 @@ namespace BoatAttack
                 // 적 접근 방향에 수직인 횡대열 축 계산
                 Vector3 lateralDir = new Vector3(zoneDir.z, 0f, -zoneDir.x); // 90° 회전
 
-                // 쌍 간 횡 간격 (쌍 내 2대 좌우폭 + 여유)
-                float pairWidth = 2f * zone.distance * Mathf.Tan(zone.pairSpreadDeg * Mathf.Deg2Rad);
+                // 쌍 내 2대 좌우 간격 (고정 15m)
+                float pairWidth = 15f;
                 float lateralSpacing = pairWidth + 10f; // 쌍 간 최소 10m 여유
 
                 // 중심 기준 횡 오프셋 계산 (0이 중앙)
@@ -295,11 +304,13 @@ namespace BoatAttack
                     ResetAgent(pair.agent1, pos1, rot);
                     ResetAgent(pair.agent2, pos2, rot);
 
-                    // 적군 배열 전달
+                    // 적군 배열 전달 + LOS 토글 전파
                     if (envController != null)
                     {
                         pair.agent1.enemyShips = envController.enemyShips;
                         pair.agent2.enemyShips = envController.enemyShips;
+                        pair.agent1.useLOSGuidance = envController.useLOSGuidance;
+                        pair.agent2.useLOSGuidance = envController.useLOSGuidance;
                     }
 
                     // 활성화 (에이전트 위치는 위의 ResetAgent에서 이미 설정됨)

@@ -164,6 +164,10 @@ namespace BoatAttack
         [Tooltip("환경 컨트롤러 (날씨 랜덤화용)")]
         public EnvironmentController environmentController;
 
+        [Header("LOS Guidance (비교군)")]
+        [Tooltip("모든 아군 에이전트에 LOS 가이던스 적용 (모델 추론 대신 규칙 기반)")]
+        public bool useLOSGuidance = true;
+
         [Header("Enemy Rush Movement")]
         [Tooltip("동적 스폰 시 적군 자동 돌진 활성화")]
         public bool enableEnemyRush = true;
@@ -195,6 +199,9 @@ namespace BoatAttack
 
         [Tooltip("아군 진수구역 관리자 (없으면 기존 1쌍 레거시 모드)")]
         public LaunchZoneManager launchZoneManager;
+
+        [Tooltip("경로 로거 (Inspector에서 할당, 없으면 자동 검색)")]
+        public TrajectoryLogger trajectoryLogger;
 
         // 풀 배열 (Start()에서 초기화, 인덱스 기반)
         private GameObject[] _enemyPool;
@@ -486,6 +493,15 @@ namespace BoatAttack
             FindAllAttackTrackPaths();
             SaveOriginalWaypoints();
 
+            // TrajectoryLogger 자동 검색
+            if (trajectoryLogger == null)
+                trajectoryLogger = GetComponent<TrajectoryLogger>();
+            if (trajectoryLogger == null)
+                trajectoryLogger = GetComponentInChildren<TrajectoryLogger>();
+            if (trajectoryLogger == null)
+                trajectoryLogger = FindObjectOfType<TrajectoryLogger>();
+            Debug.LogWarning($"[DefenseEnv] TrajectoryLogger = {(trajectoryLogger != null ? trajectoryLogger.gameObject.name : "NULL")}");
+
             // 첫 에피소드 시작 (PushBlockEnvController 패턴)
             ResetScene();
             
@@ -505,6 +521,10 @@ namespace BoatAttack
                 return;
             
             _resetTimer++;
+
+            // TrajectoryLogger 매 스텝 기록
+            if (trajectoryLogger != null)
+                trajectoryLogger.RecordStep(_resetTimer, launchZoneManager, defenseAgent1, defenseAgent2, _enemyPool, null);
 
             // 적군 돌진 이동 (동적 스폰 + enableEnemyRush 활성 시)
             if (useDynamicSpawn && enableEnemyRush && motherShip != null)
@@ -654,6 +674,10 @@ namespace BoatAttack
             }
             Debug.LogWarning($"[DefenseEnv] ★ EPISODE END ★ reason={reason}, step={_resetTimer}, reward={finalReward}, ep={_episodeNumber}{detail}");
 
+            // TrajectoryLogger 에피소드 종료 시 CSV 저장
+            if (trajectoryLogger != null)
+                trajectoryLogger.SaveAndReset(reason, motherShip != null ? motherShip.transform.position : Vector3.zero);
+
             // 충돌 횟수 초기화 (에피소드 종료 시 즉시 리셋)
             _totalCollisionCount = 0;
             _collisionCooldownTimes.Clear();
@@ -763,11 +787,44 @@ namespace BoatAttack
 
             // 모든 선박 리셋
             ResetPositionsOnly();
-            
+
+            // LOS 가이던스 토글 전파 (모든 활성 에이전트에)
+            ApplyLOSGuidanceToAllAgents();
+
+            // TrajectoryLogger 에피소드 시작
+            Debug.LogWarning($"[DefenseEnv] ResetScene: useLOSGuidance={useLOSGuidance}");
+            if (trajectoryLogger != null)
+                trajectoryLogger.BeginEpisode(_episodeNumber, _currentFormation.ToString(), useLOSGuidance);
+
         }
         
         #endregion
-        
+
+        /// <summary>
+        /// Inspector의 useLOSGuidance 값을 모든 아군 에이전트에 전파
+        /// </summary>
+        private void ApplyLOSGuidanceToAllAgents()
+        {
+            if (defenseAgent1 != null)
+                defenseAgent1.useLOSGuidance = useLOSGuidance;
+            if (defenseAgent2 != null)
+                defenseAgent2.useLOSGuidance = useLOSGuidance;
+
+            // LaunchZoneManager 동적 생성 에이전트에도 전파
+            if (launchZoneManager != null)
+            {
+                var agents = launchZoneManager.GetActiveAgents();
+                if (agents != null)
+                {
+                    foreach (var agent in agents)
+                    {
+                        if (agent != null)
+                            agent.useLOSGuidance = useLOSGuidance;
+                    }
+                }
+            }
+        }
+
         /// <summary>
         /// 에피소드 시작 (ML-Agents가 자동으로 호출, 환경 리셋은 ResetScene에서 처리)
         /// </summary>

@@ -83,6 +83,28 @@ namespace BoatAttack
         [Range(0f, 5f)] public float motherFScale = 1f;
         [Range(0f, 5f)] public float motherDistScale = 1f;
 
+        [Header("=== LOS Guidance (비교군) ===")]
+        [Tooltip("LOS 가이던스 ON: 모델 추론 무시, 규칙 기반 추종")]
+        public bool useLOSGuidance = true;
+
+        [Tooltip("그물 전개를 위한 좌우 벌림 거리 (m)")]
+        [Range(5f, 100f)] public float losSpreadDistance = 30f;
+
+        [Tooltip("비례 조향 이득 (bearing → steering)")]
+        [Range(0.5f, 10f)] public float losSteeringGain = 3f;
+
+        [Tooltip("이 거리 이내에서 감속 시작 (m)")]
+        [Range(10f, 500f)] public float losApproachDist = 150f;
+
+        [Tooltip("LOS 최소 속력")]
+        [Range(0f, 1f)] public float losThrottleMin = 0.3f;
+
+        [Tooltip("LOS 최대 속력")]
+        [Range(0.5f, 1.5f)] public float losThrottleMax = 1.0f;
+
+        [Tooltip("agent1이면 true (왼쪽 offset), agent2면 false (오른쪽)")]
+        public bool isLeftAgent = true;
+
         [Header("Debug")]
         public bool showRaycasts = true;
         public bool enableDebugLog = true;
@@ -336,6 +358,13 @@ namespace BoatAttack
             if (_engine == null || _engine.RB == null || _episodeEnded)
                 return;
 
+            // LOS 가이던스 모드: 모델 추론 무시, 규칙 기반 추종
+            if (useLOSGuidance)
+            {
+                ExecuteLOSGuidance();
+                return;
+            }
+
             float throttleInput = actions.ContinuousActions[0];
             float steeringInput = actions.ContinuousActions[1];
 
@@ -371,6 +400,83 @@ namespace BoatAttack
             if (enableDebugLog)
             {
                 Debug.Log($"[{gameObject.name}] Throttle: {throttle:F2}, Steering: {steering:F2}");
+            }
+        }
+
+        /// <summary>
+        /// LOS 가이던스: 가장 가까운 적군을 향해 규칙 기반 조향
+        /// 파트너와 좌우로 벌려서 그물 전개 유도
+        /// </summary>
+        private void ExecuteLOSGuidance()
+        {
+            // 1. 가장 가까운 활성 적군 찾기
+            GameObject target = null;
+            float nearestDist = float.MaxValue;
+            Vector3 myPos = transform.position;
+
+            if (enemyShips != null)
+            {
+                foreach (var enemy in enemyShips)
+                {
+                    if (enemy == null || !enemy.activeInHierarchy) continue;
+                    if (enemy.transform.position.y < -100f) continue; // HIDDEN_POS
+                    float d = Vector3.Distance(myPos, enemy.transform.position);
+                    if (d < nearestDist) { nearestDist = d; target = enemy; }
+                }
+            }
+
+            // 적군 없으면 직진
+            if (target == null)
+            {
+                _engine.Accelerate(losThrottleMax);
+                _engine.Turn(0f);
+                _prevThrottle = losThrottleMax;
+                _prevSteering = 0f;
+                return;
+            }
+
+            // 2. 목표 지점 계산: 적군 위치에서 좌우 offset
+            Vector3 enemyPos = target.transform.position;
+            Vector3 toMother = motherShip != null
+                ? (motherShip.transform.position - enemyPos)
+                : -transform.forward;
+            toMother.y = 0f;
+            toMother.Normalize();
+
+            // 적군→모선 방향의 수직 벡터 (왼쪽)
+            Vector3 perpLeft = new Vector3(-toMother.z, 0f, toMother.x);
+
+            // 적군 앞쪽(모선 방향)에 약간 선행, 좌우로 벌림
+            float sign = isLeftAgent ? 1f : -1f;
+            Vector3 targetPos = enemyPos + toMother * 20f + perpLeft * sign * losSpreadDistance;
+
+            // 3. 비례 조향: 목표 방향과 현재 heading의 bearing 차이
+            Vector3 toTarget = targetPos - myPos;
+            toTarget.y = 0f;
+            float targetAngle = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
+            float myAngle = transform.eulerAngles.y;
+            float bearing = Mathf.DeltaAngle(myAngle, targetAngle); // -180 ~ +180
+
+            // steering = 비례 제어 (bearing/180 * gain), clamp to [-1, 1]
+            float steering = Mathf.Clamp(bearing / 180f * losSteeringGain, -1f, 1f);
+
+            // 4. 속도: 거리에 따라 조절 (멀면 최대, 가까우면 감속)
+            float distToTarget = toTarget.magnitude;
+            float throttle;
+            if (distToTarget > losApproachDist)
+                throttle = losThrottleMax;
+            else
+                throttle = Mathf.Lerp(losThrottleMin, losThrottleMax, distToTarget / losApproachDist);
+
+            // 5. 엔진 구동
+            _prevThrottle = throttle;
+            _prevSteering = steering;
+            _engine.Accelerate(throttle);
+            _engine.Turn(steering);
+
+            if (enableDebugLog)
+            {
+                Debug.Log($"[{name}] LOS: target={target.name}, dist={nearestDist:F0}m, bearing={bearing:F1}°, throttle={throttle:F2}, steer={steering:F2}");
             }
         }
 
