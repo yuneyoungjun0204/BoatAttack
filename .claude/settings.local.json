@@ -43,7 +43,8 @@
       "Bash(start \"\" \"c:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\paper\\\\presentation\\\\index.html\")",
       "Bash(start \"\" \"C:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\paper\\\\presentation\\\\USV_TRAP_Presentation.pptx\")",
       "WebSearch",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(ls -d c:/Users/ANSL/Desktop/BoatAttack/results/*/)"
     ]
   }
 }
