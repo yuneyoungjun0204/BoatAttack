@@ -84,15 +84,15 @@ namespace BoatAttack
 
         [Header("Ally Pool")]
         [Tooltip("최대 아군 쌍 수 (풀 크기)")]
-        [Range(1, 20)]
-        public int maxPairCount = 15;
+        [Range(1, 30)]
+        public int maxPairCount = 25;
 
         [Tooltip("에피소드 시작 시 자동 배치 쌍 수 (0=버튼으로만 배치)")]
-        [Range(0, 20)]
+        [Range(0, 30)]
         public int activePairCount = 0;
 
         [Tooltip("초기 출동 쌍 수 (나머지는 예비로 대기, 0=activePairCount 전부 출동)")]
-        [Range(0, 20)]
+        [Range(0, 30)]
         public int initialDeployCount = 0;
 
         [Tooltip("에피소드 당 최대 배치 쌍 수 (0=무제한). 초기+추가 배치 합산")]
@@ -199,14 +199,14 @@ namespace BoatAttack
                 }
                 else
                 {
-                    // Debug.LogError("[LaunchZoneManager] InitializeAllyPool: templatePair과 defenseBoatPrefab 모두 없습니다!");
+                    Debug.LogError("[LaunchZoneManager] InitializeAllyPool: templatePair과 defenseBoatPrefab 모두 없습니다! Inspector에서 Template Pair 또는 Defense Boat Prefab을 할당하세요.");
                     return;
                 }
             }
 
             if (templatePair == null || templatePair.agent1 == null || templatePair.agent2 == null)
             {
-                // Debug.LogError("[LaunchZoneManager] InitializeAllyPool: 템플릿 생성 실패!");
+                Debug.LogError("[LaunchZoneManager] InitializeAllyPool: 템플릿 생성 실패! templatePair.agent1/agent2가 null입니다.");
                 return;
             }
 
@@ -744,18 +744,11 @@ namespace BoatAttack
                 for (int d = 0; d < dirCount; d++)
                     dirAnglesDeg[d] = diversionaryAngles[d] * Mathf.Rad2Deg;
 
-                // 1단계: 각 방향에 가장 가까운 구역 배정 (같은 구역 공유 허용)
+                // 1단계: 각 방향에 가장 가까운 구역 배정 (각도 무제한 — 항상 최근접 구역 사용)
                 for (int d = 0; d < dirCount; d++)
                 {
                     var sorted = GetZonesSortedByAngle(dirAnglesDeg[d]);
-                    bestZonePerDir[d] = -1;
-                    foreach (int zi in sorted)
-                    {
-                        float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAnglesDeg[d], launchZones[zi].angleDeg));
-                        if (angleDiff > 90f) break;
-                        bestZonePerDir[d] = zi;
-                        break;
-                    }
+                    bestZonePerDir[d] = sorted.Count > 0 ? sorted[0] : -1;
                     Debug.Log($"[LaunchZone] Diversionary dir {d}: angle={dirAnglesDeg[d]:F1}° → zone={bestZonePerDir[d]}");
                 }
 

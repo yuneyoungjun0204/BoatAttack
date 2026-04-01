@@ -269,13 +269,9 @@ namespace BoatAttack
                 InitializeWaypoint();
             }
             
-            // 배 위치는 AttackBoatManager에서 재생성 시 설정되므로 여기서는 리셋하지 않음
-            // 단, Rigidbody 속도 및 각속도만 리셋
-            if (_engine != null && _engine.RB != null)
-            {
-                _engine.RB.velocity = Vector3.zero;
-                _engine.RB.angularVelocity = Vector3.zero;
-            }
+            // ⚠️ velocity 리셋 제거: ResetPoolObject()에서 이미 처리됨
+            // 여기서 velocity=0을 하면 ResetPoolObject() 이후 활성화된 적군의
+            // 속도가 ML-Agents 큐의 OnEpisodeBegin()에 의해 계속 초기화되는 버그 발생
             
             _lastPosition = transform.position;
             
@@ -989,9 +985,20 @@ namespace BoatAttack
                 Debug.Log($"[AttackAgent] - 활성화 상태: {explosion.activeSelf}");
                 Debug.Log($"[AttackAgent] - ParticleSystem 개수: {particleSystems.Length}");
                 
+                // 파티클 수명 후 자동 파괴 (누적 방지)
+                float maxDuration = 3f;
+                foreach (var ps in particleSystems)
+                {
+                    var main = ps.main;
+                    float dur = main.duration + main.startLifetime.constantMax;
+                    if (dur > maxDuration) maxDuration = dur;
+                }
+                Destroy(explosion, maxDuration);
+
                 if (particleSystems.Length == 0)
                 {
                     Debug.LogWarning("[AttackAgent] 폭발 효과에 ParticleSystem이 없습니다! Prefab이 올바른지 확인하세요.");
+                    Destroy(explosion, 3f);
                 }
             }
             else

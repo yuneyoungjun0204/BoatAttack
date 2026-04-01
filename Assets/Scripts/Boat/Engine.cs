@@ -45,8 +45,11 @@ namespace BoatAttack
         public float windForceMultiplier = 8000f;
 
         [Header("Environment Response")]
-        [Tooltip("파도/바람 민감도 (-1=자동감지, 1.0=아군 강한 영향, 0.2=적군 약한 영향)")]
+        [Tooltip("파도/바람 민감도 (-1=자동감지, 1.0=아군 강한 영향, 0=환경 무시)")]
         public float environmentSensitivity = -1f;
+
+        [Tooltip("waterFactor 무시 — 엔진이 공중에 떠도 추력 100% 유지 (적군용)")]
+        public bool ignoreWaterFactor = false;
         private float _envSens = 1f; // 런타임 민감도
         private NativeArray<float3> _point; // engine submerged check
         private float3[] _heights = new float3[1]; // engine submerged check
@@ -317,6 +320,13 @@ namespace BoatAttack
             WindzoneExtended.EnsureInitialized();
             // 디버그 로그 리셋 (에피소드마다 한 번 출력)
             _windDebugLogged = false;
+            // 안정화 프레임 리셋 (이전 에피소드 잔류 상태 제거)
+            _stabilizeFrames = STABILIZE_FRAMES_ON_RESET;
+            _skipHeightCheckFrames = SKIP_FRAMES_ON_RESET;
+            _yHeight = 0f;
+            // 러더 상태 리셋 (이전 에피소드 선회 각도/속도 이월 방지)
+            _currentAngle = 0f;
+            _turnVel = 0f;
         }
 
         private void InitEnvironmentSensitivity()
@@ -363,7 +373,9 @@ namespace BoatAttack
         {
             _skipHeightCheckFrames = SKIP_FRAMES_ON_RESET;
             _stabilizeFrames = STABILIZE_FRAMES_ON_RESET;
-            _yHeight = 0f;  // 수면 위로 가정
+            _yHeight = 0f;
+            _currentAngle = 0f;
+            _turnVel = 0f;
         }
 
         /// <summary>
@@ -387,10 +399,10 @@ namespace BoatAttack
             // _yHeight ≥ -0.5: 100% 추진 (정상 파도 범위), _yHeight ≤ -1.5: 0% 추진 (공중)
             // 리셋 직후 몇 프레임은 waterFactor=1 (Gerstner 파도 안정화 대기)
             float waterFactor;
-            if (_skipHeightCheckFrames > 0)
+            if (ignoreWaterFactor || _skipHeightCheckFrames > 0)
             {
                 waterFactor = 1f;
-                _skipHeightCheckFrames--;
+                if (_skipHeightCheckFrames > 0) _skipHeightCheckFrames--;
             }
             else
             {

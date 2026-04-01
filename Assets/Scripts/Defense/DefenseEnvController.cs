@@ -101,6 +101,9 @@ namespace BoatAttack
         [Tooltip("타겟 배정 고정: 유효한 기존 배정을 유지 (false=매번 재배정)")]
         public bool lockTargetAssignment = true;
 
+        [Tooltip("자동 타겟 배정 활성화 (스테이지 무관, 5스텝마다 실행)")]
+        public bool enableAutoAssign = true;
+
         [Tooltip("가상 아군쌍 생성 간격 (방어선 좌/우, m)")]
         [Range(30f, 300f)]
         public float phantomSpacing = 80f;
@@ -167,7 +170,7 @@ namespace BoatAttack
         public int rewardCalculationInterval = 1;
         
         [Tooltip("최대 환경 스텝 수 (에피소드가 이 스텝 수에 도달하면 자동 종료, 0=무제한)")]
-        public int maxEnvironmentSteps = 2500;
+        public int maxEnvironmentSteps = 1250;
         
         [Tooltip("모선 참조")]
         public GameObject motherShip;
@@ -984,6 +987,23 @@ namespace BoatAttack
                 return;
             }
 
+            // 적군 선박 공중 이탈 체크 (날아가서 빙빙 도는 경우 즉시 리셋)
+            if (!inGracePeriod && _resetTimer % 10 == 0 && _poolRigidbodies != null)
+            {
+                for (int i = 0; i < _poolRigidbodies.Length; i++)
+                {
+                    if (_poolRigidbodies[i] == null) continue;
+                    if (!_poolRigidbodies[i].gameObject.activeInHierarchy) continue;
+                    if (_neutralizedEnemies.Contains(_poolRigidbodies[i].gameObject)) continue;
+                    float dy = Mathf.Abs(_poolRigidbodies[i].position.y - _poolTemplateY);
+                    if (dy > 10f)
+                    {
+                        RestartEpisode("EnemyFlying");
+                        return;
+                    }
+                }
+            }
+
             // 아군 간 거리 체크 - 다중 쌍 지원
             if (!inGracePeriod)
             {
@@ -1002,8 +1022,8 @@ namespace BoatAttack
                         if (pair.isDeploying) continue;
                         if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
-                        // 배치 후 유예기간 (50스텝) 동안 거리 체크 건너뛰기
-                        bool inGrace = pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50;
+                        // 배치 후 유예기간 (100스텝) 동안 거리 체크 건너뛰기
+                        bool inGrace = pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 100;
                         if (inGrace) continue;
 
                         Vector3 p1 = pair.agent1.transform.position;
@@ -1156,7 +1176,7 @@ namespace BoatAttack
                     DefensePair pair = launchZoneManager.GetPair(pi);
                     if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                     if (pair.agent1 == null) continue;
-                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50) continue;
+                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 100) continue;
 
                     // Convoy(Joint 연결), Deploy 중, Neutralized(EXIT) 쌍 스킵
                     if (pair.isConvoyLinked) continue;
@@ -1215,8 +1235,8 @@ namespace BoatAttack
                 DeactivatePairsWithNoValidTarget();
             }
 
-            // Stage3/Stage6: 5스텝마다 1:1 매칭 재배정 + 예비 출동 (Stage7/Stage8은 타겟 배정 없음)
-            if ((currentStage == TrainingStage.Stage3_Tactical || currentStage == TrainingStage.Stage6_PhantomFormation) && _resetTimer % 5 == 0)
+            // 5스텝마다 1:1 매칭 재배정 + 예비 출동 (enableAutoAssign으로 스테이지 무관 제어)
+            if (enableAutoAssign && _resetTimer % 5 == 0)
             {
                 AutoAssignOneToOneTargets();
                 DeployReservesForUnassignedEnemies();
@@ -1522,7 +1542,7 @@ namespace BoatAttack
                     if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                     if (pair.lastRaycastHitStep < 0) continue;
 
-                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50) continue;
+                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 100) continue;
 
                     // Convoy 쌍도 타임아웃 적용 (Deploy 전에도 올바른 위치에 접근해야 함)
                     if (pair.isDeploying) continue;
@@ -1752,11 +1772,16 @@ namespace BoatAttack
             }
             
             // 4.5단계: Self-Play 적군 에이전트 에피소드 종료
+            // ⚠️ activeInHierarchy인 것만 EndEpisode 호출:
+            //   비활성(SetActive=false) 적군에게도 호출하면 ML-Agents가 OnEpisodeBegin()을
+            //   큐에 누적시키고, 다음 에피소드 활성화 후 velocity=0을 반복 적용하여
+            //   에피소드가 진행될수록 적군이 앞으로 못 나가는 현상 발생.
             if (_enemyPool != null)
             {
                 for (int i = 0; i < _enemyPool.Length; i++)
                 {
                     if (_enemyPool[i] == null) continue;
+                    if (!_enemyPool[i].activeInHierarchy) continue; // 비활성 적군 스킵
                     var attackAgent = _enemyPool[i].GetComponent<AttackAgent>();
                     if (attackAgent != null && attackAgent.selfPlayMode)
                         attackAgent.EndEpisode();
@@ -2112,8 +2137,8 @@ namespace BoatAttack
                 {
                     DefensePair hitPair = launchZoneManager.GetPair(hitPairIdx);
 
-                    // 배치 후 유예기간 (50스텝) 동안 충돌 무시
-                    if (hitPair != null && hitPair.deployStep >= 0 && (_resetTimer - hitPair.deployStep) < 50)
+                    // 배치 후 유예기간 (100스텝) 동안 충돌 무시
+                    if (hitPair != null && hitPair.deployStep >= 0 && (_resetTimer - hitPair.deployStep) < 100)
                         return;
 
                     // Disarmed 쌍은 직진 이탈 중이므로 충돌 무시
@@ -2330,14 +2355,10 @@ namespace BoatAttack
             if (attackAgent != null)
                 attackAgent.SetNeutralized();
 
-            // 엔진 정지 (관성 제거)
-            var rb = enemyBoat.GetComponent<Rigidbody>();
-            if (rb != null)
-            {
-                rb.velocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
-                rb.isKinematic = true;  // 파도/부력 힘 차단 (GerstnerWaves 재등록 문제 방지를 위해 SetActive 사용 안 함)
-            }
+            // 씬에서 즉시 숨김 (그물 충돌 즉시 회수, velocity 초기화 없음)
+            // velocity=0 제거: SetActive(false)로 비활성화되므로 불필요하며,
+            // ResetPoolObject()에서 재소환 시 isKinematic 복원 + velocity 리셋 처리됨
+            enemyBoat.SetActive(false);
 
             // 활성 적군 목록에서 제거 (카메라/보상 계산에서 무시됨)
             MarkEnemyAsNeutralized(enemyBoat);
@@ -2583,10 +2604,11 @@ namespace BoatAttack
                 }
             }
 
-            // Greedy 매칭: Roonshot effective distance 방식
-            // Web 수직 방향(normal)과 적 방향의 각도 + 거리로 스코어 계산
-            // ANGLE_WEIGHT = 1.5 (Roonshot PARAM.py: 10° = 15m 거리 등가)
+            // Greedy 매칭: 거리 + 차단각 + 적 진행방향 스코어
+            // ANGLE_WEIGHT: 10°당 90m 페널티 (차단 위치 정렬)
+            // HEADING_WEIGHT: 10°당 25m 페널티 (적이 아군 방향으로 향하는 정도)
             const float ANGLE_WEIGHT = 9.0f;
+            const float HEADING_WEIGHT = 2.5f;
 
             for (int i = 0; i < poolCount; i++)
             {
@@ -2631,9 +2653,20 @@ namespace BoatAttack
                     // 90° 초과 = 그물이 적 반대쪽을 향함 → 배정 불가
                     if (interceptAngle > 90f) continue;
 
-                    // Roonshot effective distance: 거리 + 각도 × 가중치
+                    // 적 진행 방향 → 아군 방향 각도 (heading factor)
+                    // 적 forward와 (적→아군) 방향의 각도가 작을수록 적이 아군 쪽으로 돌진 중
+                    Vector3 enemyFwd = enemyShips[e].transform.forward; enemyFwd.y = 0f;
+                    Vector3 enemyToWeb = webCenter - enemyShips[e].transform.position; enemyToWeb.y = 0f;
+                    float headingAngle = 90f;
+                    if (enemyFwd.sqrMagnitude > 0.01f && enemyToWeb.sqrMagnitude > 0.01f)
+                        headingAngle = Vector3.Angle(enemyFwd.normalized, enemyToWeb.normalized);
+
+                    // 110° 초과 = 적이 아군 반대쪽으로 이동 중 → 배정 제외
+                    if (headingAngle > 110f) continue;
+
+                    // 종합 스코어: 거리 + 차단각 × 가중치 + 방향각 × 가중치
                     float dist = Vector3.Distance(webCenter, enemyShips[e].transform.position);
-                    float score = dist + interceptAngle * ANGLE_WEIGHT;
+                    float score = dist + interceptAngle * ANGLE_WEIGHT + headingAngle * HEADING_WEIGHT;
 
                     if (score < bestScore) { bestScore = score; bestIdx = e; }
                 }
@@ -3227,7 +3260,7 @@ namespace BoatAttack
                 if (pairIdx >= 0)
                 {
                     DefensePair pair = launchZoneManager.GetPair(pairIdx);
-                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50)
+                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 100)
                         return; // 배치 유예기간
                     if (pair?.agent1 != null) pair.agent1.AddReward(penalty);
                     if (pair?.agent2 != null) pair.agent2.AddReward(penalty);
@@ -3257,9 +3290,9 @@ namespace BoatAttack
                 int pairIdx = launchZoneManager.FindPairIndex(collidedAgent);
                 if (pairIdx >= 0)
                 {
-                    // 배치 후 유예기간 (50스텝) 동안 충돌 무시
+                    // 배치 후 유예기간 (100스텝) 동안 충돌 무시
                     DefensePair pair = launchZoneManager.GetPair(pairIdx);
-                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50)
+                    if (pair != null && pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 100)
                         return;
 
                     // 해당 쌍에만 페널티
@@ -3386,6 +3419,39 @@ namespace BoatAttack
                 }
             }
 
+            // 4순위: Resources/비활성 오브젝트 포함 전체 씬 검색
+            if (template == null)
+            {
+                string[] prefabNames = { "빨갱이 1", "빨갱이", "AttackBoat", "attack_boat" };
+                foreach (string pName in prefabNames)
+                {
+                    GameObject found = Resources.Load<GameObject>(pName);
+                    if (found != null)
+                    {
+                        template = found;
+                        templateSource = $"Resources 로드 ({pName})";
+                        break;
+                    }
+                }
+            }
+
+            // 5순위: 비활성 포함 전체 씬에서 AttackAgent 컴포넌트 검색
+            if (template == null)
+            {
+                var allAttackAgents = Resources.FindObjectsOfTypeAll<AttackAgent>();
+                foreach (var aa in allAttackAgents)
+                {
+                    if (aa == null || aa.gameObject == null) continue;
+                    // 씬 오브젝트만 (프리팹 에셋 제외)
+                    if (aa.gameObject.scene.IsValid())
+                    {
+                        template = aa.gameObject;
+                        templateSource = $"AttackAgent 씬 검색 (비활성 포함) - {template.name}";
+                        break;
+                    }
+                }
+            }
+
             if (template == null)
             {
                 Debug.LogError("[DefenseEnv] InitializeEnemyPool: attack_boat 템플릿을 찾을 수 없습니다! " +
@@ -3481,22 +3547,22 @@ namespace BoatAttack
             obj.transform.position = position;
             obj.transform.rotation = rotation;
 
-            // 3. Rigidbody 속도 초기화 + isKinematic 복원 (DisableEnemy에서 true로 설정됨)
+            // 3. isKinematic 복원 (비활성 상태에서 선행 설정)
             Rigidbody rb = _poolRigidbodies[index];
             if (rb != null)
             {
                 rb.isKinematic = false;  // 물리 시뮬레이션 복원
-                rb.velocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
             }
 
             // 4. 활성화 → OnEnable 트리거 → _hasExploded=false 자동 리셋
             obj.SetActive(true);
 
-            // 5. rb.Sleep() (활성 상태에서만 유효)
+            // 4.5. velocity 리셋 — SetActive(true) 이후에 해야 Unity 물리엔진이 실제로 적용
+            // 비활성 Rigidbody에 velocity=0을 설정해도 무시될 수 있음 (에피소드 진행 시 이전 velocity 누적 버그)
             if (rb != null)
             {
-                rb.Sleep();
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
             }
 
             // 6. DollyCart 비활성화 (동적 스폰에서는 경로 추적 안 함)
@@ -4247,15 +4313,20 @@ namespace BoatAttack
                     _poolDisablers[i].CancelInvoke();
                 }
 
-                // 모든 MonoBehaviour의 Invoke 취소
+                // 모든 MonoBehaviour의 Invoke + Coroutine 취소 (mb.enabled 무관하게 전부 취소)
                 var behaviours = _enemyPool[i].GetComponents<MonoBehaviour>();
                 foreach (var mb in behaviours)
                 {
-                    if (mb != null && mb.enabled)
+                    if (mb != null)
                     {
                         mb.CancelInvoke();
+                        mb.StopAllCoroutines();
                     }
                 }
+
+                // 모든 풀 오브젝트 비활성화 (잔존 적군 제거)
+                if (_enemyPool[i].activeSelf)
+                    _enemyPool[i].SetActive(false);
             }
         }
 

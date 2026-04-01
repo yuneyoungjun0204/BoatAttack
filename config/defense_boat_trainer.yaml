@@ -15,10 +15,26 @@ behaviors:
       hidden_units: 256
       num_layers: 2
       vis_encode_type: simple
+    # ── Behavioral Cloning: 초반 LOS 휴리스틱 모방 (steps 이후 자동 비활성) ──
+    behavioral_cloning:
+      demo_path: Assets/Demos/LOS_Defense.demo
+      steps: 200000          # BC 적용 스텝 수 (이후 순수 RL)
+      strength: 0.5          # BC 손실 가중치 (0=BC 없음, 1=BC만)
+      batch_size: 512
+      num_epoch: 3
+      samples_per_update: 0  # 0 = 전체 데모 샘플 사용
     reward_signals:
       extrinsic:
         gamma: 0.99
         strength: 1.0
+      # ── GAIL: 데모 분포에서 내재적 보상 (BC 종료 후에도 지속) ──
+      gail:
+        gamma: 0.99
+        strength: 0.2        # extrinsic(1.0) 대비 약한 보조 신호
+        demo_path: Assets/Demos/LOS_Defense.demo
+        encoding_size: 128
+        learning_rate: 0.0003
+        use_actions: false   # 관측 분포만 모방 (액션까지 강제하면 탐험 억제)
     keep_checkpoints: 5
     max_steps: 5000000
     time_horizon: 64

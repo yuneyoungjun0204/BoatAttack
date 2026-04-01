@@ -62,6 +62,12 @@ namespace BoatAttack
         public Color enemyColor = new Color(1f, 0.25f, 0.2f, 1f);
         public Color mothershipColor = new Color(0.85f, 0.85f, 1f, 1f);
         public Color webLineColor = new Color(0.3f, 1f, 0.5f, 0.5f);
+        [Tooltip("Convoy(쌍동선) 연결선 색상")]
+        public Color convoyLineColor = new Color(0.3f, 0.85f, 1f, 0.9f);
+        [Tooltip("Deploy(그물 전개 중) 라인 색상")]
+        public Color deployLineColor = new Color(1f, 0.75f, 0.1f, 0.75f);
+        [Tooltip("아군-적군 매칭 라인 색상")]
+        public Color matchingLineColor = new Color(1f, 0.9f, 0.3f, 0.7f);
         public Color fogColor = new Color(0.0f, 0.0f, 0.02f, 0.4f);
         public Color cornerBracketColor = new Color(0.3f, 0.7f, 1f, 0.8f);
         public Color threatCircleColor = new Color(1f, 0.3f, 0.2f, 0.25f);
@@ -136,8 +142,20 @@ namespace BoatAttack
         float _effectiveRange;  // 기본 맵 범위 (m)
         bool _islandsCached;
 
-        bool _hasWebLine;
-        Vector2 _webP1, _webP2;
+        enum PairPhase { Convoy, Deploy, Separated }
+        struct WebLineData
+        {
+            public Vector3 pos1;
+            public Vector3 pos2;
+            public PairPhase phase;
+        }
+        struct MatchingLineData
+        {
+            public Vector3 allyCenter;
+            public Vector3 enemyPos;
+        }
+        List<WebLineData> _webLines = new List<WebLineData>();
+        List<MatchingLineData> _matchingLines = new List<MatchingLineData>();
 
         // 줌/팬 상태
         float _zoomLevel = 1f;
@@ -314,18 +332,79 @@ namespace BoatAttack
             if (showTrails)
                 DrawShipTrails(vh, cx, cy, halfW, halfH);
 
-            // 8. 웹 라인 (3단 글로우 효과)
-            if (_hasWebLine)
+            // 8. 배치 단계별 연결선
+            foreach (var wl in _webLines)
             {
-                bool p1In = IsInRect(_webP1, cx, cy, halfW, halfH);
-                bool p2In = IsInRect(_webP2, cx, cy, halfW, halfH);
-                if (p1In && p2In)
+                Vector2 p1 = WorldToLocal(wl.pos1, cx, cy);
+                Vector2 p2 = WorldToLocal(wl.pos2, cx, cy);
+                bool p1In = IsInRect(p1, cx, cy, halfW + 20f, halfH + 20f);
+                bool p2In = IsInRect(p2, cx, cy, halfW + 20f, halfH + 20f);
+                if (!p1In && !p2In) continue;
+
+                switch (wl.phase)
                 {
-                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 12f,
-                        new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.06f));
-                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 5f,
-                        new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.2f));
-                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 2.5f, webLineColor);
+                    case PairPhase.Convoy:
+                    {
+                        Color c = convoyLineColor;
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 14f,
+                            new Color(c.r, c.g, c.b, 0.08f));
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 6f,
+                            new Color(c.r, c.g, c.b, 0.3f));
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 2.5f, c);
+                        DrawFilledCircle(vh, p1.x, p1.y, 3.5f, c, 6);
+                        DrawFilledCircle(vh, p2.x, p2.y, 3.5f, c, 6);
+                        break;
+                    }
+                    case PairPhase.Deploy:
+                    {
+                        Color c = deployLineColor;
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 8f,
+                            new Color(c.r, c.g, c.b, 0.08f));
+                        // 점선: 16 세그먼트 교대
+                        int dashCount = 16;
+                        float ddx = (p2.x - p1.x) / dashCount;
+                        float ddy = (p2.y - p1.y) / dashCount;
+                        for (int d = 0; d < dashCount; d++)
+                        {
+                            float sx = p1.x + ddx * d, sy = p1.y + ddy * d;
+                            Color dc = (d % 2 == 0) ? c : new Color(c.r, c.g, c.b, 0.05f);
+                            DrawLine(vh, sx, sy, sx + ddx, sy + ddy, 2f, dc);
+                        }
+                        break;
+                    }
+                    case PairPhase.Separated:
+                    {
+                        Color c = webLineColor;
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 12f,
+                            new Color(c.r, c.g, c.b, 0.06f));
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 5f,
+                            new Color(c.r, c.g, c.b, 0.2f));
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 2.5f, c);
+                        break;
+                    }
+                }
+            }
+
+            // 8.5. 아군-적군 매칭 라인 (대시 스타일)
+            foreach (var ml in _matchingLines)
+            {
+                Vector2 ap = WorldToLocal(ml.allyCenter, cx, cy);
+                Vector2 ep = WorldToLocal(ml.enemyPos, cx, cy);
+                bool apIn = IsInRect(ap, cx, cy, halfW + 20f, halfH + 20f);
+                bool epIn = IsInRect(ep, cx, cy, halfW + 20f, halfH + 20f);
+                if (!apIn && !epIn) continue;
+
+                Color mc = matchingLineColor;
+                DrawLine(vh, ap.x, ap.y, ep.x, ep.y, 8f,
+                    new Color(mc.r, mc.g, mc.b, 0.07f));
+                int dashCount = 16;
+                float ddx = (ep.x - ap.x) / dashCount;
+                float ddy = (ep.y - ap.y) / dashCount;
+                for (int d = 0; d < dashCount; d++)
+                {
+                    float sx = ap.x + ddx * d, sy = ap.y + ddy * d;
+                    Color dc = (d % 2 == 0) ? mc : new Color(mc.r, mc.g, mc.b, 0.05f);
+                    DrawLine(vh, sx, sy, sx + ddx, sy + ddy, 1.5f, dc);
                 }
             }
 
@@ -381,14 +460,10 @@ namespace BoatAttack
         void CollectShipData()
         {
             _shipData.Clear();
-            _hasWebLine = false;
+            _webLines.Clear();
 
             bool recordTrail = showTrails && (Time.unscaledTime - _lastTrailTime >= trailInterval);
             if (recordTrail) _lastTrailTime = Time.unscaledTime;
-
-            Rect rect = rectTransform.rect;
-            float cx = rect.center.x;
-            float cy = rect.center.y;
 
             if (envController.motherShip != null)
             {
@@ -403,23 +478,54 @@ namespace BoatAttack
                 });
             }
 
-            if (envController.launchZoneManager != null && envController.launchZoneManager.IsInitialized)
+            var lzm = envController.launchZoneManager;
+            if (lzm != null && lzm.IsInitialized)
             {
-                var activeAgents = envController.launchZoneManager.GetActiveAgents();
-                foreach (var agent in activeAgents)
-                    AddShipAgent(agent, friendlyColor, friendlyMarkerSize, recordTrail);
+                int poolCnt = lzm.GetCurrentPoolCount();
+                for (int i = 0; i < poolCnt; i++)
+                {
+                    DefensePair pair = lzm.GetPair(i);
+                    if (pair == null || !pair.isActive) continue;
+
+                    AddShipAgent(pair.agent1, friendlyColor, friendlyMarkerSize, recordTrail);
+                    AddShipAgent(pair.agent2, friendlyColor, friendlyMarkerSize, recordTrail);
+
+                    if (pair.agent1 != null && pair.agent2 != null &&
+                        pair.agent1.transform.position.y > -100f &&
+                        pair.agent2.transform.position.y > -100f)
+                    {
+                        PairPhase phase;
+                        if (pair.isConvoyLinked || pair.convoyJoint != null)
+                            phase = PairPhase.Convoy;
+                        else if (pair.isDeploying)
+                            phase = PairPhase.Deploy;
+                        else
+                            phase = PairPhase.Separated;
+
+                        _webLines.Add(new WebLineData
+                        {
+                            pos1 = pair.agent1.transform.position,
+                            pos2 = pair.agent2.transform.position,
+                            phase = phase
+                        });
+                    }
+                }
             }
             else
             {
                 AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize, recordTrail);
                 AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize, recordTrail);
-            }
-
-            if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
-            {
-                _webP1 = WorldToLocal(envController.defenseAgent1.transform.position, cx, cy);
-                _webP2 = WorldToLocal(envController.defenseAgent2.transform.position, cx, cy);
-                _hasWebLine = true;
+                if (envController.defenseAgent1 != null && envController.defenseAgent2 != null &&
+                    envController.defenseAgent1.transform.position.y > -100f &&
+                    envController.defenseAgent2.transform.position.y > -100f)
+                {
+                    _webLines.Add(new WebLineData
+                    {
+                        pos1 = envController.defenseAgent1.transform.position,
+                        pos2 = envController.defenseAgent2.transform.position,
+                        phase = PairPhase.Separated
+                    });
+                }
             }
 
             if (envController.enemyShips != null)
@@ -429,6 +535,38 @@ namespace BoatAttack
                     if (enemy != null && enemy.activeInHierarchy)
                         AddShip(enemy, enemyColor, enemyMarkerSize, recordTrail);
                 }
+            }
+
+            CollectMatchingLines();
+        }
+
+        void CollectMatchingLines()
+        {
+            _matchingLines.Clear();
+
+            var lzm = envController.launchZoneManager;
+            if (lzm == null || !lzm.IsInitialized) return;
+
+            int poolCount = lzm.GetCurrentPoolCount();
+            for (int i = 0; i < poolCount; i++)
+            {
+                DefensePair pair = lzm.GetPair(i);
+                if (pair == null || !pair.isActive) continue;
+                if (pair.agent1 == null || pair.agent2 == null) continue;
+
+                int targetIdx = pair.agent1.assignedTargetIndex;
+                if (targetIdx <= 0) continue;
+
+                int enemyPoolIdx = targetIdx - 1;
+                GameObject enemy = envController.GetPooledEnemy(enemyPoolIdx);
+                if (enemy == null || !enemy.activeSelf) continue;
+
+                Vector3 center = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+                _matchingLines.Add(new MatchingLineData
+                {
+                    allyCenter = center,
+                    enemyPos = enemy.transform.position
+                });
             }
         }
 

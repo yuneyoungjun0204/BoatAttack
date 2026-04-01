@@ -39,6 +39,10 @@ namespace BoatAttack
         public Color enemyColor = new Color(1f, 0.25f, 0.2f, 1f);
         public Color mothershipColor = new Color(0.85f, 0.85f, 1f, 1f);
         public Color webLineColor = new Color(0.3f, 1f, 0.5f, 0.6f);
+        [Tooltip("Convoy(쌍동선) 연결선 색상")]
+        public Color convoyLineColor = new Color(0.3f, 0.85f, 1f, 0.9f);
+        [Tooltip("Deploy(그물 전개 중) 라인 색상")]
+        public Color deployLineColor = new Color(1f, 0.75f, 0.1f, 0.75f);
         [Tooltip("아군-적군 매칭 라인 색상")]
         public Color matchingLineColor = new Color(1f, 0.9f, 0.3f, 0.5f);
         public Color ringColor = new Color(0.15f, 0.55f, 0.2f, 0.6f);
@@ -89,17 +93,25 @@ namespace BoatAttack
             public Vector3 enemyPos;    // 타겟 적군 월드 좌표
         }
 
+        enum PairPhase { Convoy, Deploy, Separated }
+
+        struct WebLineData
+        {
+            public Vector3 pos1;      // agent1 월드 좌표
+            public Vector3 pos2;      // agent2 월드 좌표
+            public PairPhase phase;   // 배치 단계
+        }
+
         List<IslandMeshData> _islandCache = new List<IslandMeshData>();
         List<ShipRenderData> _shipData = new List<ShipRenderData>();
         List<MatchingLineData> _matchingLines = new List<MatchingLineData>();
+        List<WebLineData> _webLines = new List<WebLineData>();
         int _totalIslandVerts;
 
         float _sweepAngle;
         Vector3 _radarWorldCenter;
         float _pixelRadius;
         bool _islandsCached;
-        bool _hasWebLine;
-        Vector2 _webP1, _webP2;
 
         // 레이더 기본 요소 버텍스 예산 (원, 격자, 링, 스위프, 마커 등)
         const int RADAR_BASE_VERTS = 2000;
@@ -198,19 +210,52 @@ namespace BoatAttack
             // 8. 섬 지형
             DrawIslands(vh, cx, cy);
 
-            // 9. 웹 라인 (글로우 효과)
-            if (_hasWebLine)
+            // 9. 배치 단계별 연결선
+            foreach (var wl in _webLines)
             {
-                float d1 = new Vector2(_webP1.x - cx, _webP1.y - cy).magnitude;
-                float d2 = new Vector2(_webP2.x - cx, _webP2.y - cy).magnitude;
-                if (d1 < _pixelRadius && d2 < _pixelRadius)
+                Vector2 p1 = WorldToLocal(wl.pos1, cx, cy);
+                Vector2 p2 = WorldToLocal(wl.pos2, cx, cy);
+                float d1 = new Vector2(p1.x - cx, p1.y - cy).magnitude;
+                float d2 = new Vector2(p2.x - cx, p2.y - cy).magnitude;
+                if (d1 > _pixelRadius && d2 > _pixelRadius) continue;
+
+                switch (wl.phase)
                 {
-                    // 넓은 글로우
-                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 10f,
-                        new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.1f));
-                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 5f,
-                        new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.25f));
-                    DrawLine(vh, _webP1.x, _webP1.y, _webP2.x, _webP2.y, 2.5f, webLineColor);
+                    case PairPhase.Convoy:
+                    {
+                        // 쌍동선 결합 — 굵은 실선 (청록색, 빛나는 막대)
+                        Color c = convoyLineColor;
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 14f,
+                            new Color(c.r, c.g, c.b, 0.08f));
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 6f,
+                            new Color(c.r, c.g, c.b, 0.3f));
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 2.5f, c);
+                        // 양끝 작은 점 (연결 핀)
+                        DrawFilledCircle(vh, p1.x, p1.y, 3.5f, c, 6);
+                        DrawFilledCircle(vh, p2.x, p2.y, 3.5f, c, 6);
+                        break;
+                    }
+                    case PairPhase.Deploy:
+                    {
+                        // 그물 전개 중 — 주황 점선 (벌어지는 중)
+                        Color c = deployLineColor;
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 8f,
+                            new Color(c.r, c.g, c.b, 0.08f));
+                        DrawDashedLine(vh, p1.x, p1.y, p2.x, p2.y, 2f,
+                            c, new Color(c.r, c.g, c.b, 0.05f));
+                        break;
+                    }
+                    case PairPhase.Separated:
+                    {
+                        // 그물 전개 완료 — 초록 실선 (기존 webLineColor)
+                        Color c = webLineColor;
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 10f,
+                            new Color(c.r, c.g, c.b, 0.1f));
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 5f,
+                            new Color(c.r, c.g, c.b, 0.25f));
+                        DrawLine(vh, p1.x, p1.y, p2.x, p2.y, 2.5f, c);
+                        break;
+                    }
                 }
             }
 
@@ -374,11 +419,7 @@ namespace BoatAttack
         void CollectShipData()
         {
             _shipData.Clear();
-            _hasWebLine = false;
-
-            Rect rect = rectTransform.rect;
-            float cx = rect.center.x;
-            float cy = rect.center.y;
+            _webLines.Clear();
 
             if (envController.motherShip != null)
             {
@@ -392,26 +433,55 @@ namespace BoatAttack
                 });
             }
 
-            // 아군 표시: LaunchZoneManager가 있으면 모든 활성 쌍, 없으면 원본 쌍만
-            if (envController.launchZoneManager != null && envController.launchZoneManager.IsInitialized)
+            // 아군 표시 + 배치 상황 라인 수집
+            var lzmForShips = envController.launchZoneManager;
+            if (lzmForShips != null && lzmForShips.IsInitialized)
             {
-                var activeAgents = envController.launchZoneManager.GetActiveAgents();
-                foreach (var agent in activeAgents)
+                int poolCnt = lzmForShips.GetCurrentPoolCount();
+                for (int i = 0; i < poolCnt; i++)
                 {
-                    AddShipAgent(agent, friendlyColor, friendlyMarkerSize);
+                    DefensePair pair = lzmForShips.GetPair(i);
+                    if (pair == null || !pair.isActive) continue;
+
+                    // 선박 마커
+                    AddShipAgent(pair.agent1, friendlyColor, friendlyMarkerSize);
+                    AddShipAgent(pair.agent2, friendlyColor, friendlyMarkerSize);
+
+                    // 배치 단계 판별 → 연결선 (HIDDEN_POS 제외)
+                    if (pair.agent1 != null && pair.agent2 != null &&
+                        pair.agent1.transform.position.y > -100f &&
+                        pair.agent2.transform.position.y > -100f)
+                    {
+                        PairPhase phase;
+                        if (pair.isConvoyLinked || pair.convoyJoint != null)
+                            phase = PairPhase.Convoy;
+                        else if (pair.isDeploying)
+                            phase = PairPhase.Deploy;
+                        else
+                            phase = PairPhase.Separated;
+
+                        _webLines.Add(new WebLineData
+                        {
+                            pos1 = pair.agent1.transform.position,
+                            pos2 = pair.agent2.transform.position,
+                            phase = phase
+                        });
+                    }
                 }
             }
             else
             {
                 AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize);
                 AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize);
-            }
-
-            if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
-            {
-                _webP1 = WorldToLocal(envController.defenseAgent1.transform.position, cx, cy);
-                _webP2 = WorldToLocal(envController.defenseAgent2.transform.position, cx, cy);
-                _hasWebLine = true;
+                if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
+                {
+                    _webLines.Add(new WebLineData
+                    {
+                        pos1 = envController.defenseAgent1.transform.position,
+                        pos2 = envController.defenseAgent2.transform.position,
+                        phase = PairPhase.Separated
+                    });
+                }
             }
 
             if (envController.enemyShips != null)
