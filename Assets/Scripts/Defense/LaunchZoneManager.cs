@@ -485,8 +485,8 @@ namespace BoatAttack
                 buf = agent.GetComponent<BufferSensorComponent>();
             if (buf == null)
                 buf = agent.gameObject.AddComponent<BufferSensorComponent>();
-            buf.ObservableSize = 4;       // r, f, d, h
-            buf.MaxNumObservables = 10;
+            buf.ObservableSize = 3;   // Dist, SignedBrg, Hdg (DefenseAgent와 일치)
+            buf.MaxNumObservables = agent.enemyMaxObservables;  // 인스펙터 값 사용
             agent.enemyBufferSensor = buf;
         }
 

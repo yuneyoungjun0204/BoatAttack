@@ -262,6 +262,14 @@ namespace BoatAttack
         [Tooltip("환경 컨트롤러 (날씨 랜덤화용)")]
         public EnvironmentController environmentController;
 
+        [Header("Observation Scale (전 에이전트 공통)")]
+        [Range(1f, 10f)] public float enemyDistScale = 1f;
+        [Range(1f, 10f)] public float enemyBearingScale = 1f;  // 2번 관측: CTE 스케일
+        [Range(1f, 10f)] public float enemyHeadingScale = 1f;
+        [Range(1f, 10f)] public float allyDistScale = 1f;
+        [Range(1f, 10f)] public float allyBearingScale = 1f;
+        [Range(1f, 10f)] public float allyWebLengthScale = 1f;
+
         [Header("Enemy Rush Movement")]
         [Tooltip("동적 스폰 시 적군 자동 돌진 활성화")]
         public bool enableEnemyRush = true;
@@ -1523,12 +1531,9 @@ namespace BoatAttack
 
                     int stepsSinceHit = _resetTimer - pair.lastRaycastHitStep;
                     // Convoy 쌍은 이동 중이므로 타임아웃 2배 유예
-                    int baseTimeout = pair.isConvoyLinked
+                    int effectiveTimeout = pair.isConvoyLinked
                         ? rewardCalculator.raycastTimeoutSteps * 2
                         : rewardCalculator.raycastTimeoutSteps;
-                    int effectiveTimeout = pair.hasEverHitRaycast
-                        ? baseTimeout / 2
-                        : baseTimeout;
                     if (stepsSinceHit > effectiveTimeout)
                     {
                         if (pair.agent1 != null)
@@ -2320,18 +2325,19 @@ namespace BoatAttack
                 return;
             }
 
-            // 엔진 정지 (관성 제거, 파도/부력은 유지)
+            // AttackAgent 액션 차단 (_hasExploded → FixedUpdate/OnActionReceived 스킵)
+            var attackAgent = enemyBoat.GetComponent<AttackAgent>();
+            if (attackAgent != null)
+                attackAgent.SetNeutralized();
+
+            // 엔진 정지 (관성 제거)
             var rb = enemyBoat.GetComponent<Rigidbody>();
             if (rb != null)
             {
                 rb.velocity = Vector3.zero;
                 rb.angularVelocity = Vector3.zero;
+                rb.isKinematic = true;  // 파도/부력 힘 차단 (GerstnerWaves 재등록 문제 방지를 위해 SetActive 사용 안 함)
             }
-
-            // AttackAgent 액션 차단 (_hasExploded → FixedUpdate/OnActionReceived 스킵)
-            var attackAgent = enemyBoat.GetComponent<AttackAgent>();
-            if (attackAgent != null)
-                attackAgent.SetNeutralized();
 
             // 활성 적군 목록에서 제거 (카메라/보상 계산에서 무시됨)
             MarkEnemyAsNeutralized(enemyBoat);
@@ -3475,10 +3481,11 @@ namespace BoatAttack
             obj.transform.position = position;
             obj.transform.rotation = rotation;
 
-            // 3. Rigidbody 속도 초기화
+            // 3. Rigidbody 속도 초기화 + isKinematic 복원 (DisableEnemy에서 true로 설정됨)
             Rigidbody rb = _poolRigidbodies[index];
             if (rb != null)
             {
+                rb.isKinematic = false;  // 물리 시뮬레이션 복원
                 rb.velocity = Vector3.zero;
                 rb.angularVelocity = Vector3.zero;
             }

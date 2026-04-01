@@ -719,6 +719,8 @@ MonoBehaviour:
   envController: {fileID: 0}
   enemyBufferSensor: {fileID: 0}
   allyBufferSensor: {fileID: 0}
+  enemyMaxObservables: 3
+  allyMaxObservables: 3
   maxLinearVelocity: 20
   maxAngularVelocity: 90
   velocityControlGain: 1
@@ -730,12 +732,14 @@ MonoBehaviour:
   steeringSensitivity: 1.112
   speedMultiplier: 1
   inputSmoothing: 0.2
-  enemyNormK: 700
-  motherNormK: 1000
-  rayNormK: 100
-  enemyDistScale: 1
+  enemyNormK: 1000
   bearingNormK: 10
-  motherDistScale: 1
+  enemyDistScale: 1
+  enemyBearingScale: 1
+  enemyHeadingScale: 1
+  allyDistScale: 10
+  allyBearingScale: 10
+  allyWebLengthScale: 10
   speedNormK: 10
   forwardSpeedScale: 1
   driftSpeedScale: 1

@@ -26,6 +26,12 @@ namespace BoatAttack
         public int historyLength = 300;
         public float lineWidth = 1.5f;
 
+        [Header("=== Y-Axis Range ===")]
+        [Tooltip("그래프 Y축 최소값")]
+        public float graphYMin = -1f;
+        [Tooltip("그래프 Y축 최대값")]
+        public float graphYMax = 1f;
+
         [Header("=== Layout ===")]
         public int columns = 4;
         public float cellPadding = 4f;
@@ -59,8 +65,8 @@ namespace BoatAttack
 
         // EnemyBuffer: 3개씩 (Dist, SignedBrg, Hdg)
         private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "Hdg" };
-        // AllyBuffer: 3개씩 (Dist, Brg, WebLen)
-        private static readonly string[] AllyObsSuffix = { "Dist", "Brg", "Web" };
+        // AllyBuffer: 3개씩 (Dist, Brg, Hdg)
+        private static readonly string[] AllyObsSuffix = { "Dist", "Brg", "Hdg" };
 
         private static readonly Color[] GraphColors = { };
 
@@ -557,7 +563,7 @@ namespace BoatAttack
                 }
 
                 // 0 기준선 (중앙, 강조)
-                float zeroY = gy + gh * 0.5f;
+                float zeroY = gy + (0f - graphYMin) / (graphYMax - graphYMin) * gh;
                 AddRect(vh, gx, zeroY - 0.5f, gw, 1.5f, zeroLineColor);
 
                 // ±0.5 보조선
@@ -582,8 +588,8 @@ namespace BoatAttack
                 if (_sampleCount > 0)
                 {
                     int lastIdx = (_writeIndex - 1 + historyLength) % historyLength;
-                    float lastVal = Mathf.Clamp(_history[i][lastIdx], -1f, 1f);
-                    float markerY = gy + (lastVal + 1f) * 0.5f * gh;
+                    float lastVal = Mathf.Clamp(_history[i][lastIdx], graphYMin, graphYMax);
+                    float markerY = gy + (lastVal - graphYMin) / (graphYMax - graphYMin) * gh;
                     float markerX = gx + gw;
                     // 작은 삼각형 마커
                     Color mCol = indicatorCol;
@@ -661,7 +667,7 @@ namespace BoatAttack
             }
 
             // 0 기준선
-            float zeroY = gy2 + gh * 0.5f;
+            float zeroY = gy2 + (0f - graphYMin) / (graphYMax - graphYMin) * gh;
             AddRect(vh, gx, zeroY - 0.75f, gw, 2f, zeroLineColor);
 
             // ±0.25, ±0.5, ±0.75 보조선 (확대 시 더 세밀)
@@ -684,8 +690,8 @@ namespace BoatAttack
             if (_sampleCount > 0)
             {
                 int lastIdx = (_writeIndex - 1 + historyLength) % historyLength;
-                float lastVal = Mathf.Clamp(_history[obsIdx][lastIdx], -1f, 1f);
-                float markerY = gy2 + (lastVal + 1f) * 0.5f * gh;
+                float lastVal = Mathf.Clamp(_history[obsIdx][lastIdx], graphYMin, graphYMax);
+                float markerY = gy2 + (lastVal - graphYMin) / (graphYMax - graphYMin) * gh;
                 float markerX = gx + gw;
                 int mi = vh.currentVertCount;
                 vh.AddVert(new Vector3(markerX, markerY), indicatorCol, Vector2.zero);
@@ -706,13 +712,13 @@ namespace BoatAttack
                 int idx0 = (_writeIndex - count + s - 1 + historyLength) % historyLength;
                 int idx1 = (_writeIndex - count + s + historyLength) % historyLength;
 
-                float v0 = Mathf.Clamp(_history[obsIdx][idx0], -1f, 1f);
-                float v1 = Mathf.Clamp(_history[obsIdx][idx1], -1f, 1f);
+                float v0 = Mathf.Clamp(_history[obsIdx][idx0], graphYMin, graphYMax);
+                float v1 = Mathf.Clamp(_history[obsIdx][idx1], graphYMin, graphYMax);
 
                 float x0 = gx + (s - 1) * stepX;
                 float x1 = gx + s * stepX;
-                float y0 = gy + (v0 + 1f) * 0.5f * gh;
-                float y1 = gy + (v1 + 1f) * 0.5f * gh;
+                float y0 = gy + (v0 - graphYMin) / (graphYMax - graphYMin) * gh;
+                float y1 = gy + (v1 - graphYMin) / (graphYMax - graphYMin) * gh;
 
                 AddLine(vh, x0, y0, x1, y1, width, lineColor);
             }

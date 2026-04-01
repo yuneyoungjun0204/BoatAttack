@@ -1,143 +1,107 @@
-# BoatAttack Defense Training Project
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 프로젝트 개요
-- Unity 기반 선박 시뮬레이션 + ML-Agents 강화학습
-- 목표: 아군 선박 2대가 그물(Web)로 적군 선박 포획
-- MA-PPO (Multi-Agent PPO) 협동 학습
+- Unity 기반 해상 시뮬레이션 + ML-Agents 강화학습
+- 목표: 복수 아군 USV 쌍이 차단망(Web)으로 다수 적군 선박 순차 포획
+- MA-POCA (Multi-Agent POsthumous Credit Assignment) + CTDE 구조
+- Gerstner 파도 + 풍력 외란 포함 사실적 해양 환경
 
 ## 핵심 파일 구조
 
-### ML-Agents 관련
+### ML-Agents 핵심
 | 파일 | 설명 |
 |------|------|
-| `Assets/Scripts/Defense/DefenseEnvController.cs` | 환경 컨트롤러, 에피소드 관리, 리셋 |
-| `Assets/Scripts/Defense/DefenseRewardCalculator.cs` | 보상 계산 (Stage별 분리) |
-| `Assets/Scripts/MLAgents/DefenseAgent.cs` | 에이전트 정의, 관측/액션 처리 |
-| `config/defense_boat_trainer.yaml` | 학습 하이퍼파라미터 설정 |
+| `Assets/Scripts/Defense/DefenseEnvController.cs` | 환경 컨트롤러: 에피소드 관리, 보상 분배, 종료 조건, FixedJoint convoy 로직 |
+| `Assets/Scripts/Defense/DefenseRewardCalculator.cs` | 보상 계수 저장소 (Inspector 노출) |
+| `Assets/Scripts/MLAgents/DefenseAgent.cs` | 에이전트: BufferSensor 관측, 액션 처리, LOS Guidance |
+| `Assets/Scripts/Defense/EnemyFormationSpawner.cs` | 적군 포메이션 생성 (집중/파상/양동/랜덤) |
+| `Assets/Scripts/Defense/LaunchZoneManager.cs` | 아군 진수구역 + 다중 쌍 풀 관리 |
+| `Assets/Scripts/Defense/MLAgents/DynamicWeb.cs` | 두 선박 간 차단망 물리 |
+| `config/defense_boat_trainer.yaml` | 학습 하이퍼파라미터 |
 
 ### 선박 물리
 | 파일 | 설명 |
 |------|------|
-| `Assets/Scripts/Boat/Engine.cs` | 엔진 추진력, AddForce 처리, Gerstner 파도 연동 |
+| `Assets/Scripts/Boat/Engine.cs` | 엔진 추진력 (ForceMode.Acceleration), Gerstner 파도 연동 |
 | `Assets/Scripts/Boat/Boat.cs` | 선박 기본 로직 |
 
-## Stage 시스템 (Curriculum Learning)
+## 기동 방식: 쌍동선 → 단동선 전환 (FixedJoint 브랜치)
 
-| Stage | 목적 | 활성화 보상 |
-|-------|------|------------|
-| **Stage1_Formation** | 대형 유지 학습 | 개별속도, 선회페널티, 그룹대형(헤딩/속도/간격) |
-| **Stage2_Capture** | 포획 학습 | 포획보상, 전술기동(수직차단/추적이득) |
-| **Stage3_Tactical** | 종합 (Stage1+2) | Stage1 + Stage2 모든 보상 |
+3단계 프로세스:
+1. **Convoy** (쌍동선): FixedJoint로 두 선박 물리 연결 → 단일체로 접근
+2. **Deploy** (그물 전개): 적 근처 도달 시 Joint 해제 → 그물 점진 전개
+3. **Separated** (단동선): 그물 임계폭 도달 → 개별 기동으로 포획
 
-### Stage별 보상 매트릭스
-| 보상 | Stage1 | Stage2 | Stage3 |
-|------|--------|--------|--------|
-| 개별 속도 보상 | O | X | O |
-| 선회 페널티 | O | X | O |
-| Stage1 그룹 보상 | O | X | O |
-| 포획 보상 | X | O | O |
-| 전술 기동 | X | O | O |
+## 관측 공간 (BufferSensor 기반)
+
+VectorSensor(0) + 가변 BufferSensor 2개:
+- **EnemyBufferSensor**: 활성 적군 N대 × 3 (dist, signedBearing, headingDiff) — 거리순 정렬
+- **AllyBufferSensor**: 아군 쌍/Phantom/트랩 M개 × 3 (dist, bearing, webLength)
+
+### 정규화 함수
+| 대상 | 함수 | 범위 |
+|------|------|------|
+| 거리 | `(x-k)/(|x|+k)` | [-1, 1) — 주의: k에서 영점, 부호 전환 |
+| 베어링 | `sqrt(angle/180) × sign(cross)` | [-1, 1] |
+| 헤딩차 | `cos(δ/2) × sign(δ)` | [-1, 1] |
 
 ## 액션 공간
 
 ```csharp
-// DefenseAgent.cs OnActionReceived()
 float throttleInput = actions.ContinuousActions[0];  // -1 ~ 1
 float steeringInput = actions.ContinuousActions[1];  // -1 ~ 1
-
-// Throttle: Mapping 방식 (-1~1 → 0.5~1.0)
+// Throttle: (-1~1) → (0.5~1.0)
 float throttle = (throttleInput + 1f) * 0.25f + 0.5f;
-// -1 → 0.5, 0 → 0.75, 1 → 1.0
 ```
 
-## 주요 보상 파라미터
+## Stage 시스템 (Curriculum Learning)
 
-### 개별 보상 (DefenseRewardCalculator)
-```csharp
-stage1IndividualSpeedReward = 0.02f;      // 속도 보상 (최대)
-stage1SteeringPenaltyCoeff = 0.0002f;     // 선회 페널티 계수
-stage1SpeedThreshold = 10f;               // 속도 보상 기준 (m/s)
-```
+Stage1~Stage9까지 확장. 주요 Stage:
+- **Stage1_Formation**: 대형 유지
+- **Stage2_Capture**: 포획
+- **Stage3_Tactical**: 종합
+- **Stage6_PhantomFormation**: Phantom 가상 아군 쌍
+- **Stage9_DisarmReform**: 포획 후 이탈 + 트랩 그물
 
-### 포획 보상 (DefenseEnvController)
-```csharp
-captureReward = 1.0f;                     // 포획 시 기본 보상
-captureDistanceBonus = 0.5f;              // 모선에서 멀리 포획 시 보너스
-captureDistanceBonusRange = 500f;         // 최대 보너스 거리
-```
+## 에피소드 종료 조건
 
-### 페널티
-```csharp
-motherShipCollisionPenalty = -2.0f;       // 모선 충돌
-allyDistancePenalty = -1.0f;              // 아군 간 거리 초과 (120m)
-maxAllyDistance = 120f;                   // 아군 최대 허용 거리
-```
+| 조건 | 트리거 |
+|------|--------|
+| `MaxEnvironmentSteps` | `_resetTimer >= maxEnvironmentSteps` (기본 2500) |
+| `AllEnemiesNeutralized` | 모든 적 무력화 (정상 종료) |
+| `NoPairsLeft` | 모든 아군 쌍 소진 (`disableNoPairsEndEpisode=false`일 때만) |
+| `AllyHitWeb` | 아군이 타 쌍 그물에 충돌 (레거시) |
+| `FriendlyCollision` | 아군끼리 충돌 (레거시) |
 
-## 알려진 이슈 및 해결책
+## 알려진 이슈
 
-### 에피소드 시작 시 배 날아감/뒤집힘
-**원인**: transform 직접 설정 + 물리력 누적
-**해결**:
-```csharp
-rb.velocity = Vector3.zero;
-rb.angularVelocity = Vector3.zero;
-rb.position = targetPos;      // transform 대신 rb 사용
-rb.rotation = originalRot;
-rb.Sleep();                   // 물리 시뮬레이션 일시 정지
-```
-
-### 학습 시 물리 불안정
-**원인**: `time_scale: 20` → Gerstner 파도/부력 계산 불안정
-**해결**: `time_scale: 10` 이하로 설정
-
-### Mean Reward 고정 (탐험 부족)
-**원인**: 보상 차이가 너무 작음 (0.0005)
-**해결**: 보상 스케일 20배 증가
+- **에피소드 시작 시 배 날아감**: transform 대신 `rb.position/rotation` 사용 + `rb.Sleep()`
+- **time_scale 20 이상**: Gerstner 파도 불안정 → 10 이하 권장
+- **멀티 환경**: `FindObjectOfType` → `GetComponentInChildren` 사용 필수
+- **Water System**: Dictionary 중복 키 → `Cleanup()` 먼저 호출
+- **AttackBoatDisabler**: `Destroy` 대신 `SetActive(false)` 사용 필수
+- **Unity 씬 직접 편집**: 유니티 실행 중 외부에서 .unity 파일 수정해도 무시됨 → Inspector에서 변경 + Ctrl+S
+- **`_prevThrottle` 초기값**: 0이면 Lerp로 throttle이 0.5 미만 → 0.5로 초기화 필요
+- **거리 정규화 `(x-k)/(|x|+k)`**: k에서 영점 통과, 부호 전환으로 네트워크 혼란 가능 → `k/(x+k)` 방식 검토 중
 
 ## 학습 명령어
 
 ```bash
-# 새 학습 시작
-mlagents-learn config/defense_boat_trainer.yaml --run-id=defense_v1
-
-# 이어서 학습
-mlagents-learn config/defense_boat_trainer.yaml --run-id=defense_v1 --resume
-
-# TensorBoard 확인
-tensorboard --logdir=results
+mlagents-learn config/defense_boat_trainer.yaml --run-id=defense_v1          # 새 학습
+mlagents-learn config/defense_boat_trainer.yaml --run-id=defense_v1 --resume # 이어학습
+tensorboard --logdir=results                                                  # 모니터링
 ```
 
-## 학습 설정 (defense_boat_trainer.yaml)
-
-```yaml
-# 주요 설정
-time_scale: 10          # 물리 안정성 위해 20→10 권장
-batch_size: 1024
-buffer_size: 10240
-learning_rate: 0.0003
-max_steps: 5000000
-time_horizon: 64
-```
-
-## 물리 관련 주의사항
-
-1. **Engine.cs의 ForceMode.Acceleration**: 질량 무관 가속, timeScale 영향 받음
-2. **Gerstner 파도**: 위치 급변 시 `_yHeight` 계산 오류 가능
-3. **inputSmoothing**: `_prevThrottle` 초기값이 0이면 Lerp로 throttle이 0.5 미만 될 수 있음 → 0.5로 초기화 필요
-
-## 관측 공간 (CollectObservations)
-
-- 자신: 위치(x,z), 헤딩, 속도 = 4개
-- 팀원: 상대 위치(x,z), 상대 헤딩, 속도 = 4개
-- 적군들: 상대 위치(x,z), 상대 헤딩, 속도 = 4 × 적군수
-- 모선: 상대 위치(x,z), 거리 = 3개
-
-## 자주 수정하는 파라미터 위치
+## 자주 수정하는 파라미터
 
 | 파라미터 | 파일 | 변수명 |
 |----------|------|--------|
-| 보상 계산 주기 | DefenseEnvController | `rewardCalculationInterval` |
-| 개별 속도 보상 | DefenseRewardCalculator | `stage1IndividualSpeedReward` |
-| 선회 페널티 계수 | DefenseRewardCalculator | `stage1SteeringPenaltyCoeff` |
-| 최적 거리 | DefenseRewardCalculator | `stage1OptimalDistance` (50m) |
 | 학습 스테이지 | DefenseEnvController Inspector | `currentStage` |
+| 최대 환경 스텝 | DefenseEnvController | `maxEnvironmentSteps` |
+| 보상 계수 전체 | DefenseRewardCalculator Inspector | 각종 coeff/penalty |
+| 적군 돌진 속도 | DefenseEnvController Inspector | `enemyRushThrottle` |
+| 포메이션 타입 | EnemyFormationSpawner Inspector | `formationType` |
+| 활성 쌍 수 | LaunchZoneManager Inspector | `activePairCount` |
+| 관측 정규화 K | DefenseAgent Inspector | `enemyNormK`, `allyPairNormK` |

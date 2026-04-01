@@ -5130,10 +5130,10 @@ MonoBehaviour:
   steeringTorque: 5
   horsePower: 30
   maxSpeed: 1000
-  stabilizationTorque: 5
-  stabilizationDamping: 2
+  stabilizationTorque: 7
+  stabilizationDamping: 3
   stabilizationDeadZone: 10
-  maxTiltAngle: 100
+  maxTiltAngle: 80
   centerOfMassOffset: {x: 0, y: -1, z: 0}
   windForceMultiplier: 10
   environmentSensitivity: -1

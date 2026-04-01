@@ -68,6 +68,12 @@ namespace BoatAttack
         [Tooltip("아군 쌍 가변 관측용 BufferSensor (자동 생성)")]
         public BufferSensorComponent allyBufferSensor;
 
+        [Tooltip("적군 BufferSensor 최대 관측 수")]
+        [Range(1, 20)] public int enemyMaxObservables = 3;
+
+        [Tooltip("아군 BufferSensor 최대 관측 수")]
+        [Range(1, 20)] public int allyMaxObservables = 3;
+
         [Header("Action Settings")]
         public float maxLinearVelocity = 200f;
         public float maxAngularVelocity = 90f;
@@ -101,16 +107,25 @@ namespace BoatAttack
         // rayNormK 제거됨 (LOS 관측 제거)
 
         [Header("Observation Scale (정규화 후 가중치)")]
-        [Range(0f, 5f)] public float enemyDistScale = 1f;
         [Tooltip("베어링 유리함수 k값 (작을수록 정면 민감도↑, 0.5지점=k도)")]
         [Range(5f, 90f)] public float bearingNormK = 30f;
+
+        [Header("Enemy Observation Scale (적군 관측 계수)")]
+        [Range(1f, 10f)] public float enemyDistScale = 1f;
+        [Range(1f, 10f)] public float enemyBearingScale = 1f;  // 2번 관측: CTE 스케일 (Inspector 이름 유지)
+        [Range(1f, 10f)] public float enemyHeadingScale = 1f;
+
+        [Header("Ally Observation Scale (아군 관측 계수)")]
+        [Range(1f, 10f)] public float allyDistScale = 1f;
+        [Range(1f, 10f)] public float allyBearingScale = 1f;
+        [Range(1f, 10f)] public float allyWebLengthScale = 1f;
 
         [Header("Self State (자기 기동 상태)")]
         [Range(1f, 50f)] public float speedNormK = 10f;
         [Range(0f, 5f)] public float forwardSpeedScale = 1f;
         [Range(0f, 5f)] public float driftSpeedScale = 1f;
 
-        [Header("Ally Pair Observation (아군 쌍 + 트랩)")]
+        [Header("Ally Pair NormK")]
         [Range(1f, 1000f)] public float allyPairNormK = 100f;
         [Range(1f, 200f)] public float webLengthNormK = 50f;
 
@@ -207,7 +222,7 @@ namespace BoatAttack
                 enemyBufferSensor = gameObject.AddComponent<BufferSensorComponent>();
             enemyBufferSensor.SensorName = "EnemyBufferSensor";
             enemyBufferSensor.ObservableSize = 3;   // Dist, SignedBrg, Hdg
-            enemyBufferSensor.MaxNumObservables = 10; // 최대 10대 관측
+            enemyBufferSensor.MaxNumObservables = enemyMaxObservables;
 
             // 아군 쌍 BufferSensor: 가변 개수 (실제 쌍 + phantom, 최대 PHANTOM_MAX+6)
             var buffers = GetComponents<BufferSensorComponent>();
@@ -216,7 +231,7 @@ namespace BoatAttack
                 allyBufferSensor = gameObject.AddComponent<BufferSensorComponent>();
             allyBufferSensor.SensorName = "AllyBufferSensor";
             allyBufferSensor.ObservableSize = 3;   // dist, bearing, webLength
-            allyBufferSensor.MaxNumObservables = 10; // 최대 10쌍 관측
+            allyBufferSensor.MaxNumObservables = allyMaxObservables;
         }
 
         protected override void OnEnable()
@@ -352,14 +367,14 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 거리 정규화: (x-k)/(|x|+k) → [-1, 1)
-        /// k = 기준 거리 (출력 0 지점), 가까우면 음수, 멀면 양수
-        /// x=0 → -1, x=k → 0, x=∞ → +1
-        /// 감도: 2k/(x+k)² — 전 범위에서 기존 대비 2배
+        /// 거리 정규화: x/(x+k) → [0, 1)
+        /// k = 감도 기준 거리 (출력 0.5 지점)
+        /// x=0 → 0, x=k → 0.5, x=∞ → 1
+        /// 항상 양수, 부호 전환 없음, 근거리 민감
         /// </summary>
         private float NormalizePosition(float x, float k)
         {
-            return (x - k) / (Mathf.Abs(x) + k);
+            return x / (Mathf.Abs(x) + k);
         }
 
         /// <summary>
@@ -383,18 +398,17 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 부호 있는 베어링: 내가 대상을 바라보는 정도 (-1~+1)
+        /// 부호 있는 베어링: 바디 좌표계 기준 (-1~+1)
         /// 0=정면, ±1=후방, 부호=좌(-)우(+)
-        /// sqrt(angle/180)로 정면 민감도 유지 + 후방 1.0 정확 도달
-        /// XZ 평면 기준, cross product로 좌/우 판별
+        /// sqrt(angle/180)로 정면 민감도 유지, XZ 평면 cross product로 좌/우 판별
         /// </summary>
         private float ComputeSignedBearing(Vector3 myForward, Vector3 toTarget)
         {
             Vector3 fwd = myForward; fwd.y = 0f;
             Vector3 dir = toTarget; dir.y = 0f;
             if (dir.sqrMagnitude < 0.01f) return 1f;
-            float angleDeg = Vector3.Angle(fwd, dir);              // 0~180도
-            float norm = Mathf.Sqrt(angleDeg / 180f);              // sqrt: 0→0, 180→1, 정면 민감
+            float angleDeg = Vector3.Angle(fwd, dir);
+            float norm = Mathf.Sqrt(angleDeg / 180f);
             float cross = fwd.x * dir.z - fwd.z * dir.x;
             return cross >= 0f ? norm : -norm;
         }
@@ -455,8 +469,9 @@ namespace BoatAttack
             // Web 중심 기준: 자기 쌍의 agent1+agent2 중점을 관측 원점으로 사용
             Vector3 partnerPos = (partnerAgent != null) ? partnerAgent.transform.position : transform.position;
             Vector3 webCenter = (transform.position + partnerPos) * 0.5f;
-            Vector3 webForward = ((transform.forward + (partnerAgent != null ? partnerAgent.transform.forward : transform.forward)) * 0.5f).normalized;
-            if (webForward.sqrMagnitude < 0.01f) webForward = transform.forward;
+            Vector3 avgForward = (transform.forward + (partnerAgent != null ? partnerAgent.transform.forward : transform.forward)) * 0.5f;
+            avgForward.y = 0f;  // pitch 영향 제거, XZ 평면(yaw)만 사용
+            Vector3 webForward = avgForward.sqrMagnitude > 0.01f ? avgForward.normalized : transform.forward;
             float webAngle = Quaternion.LookRotation(webForward).eulerAngles.y;
 
             // 4. AllyBufferSensor: 가까운 아군 쌍 최대 3개
@@ -486,11 +501,13 @@ namespace BoatAttack
                     Vector3 rel = enemy.transform.position - webCenter;
                     float dist = rel.magnitude;
 
-                    float d = NormalizePosition(dist, enemyNormK) * enemyDistScale;
-                    float brg = ComputeSignedBearing(webForward, rel);
-                    // hdg: Web 헤딩과 적 헤딩의 차이
-                    // ±180°(정면대치, 기본상황) → 0, 0°(동방향) → ±1
-                    float hdg = NormalizeHeadingDiff(webAngle, enemy.transform.eulerAngles.y);
+                    float eDistS = (envController != null) ? envController.enemyDistScale    : enemyDistScale;
+                    float eBrgS  = (envController != null) ? envController.enemyBearingScale : enemyBearingScale;
+                    float eHdgS  = (envController != null) ? envController.enemyHeadingScale : enemyHeadingScale;
+                    float d   = NormalizePosition(dist, enemyNormK) * eDistS;
+                    float brg = ComputeSignedBearing(webForward, rel) * eBrgS;
+                    // hdg: Web 헤딩과 적 헤딩의 차이 (±180°대치→0, 동방향→±1)
+                    float hdg = NormalizeHeadingDiff(webAngle, enemy.transform.eulerAngles.y) * eHdgS;
                     enemyBufferSensor.AppendObservation(new float[] { d, brg, hdg });
                     lastEnemyBufferObs.Add(d); lastEnemyBufferObs.Add(brg); lastEnemyBufferObs.Add(hdg);
                 }
@@ -549,7 +566,10 @@ namespace BoatAttack
             lastAllyBufferObs.Clear();
 
             // 후보 수집 (실제 쌍 + phantom + 트랩) → 거리순 정렬 → 상위 10개
-            var candidates = new List<(Vector3 center, float dist, float webLength)>();
+            // heading: 아군 쌍의 평균 yaw (없으면 0f)
+            var candidates = new List<(Vector3 center, float dist, float heading)>();
+
+            float myAngle = Quaternion.LookRotation(myForward).eulerAngles.y;
 
             // 1. 실제 아군 쌍
             var lzm = envController != null ? envController.launchZoneManager : null;
@@ -571,13 +591,13 @@ namespace BoatAttack
 
                     Vector3 otherCenter = (a1Pos + a2Pos) * 0.5f;
                     float d = Vector3.Distance(myPos, otherCenter);
-                    float wl = Vector3.Distance(a1Pos, a2Pos);
+                    float allyYaw = (pair.agent1.transform.eulerAngles.y + pair.agent2.transform.eulerAngles.y) * 0.5f;
 
-                    candidates.Add((otherCenter, d, wl));
+                    candidates.Add((otherCenter, d, allyYaw));
                 }
             }
 
-            // 2. Phantom 쌍
+            // 2. Phantom 쌍 (heading 정보 없음 → 0f)
             if (phantomsInitialized && phantomPairs != null)
             {
                 for (int i = 0; i < phantomCount; i++)
@@ -585,19 +605,18 @@ namespace BoatAttack
                     if (!phantomPairs[i].isValid) continue;
                     Vector3 pc = phantomPairs[i].WebCenter;
                     float d = Vector3.Distance(myPos, pc);
-                    float wl = phantomPairs[i].WebLength;
-                    candidates.Add((pc, d, wl));
+                    candidates.Add((pc, d, 0f));
                 }
             }
 
-            // 3. 트랩 (무력화된 적 위치의 깔린 그물)
+            // 3. 트랩 (정적 → heading 0f)
             if (envController != null && envController.activeTraps != null)
             {
                 for (int i = 0; i < envController.activeTraps.Count; i++)
                 {
                     var trap = envController.activeTraps[i];
                     float d = Vector3.Distance(myPos, trap.position);
-                    candidates.Add((trap.position, d, trap.webSize));
+                    candidates.Add((trap.position, d, 0f));
                 }
             }
 
@@ -607,21 +626,25 @@ namespace BoatAttack
             for (int i = 0; i < count; i++)
             {
                 var c = candidates[i];
-                AppendAllyPairObs(myPos, myForward, c.center, c.webLength);
+                AppendAllyPairObs(myPos, myForward, c.center, myAngle, c.heading);
             }
         }
 
-        /// <summary>아군쌍 1개를 allyBufferSensor에 추가 (3개: dist, bearing, webLength)</summary>
-        private void AppendAllyPairObs(Vector3 myPos, Vector3 myForward, Vector3 center, float webLength = 0f)
+        /// <summary>아군쌍 1개를 allyBufferSensor에 추가 (3개: dist, bearing, hdg)</summary>
+        private void AppendAllyPairObs(Vector3 myPos, Vector3 myForward, Vector3 center, float myAngle, float allyYaw)
         {
             Vector3 rel = center - myPos;
             float dist = rel.magnitude;
-            float normDist = NormalizePosition(dist, allyPairNormK);
-            float brg = ComputeSignedBearing(myForward, rel);
-            float normWeb = NormalizePosition(webLength, allyPairNormK);
+            float aDistS = (envController != null) ? envController.allyDistScale : allyDistScale;
+            float aBrgS  = (envController != null) ? envController.allyBearingScale : allyBearingScale;
+            float aHdgS  = (envController != null) ? envController.allyWebLengthScale : allyWebLengthScale;
+            float normDist = NormalizePosition(dist, allyPairNormK) * aDistS;
+            float brg = ComputeSignedBearing(myForward, rel) * aBrgS;
+            // hdg: 내 헤딩과 아군 쌍 헤딩의 차이 (±180°=반대방향→0, 0°=동방향→±1)
+            float hdg = NormalizeHeadingDiff(myAngle, allyYaw) * aHdgS;
 
-            allyBufferSensor.AppendObservation(new float[] { normDist, brg, normWeb });
-            lastAllyBufferObs.Add(normDist); lastAllyBufferObs.Add(brg); lastAllyBufferObs.Add(normWeb);
+            allyBufferSensor.AppendObservation(new float[] { normDist, brg, hdg });
+            lastAllyBufferObs.Add(normDist); lastAllyBufferObs.Add(brg); lastAllyBufferObs.Add(hdg);
         }
 
         /// <summary>
@@ -1018,6 +1041,8 @@ namespace BoatAttack
                 Gizmos.color = Color.yellow;
                 Gizmos.DrawWireSphere(webObject.transform.position, 3f);
             }
+
+
         }
     }
 }
