@@ -62,6 +62,9 @@ namespace BoatAttack
         [HideInInspector] public float _savedAngularDrag1 = 0f;
         [HideInInspector] public float _savedAngularDrag2 = 0f;
         [HideInInspector] public bool _savedIsKinematic2 = false; // Agent2의 원래 isKinematic
+
+        // 양동 방향 필터용: 진수 시 스폰 각도 (모선 기준, -1=미설정)
+        [HideInInspector] public float launchAngleDeg = -1f;
     }
 
     /// <summary>
@@ -90,6 +93,10 @@ namespace BoatAttack
         [Tooltip("에피소드 시작 시 자동 배치 쌍 수 (0=버튼으로만 배치)")]
         [Range(0, 20)]
         public int activePairCount = 0;
+
+        [Tooltip("한 진수구역에서 동시에 출동할 수 있는 최대 쌍 수 (1=구역당 1쌍)")]
+        [Range(1, 10)]
+        public int maxPairsPerZone = 1;
 
         [Tooltip("초기 출동 쌍 수 (나머지는 예비로 대기, 0=activePairCount 전부 출동)")]
         [Range(0, 20)]
@@ -577,7 +584,7 @@ namespace BoatAttack
             GameObject[] enemies = envController != null ? envController.enemyShips : null;
 
             // 3-1. 1단계: 모든 쌍의 pairCenter + zoneDir 먼저 계산
-            var spawnInfos = new List<(int poolIdx, Vector3 pairCenter, Vector3 zoneDir, int zoneIdx)>();
+            var spawnInfos = new List<(int poolIdx, Vector3 pairCenter, Vector3 zoneDir, int zoneIdx, float spawnAngleDeg)>();
             foreach (var kvp in zoneAssignments)
             {
                 int zoneIdx = kvp.Key;
@@ -617,7 +624,7 @@ namespace BoatAttack
                     float lateralOffset = startOffset + j * lateralSpacing;
                     Vector3 pairCenter = motherPos + zoneDir * zoneDist + lateralDir * lateralOffset;
 
-                    spawnInfos.Add((pi, pairCenter, zoneDir, zoneIdx));
+                    spawnInfos.Add((pi, pairCenter, zoneDir, zoneIdx, spawnAngleDeg));
                 }
             }
 
@@ -628,9 +635,10 @@ namespace BoatAttack
 
             for (int i = 0; i < spawnInfos.Count; i++)
             {
-                var (pi, pairCenter, zoneDir, zoneIdx) = spawnInfos[i];
+                var (pi, pairCenter, zoneDir, zoneIdx, spawnAngleDeg) = spawnInfos[i];
                 DefensePair pair = _pairPool[pi];
                 pair.assignedZoneIndex = zoneIdx;
+                pair.launchAngleDeg = spawnAngleDeg;
 
                 // 적군 배열 전달
                 if (enemies != null)
@@ -673,6 +681,17 @@ namespace BoatAttack
                 ResetAgent(pair.agent2, pos2, rot);
 
                 // ResetAgent 이후에 배정 — ResetForDeployment가 -1로 초기화한 뒤 덮어씀
+                // 양동 방향 필터: launchAngleDeg 설정된 쌍은 방향 불일치 적군 배정 취소
+                if (bestEnemyIdx >= 0 && pair.launchAngleDeg >= 0f && envController != null && envController.assignAngleTolerance > 0f)
+                {
+                    Vector3 eToM = motherPos - enemies[bestEnemyIdx].transform.position; eToM.y = 0f;
+                    if (eToM.sqrMagnitude > 0.01f)
+                    {
+                        float eAngle = Mathf.Atan2(eToM.x, eToM.z) * Mathf.Rad2Deg;
+                        if (Mathf.Abs(Mathf.DeltaAngle(pair.launchAngleDeg, eAngle)) > envController.assignAngleTolerance)
+                            bestEnemyIdx = -1;
+                    }
+                }
                 if (bestEnemyIdx >= 0)
                     SetPairTarget(pi, bestEnemyIdx + 1); // 중복 방지 로직 포함
 
@@ -765,12 +784,21 @@ namespace BoatAttack
                         zoneDirAngles[bestZonePerDir[d]] = dirAnglesDeg[d];
                 }
 
-                // 2단계: 각 방향에 최소 1쌍 배정 (쌍별 각도 저장)
+                // 2단계: 각 방향에 최소 1쌍 배정 (쌍별 각도 저장, 구역 한도 초과 시 차순위 구역으로)
                 int pairIdx = 0;
                 for (int d = 0; d < dirCount && pairIdx < pairCount; d++)
                 {
-                    if (bestZonePerDir[d] < 0) continue;
-                    int zoneIdx = bestZonePerDir[d];
+                    // maxPairsPerZone 초과 시 해당 방향에서 차순위 구역 탐색
+                    var sortedForDir = GetZonesSortedByAngle(dirAnglesDeg[d]);
+                    int zoneIdx = -1;
+                    foreach (int zi in sortedForDir)
+                    {
+                        float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAnglesDeg[d], launchZones[zi].angleDeg));
+                        if (angleDiff > 90f) break;
+                        int currentCount = assignments.ContainsKey(zi) ? assignments[zi].Count : 0;
+                        if (currentCount < maxPairsPerZone) { zoneIdx = zi; break; }
+                    }
+                    if (zoneIdx < 0) continue; // 이 방향에 사용 가능 구역 없음
                     if (!assignments.ContainsKey(zoneIdx))
                         assignments[zoneIdx] = new List<int>();
                     assignments[zoneIdx].Add(pairIdx);
@@ -778,7 +806,7 @@ namespace BoatAttack
                     pairIdx++;
                 }
 
-                // 3단계: 남은 쌍은 라운드 로빈으로 균등 추가
+                // 3단계: 남은 쌍은 라운드 로빈으로 균등 추가 (구역당 maxPairsPerZone 제한)
                 int dirSlot = 0;
                 while (pairIdx < pairCount && dirSlot < pairCount * dirCount)
                 {
@@ -788,6 +816,7 @@ namespace BoatAttack
                     int zoneIdx = bestZonePerDir[d];
                     if (!assignments.ContainsKey(zoneIdx))
                         assignments[zoneIdx] = new List<int>();
+                    if (assignments[zoneIdx].Count >= maxPairsPerZone) continue;
                     assignments[zoneIdx].Add(pairIdx);
                     pairDirAngles[pairIdx] = dirAnglesDeg[d]; // 쌍별 실제 적 방향
                     pairIdx++;
@@ -811,10 +840,8 @@ namespace BoatAttack
                     assignments[zoneIdx].Add(pairIdx);
                     pairIdx++;
 
-                    if (!isFleet)
-                        zoneSlot++; // 기존: 1구역 1쌍 → 다음 구역
-                    else if (assignments[zoneIdx].Count >= 3)
-                        zoneSlot++; // Stage7: 1구역 최대 3쌍 → 다음 구역으로 넘어감
+                    if (assignments[zoneIdx].Count >= maxPairsPerZone)
+                        zoneSlot++; // 구역 한도 도달 → 다음 구역
                 }
             }
 
@@ -1274,18 +1301,17 @@ namespace BoatAttack
             }
             else
             {
-                // 가장 가까운 구역부터 탐색 (±90° 이내 + 쿨다운 아닌 구역)
+                // 가장 가까운 구역부터 탐색 (±90° 이내 + 쿨다운 아닌 구역 + 활성 쌍 한도 미초과)
                 var sorted = GetZonesSortedByAngle(approachAngleDeg);
                 zoneIdx = -1;
                 foreach (int zi in sorted)
                 {
                     float angleDiff = Mathf.Abs(Mathf.DeltaAngle(approachAngleDeg, launchZones[zi].angleDeg));
                     if (angleDiff > 90f) break; // 정렬 순서상 이후 전부 90° 초과
-                    if (!IsZoneOnCooldown(zi, currentStep))
-                    {
-                        zoneIdx = zi;
-                        break;
-                    }
+                    if (IsZoneOnCooldown(zi, currentStep)) continue;
+                    if (GetActivePairsInZone(zi) >= maxPairsPerZone) continue;
+                    zoneIdx = zi;
+                    break;
                 }
                 if (zoneIdx < 0) return false; // 적 방향 ±90° 내 사용 가능 구역 없음
             }
@@ -1340,6 +1366,7 @@ namespace BoatAttack
             }
 
             pair.assignedZoneIndex = zoneIdx;
+            pair.launchAngleDeg = spawnAngleDeg;
             pair.deployStep = envController != null ? envController.CurrentStep : 0;
             pair.lastRaycastHitStep = pair.deployStep; // 배치 시점부터 타임아웃 카운트 시작
             pair.hasEverHitRaycast = false;
@@ -1368,8 +1395,7 @@ namespace BoatAttack
             int bestEnemy = FindClosestUnassignedEnemy(
                 pairCenter, enemies, singleAssigned,
                 zoneDir, motherPos, filterByDirection: true);
-            if (bestEnemy < 0)
-                bestEnemy = FindClosestUnassignedEnemy(pairCenter, enemies, singleAssigned);
+            // 방향 필터 폴백 제거 — 해당 방향 적 없으면 미배정(-1) 유지 (엉뚱한 적 배정 방지)
             // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
             if (envController != null && envController.currentStage == TrainingStage.Stage3_Tactical)
             {
@@ -1783,6 +1809,7 @@ namespace BoatAttack
             pair.isDisarmed = false;
             pair.disarmStep = -1;
             pair.assignedZoneIndex = -1;
+            pair.launchAngleDeg = -1f;
             pair.deployStep = -1;
             pair.lastRaycastHitStep = -1;
             pair.hasEverHitRaycast = false;
@@ -1818,6 +1845,7 @@ namespace BoatAttack
             // HIDDEN_POS로 이동 + isKinematic (재활용 가능 상태)
             SetPairActive(pairIndex, false);
             pair.assignedZoneIndex = -1;
+            pair.launchAngleDeg = -1f;
             pair.deployStep = -1;
             pair.lastRaycastHitStep = -1;
             pair.hasEverHitRaycast = false;
@@ -1995,6 +2023,22 @@ namespace BoatAttack
             if (_zoneLastDeployStep == null || zoneIdx < 0 || zoneIdx >= _zoneLastDeployStep.Length)
                 return false;
             return (currentStep - _zoneLastDeployStep[zoneIdx]) < zoneDeployCooldown;
+        }
+
+        /// <summary>
+        /// 특정 진수구역에 현재 배치된 활성 쌍 수 반환
+        /// </summary>
+        private int GetActivePairsInZone(int zoneIdx)
+        {
+            if (_pairPool == null) return 0;
+            int count = 0;
+            for (int i = 0; i < _pairPool.Count; i++)
+            {
+                DefensePair p = _pairPool[i];
+                if (p == null || !p.isActive) continue;
+                if (p.assignedZoneIndex == zoneIdx) count++;
+            }
+            return count;
         }
 
         /// <summary>

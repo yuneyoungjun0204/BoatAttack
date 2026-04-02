@@ -98,11 +98,16 @@ namespace BoatAttack
         [Tooltip("트랩 그물 수명 (스텝, 이후 자동 소멸)")]
         public int trapLifetimeSteps = 200;
 
+        [Header("=== Target Assignment ===")]
         [Tooltip("타겟 배정 고정: 유효한 기존 배정을 유지 (false=매번 재배정)")]
         public bool lockTargetAssignment = true;
 
         [Tooltip("자동 타겟 배정 활성화 (스테이지 무관, 5스텝마다 실행)")]
         public bool enableAutoAssign = true;
+
+        [Tooltip("양동(Diversionary) 방향 필터: 진수 각도와 적 접근 각도의 최대 허용 차이 (°). 0=필터 없음")]
+        [Range(0f, 180f)]
+        public float assignAngleTolerance = 60f;
 
         [Tooltip("가상 아군쌍 생성 간격 (방어선 좌/우, m)")]
         [Range(30f, 300f)]
@@ -1218,8 +1223,9 @@ namespace BoatAttack
                 DeactivatePairsWithNoValidTarget();
             }
 
-            // 5스텝마다 1:1 매칭 재배정 + 예비 출동 (enableAutoAssign으로 스테이지 무관 제어)
-            if (enableAutoAssign && _resetTimer % 5 == 0)
+            // 1:1 매칭 재배정 + 예비 출동 (lockTargetAssignment=false → 매 스텝 동적 재배정)
+            int _assignInterval = lockTargetAssignment ? 5 : 1;
+            if (enableAutoAssign && _resetTimer % _assignInterval == 0)
             {
                 AutoAssignOneToOneTargets();
                 DeployReservesForUnassignedEnemies();
@@ -2561,14 +2567,16 @@ namespace BoatAttack
                     if (existingIdx > 0)
                     {
                         int eIdx = existingIdx - 1;
-                        if (eIdx < enemyShips.Length && enemyShips[eIdx] != null
+                        // 중복 체크: assigned에 이미 있으면 다른 쌍이 이 적을 먼저 점유 → 이 쌍은 초기화
+                        if (!assigned.Contains(eIdx) &&
+                            eIdx < enemyShips.Length && enemyShips[eIdx] != null
                             && enemyShips[eIdx].activeInHierarchy && !IsEnemyNeutralized(enemyShips[eIdx]))
                         {
                             assigned.Add(eIdx); // 이미 배정된 적은 다른 쌍에 배정 안 함
                             continue;
                         }
                     }
-                    // 무효한 배정 → 초기화
+                    // 무효하거나 중복된 배정 → 초기화
                     if (pair.agent1) pair.agent1.assignedTargetIndex = -1;
                     if (pair.agent2) pair.agent2.assignedTargetIndex = -1;
                 }
@@ -2612,6 +2620,18 @@ namespace BoatAttack
                     if (assigned.Contains(e)) continue;
                     if (enemyShips[e] == null || !enemyShips[e].activeInHierarchy) continue;
                     if (IsEnemyNeutralized(enemyShips[e])) continue;
+
+                    // 양동 방향 필터: 진수 각도와 적 접근 각도가 허용 범위 초과면 스킵
+                    if (assignAngleTolerance > 0f && pair.launchAngleDeg >= 0f)
+                    {
+                        Vector3 enemyToMother = motherPos - enemyShips[e].transform.position; enemyToMother.y = 0f;
+                        if (enemyToMother.sqrMagnitude > 0.01f)
+                        {
+                            float enemyApproachAngle = Mathf.Atan2(enemyToMother.x, enemyToMother.z) * Mathf.Rad2Deg;
+                            if (Mathf.Abs(Mathf.DeltaAngle(pair.launchAngleDeg, enemyApproachAngle)) > assignAngleTolerance)
+                                continue;
+                        }
+                    }
 
                     float enemyDistToMother = Vector3.Distance(enemyShips[e].transform.position, motherPos);
                     if (allyDistToMother >= enemyDistToMother) continue; // 차단 불가 위치

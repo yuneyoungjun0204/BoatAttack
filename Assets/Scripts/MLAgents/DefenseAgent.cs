@@ -1235,8 +1235,8 @@ namespace BoatAttack
                 if (lateralDist > allyAvoidanceLateralMax) continue;
 
                 float proximity = 1f - dist / allyAvoidanceDist; // 가까울수록 1
-                if (losDot > 0.5f)       mod -= proximity * allyBrakingStrength; // 전방 → 감속
-                else if (losDot < -0.5f) mod += proximity * allyAccelStrength;   // 후방 → 가속
+                if (losDot > 0.5f)       mod += proximity * allyAccelStrength;   // 전방 아군 → 내가 가속 (따라붙기)
+                else if (losDot < -0.5f) mod -= proximity * allyBrakingStrength; // 후방 아군 → 내가 감속 (간격 유지)
             }
             return Mathf.Clamp(mod, -1f, 1f);
         }

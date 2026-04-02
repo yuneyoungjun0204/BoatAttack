@@ -755,16 +755,19 @@ MonoBehaviour:
   phantomsInitialized: 0
   useArrowKeys: 0
   enableLOSHeuristic: 1
-  losOffset: 50
-  losSteerGain: 10
+  losOffset: 80
+  losSteerGain: 8
   losDerivGain: 1
-  allyAvoidanceDist: 40
-  allyAvoidanceLateralMax: 12
+  allyAvoidanceDist: 300
+  allyAvoidanceLateralMax: 90
+  allyBrakingStrength: 4
+  allyAccelStrength: 4
   enableDemoRecording: 0
   demoDirectory: Assets/Demos
   demoName: LOS_Defense
   showRaycasts: 1
   enableDebugLog: 0
+  showMatchingLine: 1
   lastObservations: []
   lastObservationsCount: 0
   collectObsCallCount: 0
