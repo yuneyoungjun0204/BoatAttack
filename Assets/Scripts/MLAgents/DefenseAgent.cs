@@ -182,6 +182,14 @@ namespace BoatAttack
         [Range(3f, 90f)]
         public float allyAvoidanceLateralMax = 12f;
 
+        [Tooltip("전방 아군 페어 감속 강도 (가까울수록 최대 이 값만큼 감속)")]
+        [Range(0.1f, 5f)]
+        public float allyBrakingStrength = 1.5f;
+
+        [Tooltip("후방 아군 페어 가속 강도 (가까울수록 최대 이 값만큼 가속)")]
+        [Range(0.1f, 5f)]
+        public float allyAccelStrength = 0.8f;
+
         [Tooltip("데모 녹화 활성화 시 BehaviorType=HeuristicOnly + DemonstrationRecorder 자동 설정")]
         public bool enableDemoRecording = false;
 
@@ -1181,12 +1189,24 @@ namespace BoatAttack
             ca[1] = steerAction;
         }
 
-        /// <summary>전방/후방 아군 선박 감지 → throttle 보정값 반환 (전방=-감속, 후방=+가속)</summary>
+        /// <summary>
+        /// 다른 아군 페어의 webCenter 기준으로 LOS 방향 상 전방/후방 감지
+        /// → 전방 페어 있으면 감속(음수), 후방 페어 있으면 가속(양수)
+        /// </summary>
         private float ComputeAllyAvoidanceThrottle(Vector3 myPos, Vector3 myFwd)
         {
             if (envController == null || envController.launchZoneManager == null) return 0f;
             var lzm = envController.launchZoneManager;
             if (!lzm.IsInitialized) return 0f;
+
+            // LOS 방향: 배정 타깃→모선 방향 (없으면 myFwd 그대로)
+            Vector3 losDir = myFwd;
+            GameObject target = GetAssignedEnemy();
+            if (target != null && motherShip != null)
+            {
+                Vector3 ld = motherShip.transform.position - target.transform.position; ld.y = 0f;
+                if (ld.sqrMagnitude > 0.01f) losDir = ld.normalized;
+            }
 
             float mod = 0f;
             int poolCount = lzm.GetCurrentPoolCount();
@@ -1194,29 +1214,31 @@ namespace BoatAttack
             {
                 DefensePair pair = lzm.GetPair(i);
                 if (pair == null || !pair.isActive) continue;
-                ApplyAvoidanceFrom(pair.agent1, myPos, myFwd, ref mod);
-                ApplyAvoidanceFrom(pair.agent2, myPos, myFwd, ref mod);
+                // 자신이 속한 쌍(파트너 포함) 스킵
+                if (pair.agent1 == this || pair.agent2 == this ||
+                    pair.agent1 == partnerAgent || pair.agent2 == partnerAgent) continue;
+
+                // 다른 쌍의 webCenter 기준으로 1회 체크
+                Vector3 a1Pos = pair.agent1 != null ? pair.agent1.transform.position : Vector3.zero;
+                Vector3 a2Pos = pair.agent2 != null ? pair.agent2.transform.position : a1Pos;
+                Vector3 otherCenter = (a1Pos + a2Pos) * 0.5f;
+                if (otherCenter.y < -100f) continue; // HIDDEN_POS 제외
+
+                Vector3 toOther = otherCenter - myPos; toOther.y = 0f;
+                float dist = toOther.magnitude;
+                if (dist < 0.5f || dist > allyAvoidanceDist) continue;
+
+                // LOS 방향 기준 전방/후방 판정
+                float losDot = Vector3.Dot(losDir, toOther.normalized);
+                float lateralDist = Mathf.Sqrt(Mathf.Max(0f,
+                    toOther.sqrMagnitude - Mathf.Pow(losDot * dist, 2f)));
+                if (lateralDist > allyAvoidanceLateralMax) continue;
+
+                float proximity = 1f - dist / allyAvoidanceDist; // 가까울수록 1
+                if (losDot > 0.5f)       mod -= proximity * allyBrakingStrength; // 전방 → 감속
+                else if (losDot < -0.5f) mod += proximity * allyAccelStrength;   // 후방 → 가속
             }
             return Mathf.Clamp(mod, -1f, 1f);
-        }
-
-        private void ApplyAvoidanceFrom(DefenseAgent other, Vector3 myPos, Vector3 myFwd, ref float mod)
-        {
-            if (other == null || other == this) return;
-            if (other.transform.position.y < -100f) return; // HIDDEN_POS 제외
-
-            Vector3 toOther = other.transform.position - myPos; toOther.y = 0f;
-            float dist = toOther.magnitude;
-            if (dist < 0.5f || dist > allyAvoidanceDist) return;
-
-            float fwdDot = Vector3.Dot(myFwd.normalized, toOther.normalized);
-            float lateralDist = Mathf.Sqrt(Mathf.Max(0f, toOther.sqrMagnitude
-                                - Mathf.Pow(fwdDot * dist, 2f)));
-            if (lateralDist > allyAvoidanceLateralMax) return;
-
-            float proximity = 1f - dist / allyAvoidanceDist;
-            if (fwdDot > 0.5f)       mod -= proximity * 1.5f; // 전방 → 감속
-            else if (fwdDot < -0.5f) mod += proximity * 0.4f; // 후방 → 가속
         }
 
         /// <summary>활성 적군 중 Web 중심에서 가장 가까운 것 반환 (Heuristic fallback용)</summary>

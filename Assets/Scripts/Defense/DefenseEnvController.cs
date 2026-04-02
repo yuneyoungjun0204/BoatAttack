@@ -101,6 +101,9 @@ namespace BoatAttack
         [Tooltip("타겟 배정 고정: 유효한 기존 배정을 유지 (false=매번 재배정)")]
         public bool lockTargetAssignment = true;
 
+        [Tooltip("자동 타겟 배정 활성화 (스테이지 무관, 5스텝마다 실행)")]
+        public bool enableAutoAssign = true;
+
         [Tooltip("가상 아군쌍 생성 간격 (방어선 좌/우, m)")]
         [Range(30f, 300f)]
         public float phantomSpacing = 80f;
@@ -1215,8 +1218,8 @@ namespace BoatAttack
                 DeactivatePairsWithNoValidTarget();
             }
 
-            // Stage3/Stage6: 5스텝마다 1:1 매칭 재배정 + 예비 출동 (Stage7/Stage8은 타겟 배정 없음)
-            if ((currentStage == TrainingStage.Stage3_Tactical || currentStage == TrainingStage.Stage6_PhantomFormation) && _resetTimer % 5 == 0)
+            // 5스텝마다 1:1 매칭 재배정 + 예비 출동 (enableAutoAssign으로 스테이지 무관 제어)
+            if (enableAutoAssign && _resetTimer % 5 == 0)
             {
                 AutoAssignOneToOneTargets();
                 DeployReservesForUnassignedEnemies();
@@ -2542,44 +2545,98 @@ namespace BoatAttack
         {
             if (launchZoneManager == null || enemyShips == null) return;
 
+            Vector3 motherPos = motherShip != null ? motherShip.transform.position : Vector3.zero;
             int poolCount = launchZoneManager.GetCurrentPoolCount();
+            var assigned = new System.Collections.Generic.HashSet<int>();
 
-            // 스폰 시 배정된 적은 절대 변경하지 않는다.
-            // 이 함수는 중복 제거 + 타겟이 무력화된 경우에만 -1로 초기화.
-            var seen = new System.Collections.Generic.Dictionary<int, int>(); // enemyIdx(1-based) → pairIdx
+            // lockTargetAssignment: 기존 배정이 유효하면 유지, 무효한 것만 재배정
+            if (lockTargetAssignment)
+            {
+                for (int i = 0; i < poolCount; i++)
+                {
+                    DefensePair pair = launchZoneManager.GetPair(i);
+                    if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
+
+                    int existingIdx = pair.agent1.assignedTargetIndex;
+                    if (existingIdx > 0)
+                    {
+                        int eIdx = existingIdx - 1;
+                        if (eIdx < enemyShips.Length && enemyShips[eIdx] != null
+                            && enemyShips[eIdx].activeInHierarchy && !IsEnemyNeutralized(enemyShips[eIdx]))
+                        {
+                            assigned.Add(eIdx); // 이미 배정된 적은 다른 쌍에 배정 안 함
+                            continue;
+                        }
+                    }
+                    // 무효한 배정 → 초기화
+                    if (pair.agent1) pair.agent1.assignedTargetIndex = -1;
+                    if (pair.agent2) pair.agent2.assignedTargetIndex = -1;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < poolCount; i++)
+                {
+                    DefensePair pair = launchZoneManager.GetPair(i);
+                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
+                    if (pair.agent1) pair.agent1.assignedTargetIndex = -1;
+                    if (pair.agent2) pair.agent2.assignedTargetIndex = -1;
+                }
+            }
+
+            // Greedy 매칭: 거리 + 차단각 + 적 진행방향 스코어
+            const float ANGLE_WEIGHT = 9.0f;
+            const float HEADING_WEIGHT = 2.5f;
 
             for (int i = 0; i < poolCount; i++)
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+                if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
+                if (pair.agent1.assignedTargetIndex > 0) continue; // 이미 유효한 배정
 
-                int tIdx = pair.agent1.assignedTargetIndex;
-                if (tIdx <= 0) continue;
+                Vector3 pos1 = pair.agent1.transform.position;
+                Vector3 pos2 = pair.agent2 != null ? pair.agent2.transform.position : pos1;
+                Vector3 webCenter = (pos1 + pos2) * 0.5f;
 
-                int eIdx = tIdx - 1;
-                bool valid = eIdx < enemyShips.Length
-                    && enemyShips[eIdx] != null
-                    && enemyShips[eIdx].activeInHierarchy
-                    && !IsEnemyNeutralized(enemyShips[eIdx]);
+                Vector3 webLine = pos2 - pos1;
+                Vector3 webNormal = new Vector3(webLine.z, 0f, -webLine.x).normalized;
+                if (Vector3.Dot(webNormal, webCenter - motherPos) < 0f)
+                    webNormal = -webNormal;
 
-                if (!valid)
+                float allyDistToMother = Vector3.Distance(webCenter, motherPos);
+
+                float bestScore = float.MaxValue;
+                int bestIdx = -1;
+                for (int e = 0; e < enemyShips.Length; e++)
                 {
-                    // 타겟이 무력화/비활성 → 해제
-                    pair.agent1.assignedTargetIndex = -1;
-                    if (pair.agent2) pair.agent2.assignedTargetIndex = -1;
-                    continue;
+                    if (assigned.Contains(e)) continue;
+                    if (enemyShips[e] == null || !enemyShips[e].activeInHierarchy) continue;
+                    if (IsEnemyNeutralized(enemyShips[e])) continue;
+
+                    float enemyDistToMother = Vector3.Distance(enemyShips[e].transform.position, motherPos);
+                    if (allyDistToMother >= enemyDistToMother) continue; // 차단 불가 위치
+
+                    Vector3 toEnemy = enemyShips[e].transform.position - webCenter; toEnemy.y = 0f;
+                    float interceptAngle = toEnemy.sqrMagnitude > 0.01f
+                        ? Vector3.Angle(webNormal, toEnemy.normalized) : 180f;
+                    if (interceptAngle > 90f) continue;
+
+                    Vector3 enemyFwd = enemyShips[e].transform.forward; enemyFwd.y = 0f;
+                    Vector3 enemyToWeb = webCenter - enemyShips[e].transform.position; enemyToWeb.y = 0f;
+                    float headingAngle = 90f;
+                    if (enemyFwd.sqrMagnitude > 0.01f && enemyToWeb.sqrMagnitude > 0.01f)
+                        headingAngle = Vector3.Angle(enemyFwd.normalized, enemyToWeb.normalized);
+                    if (headingAngle > 110f) continue;
+
+                    float dist = Vector3.Distance(webCenter, enemyShips[e].transform.position);
+                    float score = dist + interceptAngle * ANGLE_WEIGHT + headingAngle * HEADING_WEIGHT;
+                    if (score < bestScore) { bestScore = score; bestIdx = e; }
                 }
 
-                if (seen.ContainsKey(tIdx))
+                if (bestIdx >= 0)
                 {
-                    // 중복 발견 → 경고 로그 + 이 쌍 해제
-                    Debug.LogWarning($"[Assignment] 중복배정 감지! Enemy{tIdx} → Pair{seen[tIdx]}(유지) & Pair{i}(해제)");
-                    pair.agent1.assignedTargetIndex = -1;
-                    if (pair.agent2) pair.agent2.assignedTargetIndex = -1;
-                }
-                else
-                {
-                    seen[tIdx] = i;
+                    launchZoneManager.SetPairTarget(i, bestIdx + 1);
+                    assigned.Add(bestIdx);
                 }
             }
         }
