@@ -754,6 +754,15 @@ MonoBehaviour:
   phantomCount: 0
   phantomsInitialized: 0
   useArrowKeys: 0
+  enableLOSHeuristic: 1
+  losOffset: 50
+  losSteerGain: 10
+  losDerivGain: 1
+  allyAvoidanceDist: 40
+  allyAvoidanceLateralMax: 12
+  enableDemoRecording: 0
+  demoDirectory: Assets/Demos
+  demoName: LOS_Defense
   showRaycasts: 1
   enableDebugLog: 0
   lastObservations: []

@@ -62,6 +62,7 @@ namespace BoatAttack
         public Color enemyColor = new Color(1f, 0.25f, 0.2f, 1f);
         public Color mothershipColor = new Color(0.85f, 0.85f, 1f, 1f);
         public Color webLineColor = new Color(0.3f, 1f, 0.5f, 0.5f);
+        public Color matchingLineColor = new Color(1f, 0.9f, 0.3f, 0.7f);
         public Color fogColor = new Color(0.0f, 0.0f, 0.02f, 0.4f);
         public Color cornerBracketColor = new Color(0.3f, 0.7f, 1f, 0.8f);
         public Color threatCircleColor = new Color(1f, 0.3f, 0.2f, 0.25f);
@@ -84,6 +85,13 @@ namespace BoatAttack
         public int trailMaxPoints = 30;
 
         // ── Internal ──
+        struct MatchingLineData
+        {
+            public Vector3 allyCenter;
+            public Vector3 enemyPos;
+        }
+        List<MatchingLineData> _matchingLines = new List<MatchingLineData>();
+
         struct IslandMeshData
         {
             public Vector2[] vertices;
@@ -368,11 +376,34 @@ namespace BoatAttack
                 }
             }
 
-            // 10. 줌 레벨 표시
+            // 10. 아군-적군 매칭 라인 (점선 스타일)
+            foreach (var ml in _matchingLines)
+            {
+                Vector2 ap = WorldToLocal(ml.allyCenter, cx, cy);
+                Vector2 ep = WorldToLocal(ml.enemyPos,   cx, cy);
+                if (!IsInRect(ap, cx, cy, halfW + 20f, halfH + 20f) &&
+                    !IsInRect(ep, cx, cy, halfW + 20f, halfH + 20f)) continue;
+
+                Color mc = matchingLineColor;
+                // 글로우 배경
+                DrawLine(vh, ap.x, ap.y, ep.x, ep.y, 8f, new Color(mc.r, mc.g, mc.b, 0.07f));
+                // 점선
+                int dashCount = 16;
+                float ddx = (ep.x - ap.x) / dashCount;
+                float ddy = (ep.y - ap.y) / dashCount;
+                for (int d = 0; d < dashCount; d++)
+                {
+                    float sx = ap.x + ddx * d, sy = ap.y + ddy * d;
+                    Color dc = (d % 2 == 0) ? mc : new Color(mc.r, mc.g, mc.b, 0.05f);
+                    DrawLine(vh, sx, sy, sx + ddx, sy + ddy, 1.5f, dc);
+                }
+            }
+
+            // 11. 줌 레벨 표시
             if (_zoomLevel != 1f)
                 DrawZoomIndicator(vh, cx + halfW - 60f, cy - halfH + 8f);
 
-            // 11. 스케일 바 (좌하단)
+            // 12. 스케일 바 (좌하단)
             DrawScaleBar(vh, cx - halfW + 10f, cy - halfH + 10f);
         }
 
@@ -429,6 +460,37 @@ namespace BoatAttack
                     if (enemy != null && enemy.activeInHierarchy)
                         AddShip(enemy, enemyColor, enemyMarkerSize, recordTrail);
                 }
+            }
+
+            CollectMatchingLines();
+        }
+
+        void CollectMatchingLines()
+        {
+            _matchingLines.Clear();
+            var lzm = envController.launchZoneManager;
+            if (lzm == null || !lzm.IsInitialized) return;
+
+            int poolCount = lzm.GetCurrentPoolCount();
+            for (int i = 0; i < poolCount; i++)
+            {
+                DefensePair pair = lzm.GetPair(i);
+                if (pair == null || !pair.isActive) continue;
+                if (pair.agent1 == null || pair.agent2 == null) continue;
+
+                int targetIdx = pair.agent1.assignedTargetIndex;
+                if (targetIdx <= 0) continue;
+
+                int enemyPoolIdx = targetIdx - 1;
+                GameObject enemy = envController.GetPooledEnemy(enemyPoolIdx);
+                if (enemy == null || !enemy.activeSelf) continue;
+
+                Vector3 center = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
+                _matchingLines.Add(new MatchingLineData
+                {
+                    allyCenter = center,
+                    enemyPos   = enemy.transform.position
+                });
             }
         }
 

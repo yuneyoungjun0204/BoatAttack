@@ -2542,108 +2542,45 @@ namespace BoatAttack
         {
             if (launchZoneManager == null || enemyShips == null) return;
 
-            Vector3 motherPos = motherShip != null ? motherShip.transform.position : Vector3.zero;
             int poolCount = launchZoneManager.GetCurrentPoolCount();
-            var assigned = new System.Collections.Generic.HashSet<int>();
 
-            // lockTargetAssignment: 기존 배정이 유효하면 유지, 무효한 것만 재배정
-            if (lockTargetAssignment)
-            {
-                for (int i = 0; i < poolCount; i++)
-                {
-                    DefensePair pair = launchZoneManager.GetPair(i);
-                    if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
-
-                    int existingIdx = pair.agent1.assignedTargetIndex;
-                    if (existingIdx > 0)
-                    {
-                        int eIdx = existingIdx - 1;
-                        // 기존 타겟이 유효한지 확인 (활성 + 미무력화)
-                        if (eIdx < enemyShips.Length && enemyShips[eIdx] != null
-                            && enemyShips[eIdx].activeInHierarchy && !IsEnemyNeutralized(enemyShips[eIdx]))
-                        {
-                            assigned.Add(eIdx); // 이미 배정된 적은 다른 쌍에 배정 안 함
-                            continue;
-                        }
-                    }
-                    // 무효한 배정 → 초기화
-                    if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
-                    if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
-                }
-            }
-            else
-            {
-                // 기존 방식: 전체 초기화 후 재배정
-                for (int i = 0; i < poolCount; i++)
-                {
-                    DefensePair pair = launchZoneManager.GetPair(i);
-                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
-                    if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
-                    if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
-                }
-            }
-
-            // Greedy 매칭: Roonshot effective distance 방식
-            // Web 수직 방향(normal)과 적 방향의 각도 + 거리로 스코어 계산
-            // ANGLE_WEIGHT = 1.5 (Roonshot PARAM.py: 10° = 15m 거리 등가)
-            const float ANGLE_WEIGHT = 9.0f;
+            // 스폰 시 배정된 적은 절대 변경하지 않는다.
+            // 이 함수는 중복 제거 + 타겟이 무력화된 경우에만 -1로 초기화.
+            var seen = new System.Collections.Generic.Dictionary<int, int>(); // enemyIdx(1-based) → pairIdx
 
             for (int i = 0; i < poolCount; i++)
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
+                if (pair == null || !pair.isActive || pair.agent1 == null) continue;
 
-                // 이미 유효한 배정이 있으면 스킵 (lockTargetAssignment 모드)
-                if (pair.agent1.assignedTargetIndex > 0) continue;
+                int tIdx = pair.agent1.assignedTargetIndex;
+                if (tIdx <= 0) continue;
 
-                Vector3 pos1 = pair.agent1.transform.position;
-                Vector3 pos2 = pair.agent2 != null ? pair.agent2.transform.position : pos1;
-                Vector3 webCenter = (pos1 + pos2) * 0.5f;
+                int eIdx = tIdx - 1;
+                bool valid = eIdx < enemyShips.Length
+                    && enemyShips[eIdx] != null
+                    && enemyShips[eIdx].activeInHierarchy
+                    && !IsEnemyNeutralized(enemyShips[eIdx]);
 
-                // Web 수직 방향 (그물 라인에 수직, 모선 반대쪽을 향함)
-                Vector3 webLine = pos2 - pos1;
-                Vector3 webNormal = new Vector3(webLine.z, 0f, -webLine.x).normalized;
-                // 모선 바깥쪽을 향하도록 방향 보정
-                if (Vector3.Dot(webNormal, webCenter - motherPos) < 0f)
-                    webNormal = -webNormal;
-
-                float allyDistToMother = Vector3.Distance(webCenter, motherPos);
-
-                float bestScore = float.MaxValue;
-                int bestIdx = -1;
-                for (int e = 0; e < enemyShips.Length; e++)
+                if (!valid)
                 {
-                    if (assigned.Contains(e)) continue;
-                    if (enemyShips[e] == null || !enemyShips[e].activeInHierarchy) continue;
-
-                    float enemyDistToMother = Vector3.Distance(enemyShips[e].transform.position, motherPos);
-
-                    // 아군이 적보다 모선에 가까울 때만 배정 가능 (차단 위치)
-                    if (allyDistToMother >= enemyDistToMother) continue;
-
-                    // Web→적 방향과 Web 수직 방향의 각도 (intercept angle)
-                    Vector3 toEnemy = enemyShips[e].transform.position - webCenter;
-                    toEnemy.y = 0f;
-                    float interceptAngle = (toEnemy.sqrMagnitude > 0.01f)
-                        ? Vector3.Angle(webNormal, toEnemy.normalized)
-                        : 180f;
-
-                    // 90° 초과 = 그물이 적 반대쪽을 향함 → 배정 불가
-                    if (interceptAngle > 90f) continue;
-
-                    // Roonshot effective distance: 거리 + 각도 × 가중치
-                    float dist = Vector3.Distance(webCenter, enemyShips[e].transform.position);
-                    float score = dist + interceptAngle * ANGLE_WEIGHT;
-
-                    if (score < bestScore) { bestScore = score; bestIdx = e; }
+                    // 타겟이 무력화/비활성 → 해제
+                    pair.agent1.assignedTargetIndex = -1;
+                    if (pair.agent2) pair.agent2.assignedTargetIndex = -1;
+                    continue;
                 }
 
-                if (bestIdx >= 0)
+                if (seen.ContainsKey(tIdx))
                 {
-                    launchZoneManager.SetPairTarget(i, bestIdx + 1); // 1-indexed
-                    assigned.Add(bestIdx);
+                    // 중복 발견 → 경고 로그 + 이 쌍 해제
+                    Debug.LogWarning($"[Assignment] 중복배정 감지! Enemy{tIdx} → Pair{seen[tIdx]}(유지) & Pair{i}(해제)");
+                    pair.agent1.assignedTargetIndex = -1;
+                    if (pair.agent2) pair.agent2.assignedTargetIndex = -1;
                 }
-                // bestIdx == -1: 배정 불가 → assignedTargetIndex = -1 유지 (Fallback 동작)
+                else
+                {
+                    seen[tIdx] = i;
+                }
             }
         }
 

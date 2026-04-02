@@ -158,9 +158,52 @@ namespace BoatAttack
         [Tooltip("true면 화살표키, false면 WASD (페어 배치 시 자동 설정)")]
         public bool useArrowKeys = false;
 
+        [Header("=== Imitation Learning (LOS Heuristic) ===")]
+        [Tooltip("true면 LOS 가이던스 자동 휴리스틱 사용 (키보드 대체)")]
+        public bool enableLOSHeuristic = false;
+
+        [Tooltip("LOS 목표점 측방 거리 절반 (적 기준 좌/우 이격, m). webDeployedThreshold/2 권장")]
+        [Range(10f, 200f)]
+        public float losOffset = 50f;
+
+        [Tooltip("LOS PD 조향 감도 (bearing 오차 → 조향 출력 배율)")]
+        [Range(0.5f, 20f)]
+        public float losSteerGain = 3f;
+
+        [Tooltip("LOS D 조향 감도 (bearing 변화율 → 조향 출력 배율, 오버슈트 억제)")]
+        [Range(0f, 10f)]
+        public float losDerivGain = 0.3f;
+
+        [Tooltip("전방 아군 감지 거리 (m) — 이 안에 아군이 있으면 감속")]
+        [Range(5f, 300f)]
+        public float allyAvoidanceDist = 40f;
+
+        [Tooltip("전방 감지 측방 허용폭 (m) — 이 이상 옆에 있으면 무시")]
+        [Range(3f, 90f)]
+        public float allyAvoidanceLateralMax = 12f;
+
+        [Tooltip("데모 녹화 활성화 시 BehaviorType=HeuristicOnly + DemonstrationRecorder 자동 설정")]
+        public bool enableDemoRecording = false;
+
+        [Tooltip("데모 파일 저장 경로")]
+        public string demoDirectory = "Assets/Demos";
+
+        [Tooltip("데모 파일 이름 접두사 (뒤에 오브젝트 이름 자동 추가)")]
+        public string demoName = "LOS_Defense";
+
+        // ── Heuristic 캐시 (CollectObservations에서 채워짐, Heuristic에서 소비) ──
+        private GameObject _heuristicNearestEnemy = null;
+        private float _prevGoalBrg = 0f;  // LOS D 제어용 이전 bearing 오차
+
         [Header("Debug")]
         public bool showRaycasts = true;
         public bool enableDebugLog = false;
+        [Tooltip("Game View에서 배정 라인 실시간 표시 (LineRenderer 사용)")]
+        public bool showMatchingLine = true;
+
+        // ── 런타임 매칭 LineRenderer ──
+        private LineRenderer _matchingLR;   // Web 중심 → 배정 적군 (노란선)
+        private LineRenderer _partnerLR;    // Agent1 → Agent2 (초록선)
 
         /// <summary>모니터링용: 전체 관측값 (VectorSensor + EnemyBuffer + AllyBuffer)</summary>
         [HideInInspector] public float[] lastObservations;
@@ -232,6 +275,40 @@ namespace BoatAttack
             allyBufferSensor.SensorName = "AllyBufferSensor";
             allyBufferSensor.ObservableSize = 3;   // dist, bearing, webLength
             allyBufferSensor.MaxNumObservables = allyMaxObservables;
+
+            // 데모 녹화 모드: BehaviorType=HeuristicOnly + DemonstrationRecorder 자동 추가
+            if (enableDemoRecording)
+            {
+                var demoBp = GetComponent<Unity.MLAgents.Policies.BehaviorParameters>();
+                if (demoBp != null) demoBp.BehaviorType = Unity.MLAgents.Policies.BehaviorType.HeuristicOnly;
+                var rec = GetComponent<Unity.MLAgents.Demonstrations.DemonstrationRecorder>();
+                if (rec == null) rec = gameObject.AddComponent<Unity.MLAgents.Demonstrations.DemonstrationRecorder>();
+                rec.Record = true;
+                rec.DemonstrationName = demoName + "_" + name;
+                rec.DemonstrationDirectory = demoDirectory;
+                rec.NumStepsToRecord = 0; // Play 종료까지 녹화
+                Debug.Log($"[{name}] DemoRecording 활성화: {demoDirectory}/{demoName}_{name}.demo");
+            }
+
+            // 런타임 매칭 LineRenderer 생성
+            _matchingLR = CreateLineRenderer("_MatchingLine", new Color(1f, 0.9f, 0.1f, 0.85f), 0.6f);
+            _partnerLR  = CreateLineRenderer("_PartnerLine",  new Color(0.2f, 1f, 0.3f, 0.7f),  0.4f);
+        }
+
+        private LineRenderer CreateLineRenderer(string childName, Color col, float width)
+        {
+            var go = new GameObject(childName);
+            go.transform.SetParent(transform, false);
+            var lr = go.AddComponent<LineRenderer>();
+            lr.positionCount = 2;
+            lr.startWidth  = width;
+            lr.endWidth    = width;
+            lr.useWorldSpace = true;
+            lr.material = new Material(Shader.Find("Sprites/Default"));
+            lr.startColor = col;
+            lr.endColor   = new Color(col.r, col.g, col.b, col.a * 0.4f);
+            lr.enabled = false;
+            return lr;
         }
 
         protected override void OnEnable()
@@ -292,6 +369,51 @@ namespace BoatAttack
         /// <summary>
         /// Stage9: 직진 이탈 중 엔진 구동 (UnregisterAgent 후 OnActionReceived가 호출되지 않으므로 직접 구동)
         /// </summary>
+        private void LateUpdate()
+        {
+            UpdateMatchingLines();
+        }
+
+        private void UpdateMatchingLines()
+        {
+            if (!showMatchingLine)
+            {
+                if (_matchingLR != null) _matchingLR.enabled = false;
+                if (_partnerLR  != null) _partnerLR.enabled  = false;
+                return;
+            }
+
+            // 파트너 라인
+            if (_partnerLR != null && partnerAgent != null)
+            {
+                _partnerLR.enabled = true;
+                _partnerLR.SetPosition(0, transform.position + Vector3.up * 1f);
+                _partnerLR.SetPosition(1, partnerAgent.transform.position + Vector3.up * 1f);
+            }
+            else if (_partnerLR != null)
+            {
+                _partnerLR.enabled = false;
+            }
+
+            // 배정 적군 매칭 라인 (Web 중심 → 적)
+            // partnerAgent가 있는 쪽(agent1)만 그림 — agent2는 중복 선 방지
+            if (_matchingLR != null)
+            {
+                GameObject assigned = GetAssignedEnemy();
+                if (assigned != null && assigned.activeInHierarchy && partnerAgent != null)
+                {
+                    Vector3 webCenter = (transform.position + partnerAgent.transform.position) * 0.5f + Vector3.up * 1f;
+                    _matchingLR.enabled = true;
+                    _matchingLR.SetPosition(0, webCenter);
+                    _matchingLR.SetPosition(1, assigned.transform.position + Vector3.up * 1f);
+                }
+                else
+                {
+                    _matchingLR.enabled = false;
+                }
+            }
+        }
+
         private void FixedUpdate()
         {
             if (!_straightMode) return;
@@ -492,6 +614,9 @@ namespace BoatAttack
                     enemyByDist.Add((i, d));
                 }
                 enemyByDist.Sort((a, b) => a.dist.CompareTo(b.dist));
+
+                // Heuristic() LOS 캐시 갱신 (가장 가까운 적군)
+                _heuristicNearestEnemy = enemyByDist.Count > 0 ? enemyShips[enemyByDist[0].idx] : null;
 
                 // 모든 활성 적군을 Buffer에 추가 (MaxNumObservables까지)
                 int count = Mathf.Min(enemyByDist.Count, enemyBufferSensor.MaxNumObservables);
@@ -936,6 +1061,13 @@ namespace BoatAttack
         {
             var continuousActions = actionsOut.ContinuousActions;
 
+            // LOS 휴리스틱 모드 (데모 녹화 시에도 강제 활성)
+            if (enableLOSHeuristic || enableDemoRecording)
+            {
+                ApplyLOSHeuristic(continuousActions);
+                return;
+            }
+
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null)
             {
@@ -966,6 +1098,146 @@ namespace BoatAttack
 
             continuousActions[0] = Mathf.Clamp(throttle, -1f, 1f);
             continuousActions[1] = Mathf.Clamp(steering, -1f, 1f);
+        }
+
+        /// <summary>
+        /// LOS 가이던스 기반 자동 조종.
+        /// ─ DEPLOY   : OnActionReceived가 덮어쓰므로 demo 일관성 유지용 값 출력
+        /// ─ CONVOY   : 적 방향으로 접근 (차동 추력 = 정면 정렬)
+        /// ─ SEPARATED: 적의 LOS 수직 방향 좌/우 목표점으로 이동 (그물 포위)
+        /// </summary>
+        private void ApplyLOSHeuristic(Unity.MLAgents.Actuators.ActionSegment<float> ca)
+        {
+            // ── DEPLOY: OnActionReceived에서 어차피 덮어쓰지만 demo 기록값 일관성 유지 ──
+            if (_deployMode)
+            {
+                ca[0] = 1f;
+                float rawSteer = steeringSensitivity > 0f
+                    ? _deploySteerOverride / steeringSensitivity
+                    : _deploySteerOverride;
+                ca[1] = Mathf.Clamp(rawSteer, -1f, 1f);
+                return;
+            }
+
+            // 타겟 적 (AutoAssign 배정 우선 → 캐시 → 직접 탐색)
+            GameObject target = GetAssignedEnemy();
+            if (target == null && _heuristicNearestEnemy != null && _heuristicNearestEnemy.activeInHierarchy)
+                target = _heuristicNearestEnemy;
+            if (target == null)
+                target = FindNearestActiveEnemy();
+
+            if (target == null) { ca[0] = 0f; ca[1] = 0f; return; }
+
+            Vector3 myPos  = transform.position;
+            Vector3 myFwd  = transform.forward; myFwd.y = 0f;
+            Vector3 enemyPos = target.transform.position;
+
+            // ── CONVOY: 적 방향으로 직진 ──
+            if (_convoyMode)
+            {
+                Vector3 toEnemy = enemyPos - myPos; toEnemy.y = 0f;
+                float brg = ComputeSignedBearing(myFwd, toEnemy);
+                float convoyThrottle = Mathf.Clamp(1f + ComputeAllyAvoidanceThrottle(myPos, myFwd), -1f, 1f);
+                ca[0] = convoyThrottle;
+                ca[1] = Mathf.Clamp(-brg * losSteerGain, -1f, 1f);
+                return;
+            }
+
+            // ── SEPARATED: LOS 수직 좌/우 위치로 이동 (그물 포위) ──
+
+            // 1. 역할 결정: 파트너가 오른쪽(brg<0) → 나는 LEFT(+), 반대면 RIGHT(-)
+            float mySide = -1f;
+            if (partnerAgent != null)
+            {
+                Vector3 toPartner = partnerAgent.transform.position - myPos; toPartner.y = 0f;
+                float partnerBrg = ComputeSignedBearing(myFwd, toPartner);
+                mySide = partnerBrg < 0f ? 1f : -1f;
+            }
+
+            // 2. LOS 수직 방향 (적→모선 방향의 CCW 90°)
+            Vector3 toMother = Vector3.back;
+            if (motherShip != null)
+                toMother = motherShip.transform.position - enemyPos;
+            toMother.y = 0f;
+            if (toMother.sqrMagnitude > 0.01f) toMother.Normalize();
+            Vector3 perpDir = new Vector3(-toMother.z, 0f, toMother.x);
+
+            // 3. 목표점
+            Vector3 goalPos = enemyPos + perpDir * (mySide * losOffset);
+
+            // 4. 목표점까지 PD 조향
+            Vector3 toGoal = goalPos - myPos; toGoal.y = 0f;
+            float goalDist = toGoal.magnitude;
+            float goalBrg  = goalDist > 0.5f ? ComputeSignedBearing(myFwd, toGoal) : 0f;
+
+            float throttleAction = goalDist > 30f ? 1f : goalDist > 10f ? 0f : -1f;
+            throttleAction = Mathf.Clamp(throttleAction + ComputeAllyAvoidanceThrottle(myPos, myFwd), -1f, 1f);
+
+            float bearingRate = goalBrg - _prevGoalBrg;
+            _prevGoalBrg = goalBrg;
+            float steerAction = Mathf.Clamp(-(goalBrg * losSteerGain + bearingRate * losDerivGain), -1f, 1f);
+
+            ca[0] = throttleAction;
+            ca[1] = steerAction;
+        }
+
+        /// <summary>전방/후방 아군 선박 감지 → throttle 보정값 반환 (전방=-감속, 후방=+가속)</summary>
+        private float ComputeAllyAvoidanceThrottle(Vector3 myPos, Vector3 myFwd)
+        {
+            if (envController == null || envController.launchZoneManager == null) return 0f;
+            var lzm = envController.launchZoneManager;
+            if (!lzm.IsInitialized) return 0f;
+
+            float mod = 0f;
+            int poolCount = lzm.GetCurrentPoolCount();
+            for (int i = 0; i < poolCount; i++)
+            {
+                DefensePair pair = lzm.GetPair(i);
+                if (pair == null || !pair.isActive) continue;
+                ApplyAvoidanceFrom(pair.agent1, myPos, myFwd, ref mod);
+                ApplyAvoidanceFrom(pair.agent2, myPos, myFwd, ref mod);
+            }
+            return Mathf.Clamp(mod, -1f, 1f);
+        }
+
+        private void ApplyAvoidanceFrom(DefenseAgent other, Vector3 myPos, Vector3 myFwd, ref float mod)
+        {
+            if (other == null || other == this) return;
+            if (other.transform.position.y < -100f) return; // HIDDEN_POS 제외
+
+            Vector3 toOther = other.transform.position - myPos; toOther.y = 0f;
+            float dist = toOther.magnitude;
+            if (dist < 0.5f || dist > allyAvoidanceDist) return;
+
+            float fwdDot = Vector3.Dot(myFwd.normalized, toOther.normalized);
+            float lateralDist = Mathf.Sqrt(Mathf.Max(0f, toOther.sqrMagnitude
+                                - Mathf.Pow(fwdDot * dist, 2f)));
+            if (lateralDist > allyAvoidanceLateralMax) return;
+
+            float proximity = 1f - dist / allyAvoidanceDist;
+            if (fwdDot > 0.5f)       mod -= proximity * 1.5f; // 전방 → 감속
+            else if (fwdDot < -0.5f) mod += proximity * 0.4f; // 후방 → 가속
+        }
+
+        /// <summary>활성 적군 중 Web 중심에서 가장 가까운 것 반환 (Heuristic fallback용)</summary>
+        private GameObject FindNearestActiveEnemy()
+        {
+            if (enemyShips == null) return null;
+
+            Vector3 webCenter = transform.position;
+            if (partnerAgent != null)
+                webCenter = (transform.position + partnerAgent.transform.position) * 0.5f;
+
+            GameObject nearest = null;
+            float minDist = float.MaxValue;
+            foreach (var e in enemyShips)
+            {
+                if (e == null || !e.activeInHierarchy) continue;
+                if (envController != null && envController.IsEnemyNeutralized(e)) continue;
+                float d = Vector3.Distance(webCenter, e.transform.position);
+                if (d < minDist) { minDist = d; nearest = e; }
+            }
+            return nearest;
         }
 
         private void OnCollisionEnter(Collision collision)
@@ -1017,32 +1289,50 @@ namespace BoatAttack
             if (!Application.isPlaying)
                 return;
 
+            // 자신: 파란 구
             Gizmos.color = Color.blue;
             Gizmos.DrawWireSphere(transform.position, 2f);
 
+            // 파트너: 초록 선
             if (partnerAgent != null)
             {
                 Gizmos.color = Color.green;
                 Gizmos.DrawLine(transform.position, partnerAgent.transform.position);
             }
 
+            // 적군: 배정된 적=노란 굵은 선, 나머지=어두운 빨간 선
             if (enemyShips != null)
             {
-                Gizmos.color = Color.red;
+                GameObject assignedEnemy = GetAssignedEnemy();
+                Vector3 webCenter = partnerAgent != null
+                    ? (transform.position + partnerAgent.transform.position) * 0.5f
+                    : transform.position;
+
                 foreach (var enemy in enemyShips)
                 {
-                    if (enemy != null)
-                        Gizmos.DrawLine(transform.position, enemy.transform.position);
+                    if (enemy == null || !enemy.activeInHierarchy) continue;
+                    if (enemy == assignedEnemy)
+                    {
+                        // 배정 매칭 — 밝은 노란선 (Web 중심 → 적)
+                        Gizmos.color = new Color(1f, 0.9f, 0.1f, 1f);
+                        Gizmos.DrawLine(webCenter, enemy.transform.position);
+                        Gizmos.DrawWireSphere(enemy.transform.position, 4f);
+                    }
+                    else
+                    {
+                        // 비배정 — 희미한 빨간선
+                        Gizmos.color = new Color(1f, 0.2f, 0.2f, 0.25f);
+                        Gizmos.DrawLine(webCenter, enemy.transform.position);
+                    }
                 }
             }
 
+            // Web 오브젝트: 노란 구
             if (webObject != null)
             {
                 Gizmos.color = Color.yellow;
                 Gizmos.DrawWireSphere(webObject.transform.position, 3f);
             }
-
-
         }
     }
 }

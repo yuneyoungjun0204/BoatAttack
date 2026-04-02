@@ -639,14 +639,9 @@ namespace BoatAttack
                     pair.agent2.enemyShips = enemies;
                 }
 
-                // Voronoi 배정: 이 쌍이 담당하는 적 중 가장 가까운 것
+                // Voronoi 배정: 이 쌍이 담당하는 적 계산 (스폰 회전 결정에만 사용)
                 int bestEnemyIdx = GetClosestResponsibleEnemyForSpawn(
                     pairCenter, allCenters, i, enemies);
-                if (bestEnemyIdx >= 0)
-                {
-                    if (pair.agent1 != null) pair.agent1.assignedTargetIndex = bestEnemyIdx + 1;
-                    if (pair.agent2 != null) pair.agent2.assignedTargetIndex = bestEnemyIdx + 1;
-                }
 
                 // Stage3/7/8: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
                 Quaternion rot;
@@ -673,9 +668,13 @@ namespace BoatAttack
                 Vector3 pos2 = pairCenter + webLateral * (spawnWidth * 0.5f);
                 pos2.y = _templateAgent2Y;
 
-                // 에이전트 위치/회전 설정
+                // 에이전트 위치/회전 설정 (ResetForDeployment 내부에서 assignedTargetIndex=-1 됨)
                 ResetAgent(pair.agent1, pos1, rot);
                 ResetAgent(pair.agent2, pos2, rot);
+
+                // ResetAgent 이후에 배정 — ResetForDeployment가 -1로 초기화한 뒤 덮어씀
+                if (bestEnemyIdx >= 0)
+                    SetPairTarget(pi, bestEnemyIdx + 1); // 중복 방지 로직 포함
 
                 // 좌/우 교차 체크용 초기값 기록
                 pair.deployLateralDir = webLateral;
@@ -1228,7 +1227,8 @@ namespace BoatAttack
 
         /// <summary>
         /// 쌍의 타겟 설정 (양쪽 에이전트에 동시 적용)
-        /// targetEnemyIndex: -1=auto, 1+=1-indexed enemy
+        /// targetEnemyIndex: -1=해제, 1+=1-indexed enemy
+        /// 이미 다른 활성 쌍이 해당 적을 보유 중이면 배정 포기 → 기존 배정 절대 불변
         /// </summary>
         public void SetPairTarget(int pairIndex, int targetEnemyIndex)
         {
@@ -1236,8 +1236,22 @@ namespace BoatAttack
                 return;
             DefensePair pair = _pairPool[pairIndex];
             if (!pair.isActive) return;
-            if (pair.agent1 != null) pair.agent1.assignedTargetIndex = targetEnemyIndex;
-            if (pair.agent2 != null) pair.agent2.assignedTargetIndex = targetEnemyIndex;
+
+            // 유효한 타겟 요청 시: 이미 다른 활성 쌍이 같은 적 보유 → 배정 포기
+            if (targetEnemyIndex > 0)
+            {
+                for (int i = 0; i < _pairPool.Count; i++)
+                {
+                    if (i == pairIndex) continue;
+                    DefensePair other = _pairPool[i];
+                    if (other == null || !other.isActive) continue;
+                    if (other.agent1 != null && other.agent1.assignedTargetIndex == targetEnemyIndex)
+                        return; // 이미 배정됨 → 이 쌍은 -1 유지, 기존 쌍 배정 보호
+                }
+            }
+
+            if (pair.agent1) pair.agent1.assignedTargetIndex = targetEnemyIndex;
+            if (pair.agent2) pair.agent2.assignedTargetIndex = targetEnemyIndex;
         }
 
         /// <summary>
@@ -1356,12 +1370,6 @@ namespace BoatAttack
                 zoneDir, motherPos, filterByDirection: true);
             if (bestEnemy < 0)
                 bestEnemy = FindClosestUnassignedEnemy(pairCenter, enemies, singleAssigned);
-            if (bestEnemy >= 0)
-            {
-                if (pair.agent1 != null) pair.agent1.assignedTargetIndex = bestEnemy + 1;
-                if (pair.agent2 != null) pair.agent2.assignedTargetIndex = bestEnemy + 1;
-            }
-
             // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
             if (envController != null && envController.currentStage == TrainingStage.Stage3_Tactical)
             {
@@ -1386,8 +1394,13 @@ namespace BoatAttack
             pos2 = pairCenter + lateralDir * (singleSpawnWidth * 0.5f);
             pos2.y = _templateAgent2Y;
 
+            // ResetAgent 먼저 (ResetForDeployment에서 assignedTargetIndex=-1)
             ResetAgent(pair.agent1, pos1, rot);
             ResetAgent(pair.agent2, pos2, rot);
+
+            // ResetAgent 이후에 배정 — -1 초기화 이후 덮어씀
+            if (bestEnemy >= 0)
+                SetPairTarget(pairIdx, bestEnemy + 1); // 중복 방지 로직 포함
 
             // 좌/우 교차 체크용 초기값 기록 (실제 agent1→agent2 방향)
             pair.deployLateralDir = lateralDir;
@@ -2174,13 +2187,17 @@ namespace BoatAttack
 
         /// <summary>
         /// 스폰용 Voronoi: pairCenter 기준으로 담당 적 계산 (아직 활성화 전이라 pairCenters 배열 사용)
+        /// 헤딩 각도 포함 스코어 — AutoAssignOneToOneTargets()와 동일한 배정 기준으로 일관성 보장
         /// </summary>
         public int GetClosestResponsibleEnemyForSpawn(Vector3 myCenter, Vector3[] allCenters, int myIndex, GameObject[] enemies)
         {
             if (enemies == null || allCenters == null) return -1;
 
+            const float ANGLE_WEIGHT = 9.0f;
+            const float HEADING_WEIGHT = 2.5f;
+
             int bestIdx = -1;
-            float bestDist = float.MaxValue;
+            float bestScore = float.MaxValue;
 
             for (int ei = 0; ei < enemies.Length; ei++)
             {
@@ -2188,24 +2205,60 @@ namespace BoatAttack
 
                 float myDist = Vector3.Distance(myCenter, enemies[ei].transform.position);
 
-                // 다른 쌍 중심이 더 가까우면 담당 아님
+                // 다른 쌍 중심이 더 가깝거나, 같은 거리면 인덱스가 낮은 쌍에 우선권 → 중복 배정 방지
                 bool isResponsible = true;
                 for (int pi = 0; pi < allCenters.Length; pi++)
                 {
                     if (pi == myIndex) continue;
-                    if (Vector3.Distance(allCenters[pi], enemies[ei].transform.position) < myDist)
+                    float otherDist = Vector3.Distance(allCenters[pi], enemies[ei].transform.position);
+                    if (otherDist < myDist || (Mathf.Approximately(otherDist, myDist) && pi < myIndex))
                     {
                         isResponsible = false;
                         break;
                     }
                 }
-
                 if (!isResponsible) continue;
 
-                if (myDist < bestDist)
+                // 적 헤딩 vs 적→그물 방향 각도
+                Vector3 enemyFwd = enemies[ei].transform.forward; enemyFwd.y = 0f;
+                Vector3 enemyToSpawn = myCenter - enemies[ei].transform.position; enemyToSpawn.y = 0f;
+                float headingAngle = 90f;
+                if (enemyFwd.sqrMagnitude > 0.01f && enemyToSpawn.sqrMagnitude > 0.01f)
+                    headingAngle = Vector3.Angle(enemyFwd.normalized, enemyToSpawn.normalized);
+
+                // 적이 이 쌍 반대 방향으로 이동 중이면 제외
+                if (headingAngle > 110f) continue;
+
+                // 인터셉트 각도: 스폰 방향과 적 방향의 차이
+                Vector3 toEnemy = enemies[ei].transform.position - myCenter; toEnemy.y = 0f;
+                // 스폰 시점엔 webNormal 미확정 → myCenter→enemy 방향 기준으로 간이 계산 (0° = 정면)
+                // 후속 ComputeSpawnRotation이 실제 방향 결정하므로 여기선 헤딩 가중치만 추가
+                float score = myDist + headingAngle * HEADING_WEIGHT;
+
+                if (score < bestScore)
                 {
-                    bestDist = myDist;
+                    bestScore = score;
                     bestIdx = ei;
+                }
+            }
+
+            // 모든 적이 headingAngle > 110° 제외되면 fallback: 순수 거리 최솟값
+            if (bestIdx < 0)
+            {
+                float fallbackDist = float.MaxValue;
+                for (int ei = 0; ei < enemies.Length; ei++)
+                {
+                    if (enemies[ei] == null || !enemies[ei].activeInHierarchy) continue;
+                    float myDist = Vector3.Distance(myCenter, enemies[ei].transform.position);
+                    bool isResponsible = true;
+                    for (int pi = 0; pi < allCenters.Length; pi++)
+                    {
+                        if (pi == myIndex) continue;
+                        if (Vector3.Distance(allCenters[pi], enemies[ei].transform.position) < myDist)
+                        { isResponsible = false; break; }
+                    }
+                    if (!isResponsible) continue;
+                    if (myDist < fallbackDist) { fallbackDist = myDist; bestIdx = ei; }
                 }
             }
 
