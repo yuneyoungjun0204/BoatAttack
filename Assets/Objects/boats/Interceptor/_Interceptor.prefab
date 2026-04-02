@@ -754,7 +754,7 @@ MonoBehaviour:
   phantomCount: 0
   phantomsInitialized: 0
   useArrowKeys: 0
-  enableLOSHeuristic: 1
+  enableLOSHeuristic: 0
   losOffset: 80
   losSteerGain: 8
   losDerivGain: 1
@@ -767,7 +767,7 @@ MonoBehaviour:
   demoName: LOS_Defense
   showRaycasts: 1
   enableDebugLog: 0
-  showMatchingLine: 1
+  showMatchingLine: 0
   lastObservations: []
   lastObservationsCount: 0
   collectObsCallCount: 0

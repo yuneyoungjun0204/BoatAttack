@@ -124,7 +124,7 @@ namespace BoatAttack
             FormationType type = formationType;
             if (type == FormationType.Random)
             {
-                int r = Random.Range(0, 3);
+                int r = Random.Range(0, 3); // 0=Concentrated, 1=Wave, 2=Diversionary
                 type = (FormationType)r;
             }
             _lastFormationType = type;

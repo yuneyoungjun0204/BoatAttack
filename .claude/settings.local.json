@@ -44,7 +44,10 @@
       "Bash(start \"\" \"C:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\paper\\\\presentation\\\\USV_TRAP_Presentation.pptx\")",
       "WebSearch",
       "Bash(git log:*)",
-      "Bash(ls -d c:/Users/ANSL/Desktop/BoatAttack/results/*/)"
+      "Bash(ls -d c:/Users/ANSL/Desktop/BoatAttack/results/*/)",
+      "Bash(conda run -n mlagents-gpu python -c ':*)",
+      "Bash(/c/Users/ANSL/anaconda3/envs/mlagents-gpu/python.exe -c ':*)",
+      "WebFetch(domain:unity-technologies.github.io)"
     ]
   }
 }

@@ -257,9 +257,6 @@ namespace BoatAttack
         [Tooltip("적이 그물보다 모선에 이 거리 이상 더 가까우면 방어선 돌파 (m)")]
         public float enemyBreachThreshold = 20f;
 
-        [Tooltip("좌/우 교차 판정 임계값 (cos): 0=90°반전, 0.01≈89.4°, 1=완전일치")]
-        public float swapDotThreshold = 0.02f;
-
         [Tooltip("에피소드 내 최대 아군 쌍 생성 수 (이 수 이상 생성 불가)")]
         public int maxAllyPairsPerEpisode = 25;
 
@@ -1199,7 +1196,7 @@ namespace BoatAttack
 
                     if (!hasActiveEnemy) continue;
 
-                    // 가장 먼 적조차 아군보다 모선에 가까움 = 완전 추월
+                    // 가장 먼 적조차 아군보다 모선에 가까움 = 완전 추월 (하드 페널티 + 비활성화)
                     if (farthestEnemyDist < allyDist)
                     {
                         pair.agent1.AddReward(rewardCalculator.enemyOvertakePenalty);
@@ -1310,6 +1307,39 @@ namespace BoatAttack
                         pair.agent2.AddReward(pairReward);
                     }
 
+                    // 가장 가까운 적 정면 정렬 보상: Gaussian f(b) = exp(-b²/(2σ²)), bearing=0(정면)일 때 최대
+                    if (rewardCalculator.bearingAlignRewardCoeff > 0f && _enemyPool != null)
+                    {
+                        // 가장 가까운 활성 적 탐색
+                        GameObject nearestEnemy = null;
+                        float nearestDist2 = float.MaxValue;
+                        foreach (var e in _enemyPool)
+                        {
+                            if (e == null || !e.activeSelf || IsEnemyNeutralized(e)) continue;
+                            float d2 = (e.transform.position - webCenter).sqrMagnitude;
+                            if (d2 < nearestDist2) { nearestDist2 = d2; nearestEnemy = e; }
+                        }
+
+                        if (nearestEnemy != null)
+                        {
+                            Vector3 webFwd = (pair.agent1.transform.forward + pair.agent2.transform.forward) * 0.5f;
+                            webFwd.y = 0f;
+                            Vector3 toEnemy = nearestEnemy.transform.position - webCenter;
+                            toEnemy.y = 0f;
+                            if (webFwd.sqrMagnitude > 0.01f && toEnemy.sqrMagnitude > 0.01f)
+                            {
+                                float angleDeg = Vector3.Angle(webFwd, toEnemy);
+                                float bearing = Mathf.Sqrt(angleDeg / 180f); // [0, 1]
+                                float sigma = rewardCalculator.bearingGaussianSigma;
+                                float gaussian = Mathf.Exp(-(bearing * bearing) / (2f * sigma * sigma));
+                                float alignReward = rewardCalculator.bearingAlignRewardCoeff * gaussian;
+                                pair.agent1.AddReward(alignReward);
+                                pair.agent2.AddReward(alignReward);
+                                totalStepReward += alignReward;
+                            }
+                        }
+                    }
+
                     totalStepReward += pairReward;
                 }
             }
@@ -1344,6 +1374,12 @@ namespace BoatAttack
             if (motherShip != null && _enemyPool != null && rewardCalculator.raycastInterceptReward > 0f && _resetTimer % 5 == 0)
             {
                 Vector3 motherPos = motherShip.transform.position;
+
+                // 활성 적 수 집계 (보상 스케일 정규화용 — 적 수와 무관하게 동일 스케일 유지)
+                int activeEnemyCount = 0;
+                foreach (var e in _enemyPool)
+                    if (e != null && e.activeSelf && !IsEnemyNeutralized(e)) activeEnemyCount++;
+                float enemyNorm = activeEnemyCount > 0 ? 1f / activeEnemyCount : 1f;
 
                 for (int ei = 0; ei < _enemyPool.Length; ei++)
                 {
@@ -1428,7 +1464,7 @@ namespace BoatAttack
 
                             // 위협도 가중치: 적이 모선에 가까울수록 보상 증가 (1.0 ~ 2.0)
                             float threatWeight = 1f + Mathf.Clamp01(1f - distToMother / 500f);
-                            float reward = rewardCalculator.raycastInterceptReward * perpBonus * centerBonus * threatWeight;
+                            float reward = rewardCalculator.raycastInterceptReward * perpBonus * centerBonus * threatWeight * enemyNorm;
                             agent.AddReward(reward);
                             if (agent.partnerAgent != null)
                                 agent.partnerAgent.AddReward(reward);
@@ -1458,7 +1494,7 @@ namespace BoatAttack
                     if (!hitWeb && rewardCalculator.raycastDirectHitPenalty < 0f)
                     {
                         float threatWeight = 1f + Mathf.Clamp01(1f - distToMother / 500f);
-                        float penalty = rewardCalculator.raycastDirectHitPenalty * threatWeight;
+                        float penalty = rewardCalculator.raycastDirectHitPenalty * threatWeight * enemyNorm;
                         if (m_AgentGroup != null)
                             m_AgentGroup.AddGroupReward(penalty);
                         totalStepReward += penalty;
@@ -1963,8 +1999,7 @@ namespace BoatAttack
                 : 0f;
             // 순차 포획 보너스: n번째 포획 = 기본보상 × (1 + (n-1) × 계수)
             float seqBonus = 1f + (_capturedEnemyCount - 1) * rewardCalculator.sequentialCaptureBonus;
-            float reward = rewardCalculator.captureReward * seqBonus
-                + rewardCalculator.captureDistanceBonus * distRatio;
+            float reward = rewardCalculator.captureReward * seqBonus;
 
             // 보상 부여: 그룹 보상(전액) + 포획한 쌍에 개별 보너스
             if (m_AgentGroup != null)
@@ -2129,9 +2164,7 @@ namespace BoatAttack
                     if (hitPair != null && hitPair.isDisarmed)
                         return;
 
-                    // 1. 충돌 당한 쌍 페널티 + 비활성화
-                    if (hitPair?.agent1 != null) hitPair.agent1.AddReward(rewardCalculator.allyWebCollisionPenalty);
-                    if (hitPair?.agent2 != null) hitPair.agent2.AddReward(rewardCalculator.allyWebCollisionPenalty);
+                    // 1. 충돌 당한 쌍 비활성화
                     DisableOrDisarmPair(hitPairIdx);
                     NotifyCameraPairDisabled(hitPair);
 
@@ -2148,8 +2181,6 @@ namespace BoatAttack
                             if (webPairIdx >= 0 && webPairIdx != hitPairIdx)
                             {
                                 DefensePair webPair = launchZoneManager.GetPair(webPairIdx);
-                                if (webPair?.agent1 != null) webPair.agent1.AddReward(rewardCalculator.allyWebCollisionPenalty);
-                                if (webPair?.agent2 != null) webPair.agent2.AddReward(rewardCalculator.allyWebCollisionPenalty);
                                 DisableOrDisarmPair(webPairIdx);
                                 NotifyCameraPairDisabled(webPair);
                             }
@@ -2163,7 +2194,7 @@ namespace BoatAttack
             }
 
             // 레거시 fallback
-            RestartEpisode("AllyHitWeb", rewardCalculator.allyWebCollisionPenalty);
+            RestartEpisode("AllyHitWeb");
         }
 
         /// <summary>
@@ -2718,9 +2749,6 @@ namespace BoatAttack
         /// Stage8: 해당 방향에 차단 가능한 아군이 없는 적 → 예비 쌍 출동 (배정 없이)
         /// 적 방향 ±coverAngle 범위 내에서 적보다 모선에 가까운 아군이 없으면 출동
         /// </summary>
-        [Tooltip("Stage8 차단 판정 각도 (적 방향 ±이 값 내 아군만 체크)")]
-        public float stage8CoverAngle = 60f;
-
         [Tooltip("Stage8 출동 불가 최소 거리 (적이 모선에서 이 거리 이내면 출동 안 함)")]
         public float stage8MinDeployDistance = 100f;
 
@@ -2775,10 +2803,6 @@ namespace BoatAttack
                             pair.agent1.SetDeployMode(true, agent1Steer);
                             pair.agent2.SetDeployMode(true, agent2Steer);
                         }
-
-                        // 4. Deploy 트리거 보너스
-                        if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.deployTriggerBonus);
-                        if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.deployTriggerBonus);
 
                         Debug.Log($"[ConvoyDeploy] Pair {pi} DEPLOY: Joint destroyed, nearestEnemy={nearestDist:F0}m");
                     }
@@ -2916,7 +2940,6 @@ namespace BoatAttack
 
         /// <summary>
         /// Stage9: 아군이 깔린 트랩 그물에 걸렸을 때 처리
-        /// 해당 쌍 비활성화 + allyWebCollisionPenalty 적용
         /// </summary>
         public void OnAllyHitTrap(DefenseAgent agent)
         {
@@ -2929,12 +2952,7 @@ namespace BoatAttack
             DefensePair pair = launchZoneManager.GetPair(pairIdx);
             if (pair == null || !pair.isActive) return;
 
-            // 이미 비활성화/Disarm 처리된 쌍은 무시
             if (pair.isDisarmed) return;
-
-            // 페널티 (아군 Web 충돌과 동일)
-            if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.allyWebCollisionPenalty);
-            if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.allyWebCollisionPenalty);
 
             // 비활성화 (Stage9이면 직진 이탈)
             DisableOrDisarmPair(pairIdx);
@@ -3434,6 +3452,7 @@ namespace BoatAttack
                 lr.enabled = false;
                 _enemyRayLines[i] = lr;
             }
+
             template.SetActive(false);
             template.name = $"{template.name}_template(unused)";
 
@@ -3491,23 +3510,27 @@ namespace BoatAttack
                 if (mb != null) mb.CancelInvoke();
             }
 
-            // 2. 위치/회전 설정 (SetActive 전에!)
-            obj.transform.position = position;
-            obj.transform.rotation = rotation;
-
-            // 3. Rigidbody 속도 초기화 + isKinematic 복원 (DisableEnemy에서 true로 설정됨)
+            // 2. Rigidbody 속도 초기화 + isKinematic 복원 (DisableEnemy에서 true로 설정됨)
             Rigidbody rb = _poolRigidbodies[index];
             if (rb != null)
             {
                 rb.isKinematic = false;  // 물리 시뮬레이션 복원
                 rb.velocity = Vector3.zero;
                 rb.angularVelocity = Vector3.zero;
+                // rb.position/rotation 사용 (transform 직접 수정 시 물리 폭발 발생)
+                rb.position = position;
+                rb.rotation = rotation;
+            }
+            else
+            {
+                obj.transform.position = position;
+                obj.transform.rotation = rotation;
             }
 
-            // 4. 활성화 → OnEnable 트리거 → _hasExploded=false 자동 리셋
+            // 3. 활성화 → OnEnable 트리거 → _hasExploded=false 자동 리셋
             obj.SetActive(true);
 
-            // 5. rb.Sleep() (활성 상태에서만 유효)
+            // 4. rb.Sleep() (활성 상태에서만 유효)
             if (rb != null)
             {
                 rb.Sleep();
@@ -3607,11 +3630,6 @@ namespace BoatAttack
         /// </summary>
         private System.Collections.IEnumerator ResetPositionsWithDeactivation()
         {
-            // Debug.LogWarning($"[DefenseEnv] ResetPositionsWithDeactivation 시작: " +
-            //     $"useDynamicSpawn={useDynamicSpawn}, motherShip={motherShip != null}, " +
-            //     $"launchZoneManager={launchZoneManager != null}, " +
-            //     $"lzmInitialized={launchZoneManager?.IsInitialized}");
-
             // 모든 WAKE 객체 제거 및 WakeGenerator 비활성화
             DestroyAllWakeObjects();
 
@@ -3643,8 +3661,9 @@ namespace BoatAttack
                 // 4. 아군 스폰
                 if (launchZoneManager != null)
                 {
+                    int activeEnemyCount = GetActiveEnemyCountForStage();
                     int totalPairBudget = launchZoneManager.IsInitialized
-                        ? Mathf.Min(launchZoneManager.activePairCount, launchZoneManager.maxPairCount)
+                        ? Mathf.Min(activeEnemyCount, launchZoneManager.maxPairCount)
                         : 0;
 
                     // initialDeployCount > 0이면 초기 출동만, 나머지 예비 대기
@@ -3802,13 +3821,6 @@ namespace BoatAttack
             if (trajectoryLogger != null)
                 trajectoryLogger.BeginEpisode(_episodeNumber, _currentFormation.ToString());
 
-            // // 배치 결과 확인 로그 (비활성화)
-            // if (launchZoneManager != null)
-            // {
-            //     int activePairs = launchZoneManager.GetActivePairCount();
-            //     var agents = launchZoneManager.GetActiveAgents();
-            //     Debug.LogWarning($"[DefenseEnv] 코루틴 완료: activePairs={activePairs}");
-            // }
         }
 
         /// <summary>
@@ -4955,5 +4967,6 @@ namespace BoatAttack
         }
 
         #endregion
+
     }
 }

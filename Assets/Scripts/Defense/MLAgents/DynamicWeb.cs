@@ -162,6 +162,11 @@ namespace BoatAttack
                 return; // Initialize 내에서 CreateVisual 이미 호출됨
             }
 
+            // 풀 재활성화: 콜라이더를 강제 비활성화하고 _wasWebOpen 리셋
+            // (이전 에피소드에서 열린 채로 끝났을 경우 LateUpdate 전 오판정 방지)
+            if (_collider != null) _collider.enabled = false;
+            _wasWebOpen = false;
+
             // SetActive(true) 시 비주얼이 없으면 재생성 (풀 재활성화 대응)
             if (showVisual)
             {

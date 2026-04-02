@@ -11,17 +11,14 @@ namespace BoatAttack
     {
         [Header("=== 매 스텝 보상 ===")]
         [Tooltip("추력 보상 계수 (throttle × 계수 = 매 스텝 보상, 가속할수록 보상)")]
-        public float throttleRewardCoeff = 0.0002f;
+        public float throttleRewardCoeff = 0.00005f;
 
         [Tooltip("시간 페널티 (매 스텝, 빠른 포획 유도)")]
-        public float timePenalty = -0.001f;
+        public float timePenalty = 0f;
 
         [Header("=== 이벤트 보상 ===")]
         [Tooltip("포획 성공 (적이 Web에 충돌)")]
         public float captureReward = 1.0f;
-
-        [Tooltip("포획 거리 보너스 최대값 (모선에서 멀리 잡을수록)")]
-        public float captureDistanceBonus = 0.5f;
 
         [Tooltip("연속 포획 보너스 계수 (n번째 포획: 기본보상 × (1 + (n-1) × 계수))")]
         public float sequentialCaptureBonus = 0.1f;
@@ -43,11 +40,18 @@ namespace BoatAttack
 
         [Header("=== 커버리지 보상 ===")]
         [Tooltip("적군 커버리지 거리 감소 1m당 그룹 보상")]
-        public float coverageRewardPerMeter = 0.001f;
+        public float coverageRewardPerMeter = 0.0002f;
+
+        [Tooltip("담당 적 정면 정렬 보상 계수 (Gaussian 최대값 × 계수 = 스텝당 최대 보상)")]
+        public float bearingAlignRewardCoeff = 0.0002f;
+
+        [Tooltip("Gaussian 폭 (σ): 작을수록 정면에서만 보상, 클수록 넓게 허용 (기본 0.3)")]
+        [Range(0.05f, 1f)]
+        public float bearingGaussianSigma = 0.3f;
 
         [Header("=== Raycast 차단 보상 ===")]
         [Tooltip("적→모선 Ray가 Web에 닿을 때 해당 쌍에 매 스텝 보상")]
-        public float raycastInterceptReward = 0.002f;
+        public float raycastInterceptReward = 0.0005f;
 
         [Tooltip("수직 차단 보너스 계수 (perpScore × 계수가 보상 배율에 추가)")]
         public float perpendicularBonusCoeff = 0.5f;
@@ -76,9 +80,6 @@ namespace BoatAttack
         [Tooltip("충돌 페널티 (아군 간 물리 충돌)")]
         public float collisionPenalty = -0.5f;
 
-        [Tooltip("아군 Web 충돌 페널티")]
-        public float allyWebCollisionPenalty = -0.3f;
-
         [Tooltip("쌍 간 최소 허용 거리 (m)")]
         public float pairProximityMinDistance = 40f;
 
@@ -95,9 +96,6 @@ namespace BoatAttack
 
         [Tooltip("선박 간격이 이 거리(m) 이상이면 그물 고정 + 선박 정지")]
         public float webDeployedThreshold = 100f;
-
-        [Tooltip("Deploy 트리거 발동 시 일회성 보너스 (양 에이전트에 지급)")]
-        public float deployTriggerBonus = 0.3f;
 
         // 이전 스텝의 담당 적 인덱스 (쌍별 추적, 적 변경 시 prev 리셋)
         private readonly System.Collections.Generic.Dictionary<int, int> _prevEnemyByPair

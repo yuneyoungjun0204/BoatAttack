@@ -104,11 +104,6 @@ namespace BoatAttack
 
         [Header("Observation NormK (출력 0.5 지점 거리)")]
         [Range(1f, 1000f)] public float enemyNormK = 250f;
-        // rayNormK 제거됨 (LOS 관측 제거)
-
-        [Header("Observation Scale (정규화 후 가중치)")]
-        [Tooltip("베어링 유리함수 k값 (작을수록 정면 민감도↑, 0.5지점=k도)")]
-        [Range(5f, 90f)] public float bearingNormK = 30f;
 
         [Header("Enemy Observation Scale (적군 관측 계수)")]
         [Range(1f, 10f)] public float enemyDistScale = 1f;
@@ -120,14 +115,8 @@ namespace BoatAttack
         [Range(1f, 10f)] public float allyBearingScale = 1f;
         [Range(1f, 10f)] public float allyWebLengthScale = 1f;
 
-        [Header("Self State (자기 기동 상태)")]
-        [Range(1f, 50f)] public float speedNormK = 10f;
-        [Range(0f, 5f)] public float forwardSpeedScale = 1f;
-        [Range(0f, 5f)] public float driftSpeedScale = 1f;
-
         [Header("Ally Pair NormK")]
         [Range(1f, 1000f)] public float allyPairNormK = 100f;
-        [Range(1f, 200f)] public float webLengthNormK = 50f;
 
         [Header("Phantom Neighbors (Stage6: 좌3+우3 = 6쌍)")]
         [Tooltip("가상 아군쌍 간격 (방어선 방향, m)")]
@@ -204,10 +193,9 @@ namespace BoatAttack
         private float _prevGoalBrg = 0f;  // LOS D 제어용 이전 bearing 오차
 
         [Header("Debug")]
-        public bool showRaycasts = true;
         public bool enableDebugLog = false;
         [Tooltip("Game View에서 배정 라인 실시간 표시 (LineRenderer 사용)")]
-        public bool showMatchingLine = true;
+        public bool showMatchingLine = false;
 
         // ── 런타임 매칭 LineRenderer ──
         private LineRenderer _matchingLR;   // Web 중심 → 배정 적군 (노란선)
@@ -223,12 +211,6 @@ namespace BoatAttack
         [HideInInspector] public List<float> lastEnemyBufferObs = new List<float>();
         /// <summary>모니터링용: 아군 버퍼 관측 임시 저장</summary>
         [HideInInspector] public List<float> lastAllyBufferObs = new List<float>();
-
-        [Header("Reward Display")]
-        #pragma warning disable CS0414
-        [SerializeField] private float _totalReward = 0f;
-        [SerializeField] private float _lastStepReward = 0f;
-        #pragma warning restore CS0414
 
         private bool _episodeEnded = false;
         private bool _neutralized = false;
@@ -487,8 +469,6 @@ namespace BoatAttack
             assignedTargetIndex = -1; // Commander가 새로 배정
             // _neutralized는 여기서 리셋하지 않음
             // SetNeutralized(false)로만 해제 (DeployPairs/ResetScene에서 호출)
-            _totalReward = 0f;
-            _lastStepReward = 0f;
             _prevThrottle = 0f;
             _prevSteering = 0f;
             _throttleDelta = 0f;
@@ -1267,14 +1247,14 @@ namespace BoatAttack
             if (_episodeEnded || _neutralized || _straightMode)
                 return;
 
+            Transform envRoot = transform.parent != null ? transform.parent : transform;
+            DefenseEnvController ctrl = envRoot.GetComponentInChildren<DefenseEnvController>();
+
             // 적군 선박 충돌 → 포획으로 처리
             if (collision.gameObject.CompareTag("attack_boat"))
             {
-                Transform envRoot = transform.parent != null ? transform.parent : transform;
-                DefenseEnvController ctrl = envRoot.GetComponentInChildren<DefenseEnvController>();
                 if (ctrl != null)
                 {
-                    // webObject의 DynamicWeb을 넘겨서 개별 보너스도 부여
                     DynamicWeb dw = webObject != null ? webObject.GetComponent<DynamicWeb>() : null;
                     ctrl.OnEnemyHitWeb(collision.gameObject, dw);
                 }
@@ -1286,23 +1266,12 @@ namespace BoatAttack
 
             if (otherAgent != null || isMotherShip)
             {
-                // 파트너 아군 충돌: 페널티만 (비활성화 없음)
                 if (otherAgent != null && otherAgent == partnerAgent)
                 {
-                    Transform envRoot = transform.parent != null ? transform.parent : transform;
-                    DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
-                    if (envController != null)
-                        envController.OnPartnerCollision(this);
+                    if (ctrl != null) ctrl.OnPartnerCollision(this);
                     return;
                 }
-
-                // 다른 쌍/모선 충돌: 기존 처리 (쌍 비활성화)
-                {
-                    Transform envRoot = transform.parent != null ? transform.parent : transform;
-                    DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
-                    if (envController != null)
-                        envController.OnFriendlyCollision(this);
-                }
+                if (ctrl != null) ctrl.OnFriendlyCollision(this);
             }
         }
 
