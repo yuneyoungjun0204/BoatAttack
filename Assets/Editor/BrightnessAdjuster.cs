@@ -6,7 +6,7 @@ namespace BoatAttack.EditorTools
     public static class BrightnessAdjuster
     {
         [MenuItem("BoatAttack/Brightness/Apply Bright Settings")]
-        public static void ApplyBrightSettings()
+        public static void ApplyBrightSettings  ()
         {
             // 1. Directional Light 강도 올리기
             Light[] lights = Object.FindObjectsOfType<Light>();

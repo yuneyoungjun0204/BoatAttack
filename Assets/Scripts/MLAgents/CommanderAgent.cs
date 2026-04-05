@@ -230,8 +230,9 @@ namespace BoatAttack
                     var (closestZone, closestDist) = launchZoneManager.GetClosestZoneToPosition(
                         enemy.transform.position, motherPos);
 
-                    float zoneNorm = launchZoneManager.zoneCount > 0
-                        ? closestZone / (float)launchZoneManager.zoneCount
+                    int _zc1 = launchZoneManager.launchZones != null ? launchZoneManager.launchZones.Length : 0;
+                    float zoneNorm = _zc1 > 0
+                        ? closestZone / (float)_zc1
                         : 0f;
                     float distNorm = closestDist / (closestDist + distNormK);
 
@@ -255,8 +256,9 @@ namespace BoatAttack
                     Vector3 center = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
 
                     // obs 0: 배치된 zone 인덱스 (정규화)
-                    float zoneNorm = launchZoneManager.zoneCount > 0
-                        ? pair.assignedZoneIndex / (float)launchZoneManager.zoneCount
+                    int _zc2 = launchZoneManager.launchZones != null ? launchZoneManager.launchZones.Length : 0;
+                    float zoneNorm = _zc2 > 0
+                        ? pair.assignedZoneIndex / (float)_zc2
                         : 0f;
 
                     // obs 1: 배정된 타겟 적군 (정규화, -1=auto → 0)
@@ -391,7 +393,7 @@ namespace BoatAttack
             else
             {
                 // 점유된 zone 마스킹
-                int zoneCount = launchZoneManager.zoneCount;
+                int zoneCount = launchZoneManager.launchZones != null ? launchZoneManager.launchZones.Length : 0;
                 for (int z = 0; z < 10; z++)
                 {
                     if (z < zoneCount && launchZoneManager.IsZoneOccupied(z))

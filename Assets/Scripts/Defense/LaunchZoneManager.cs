@@ -65,6 +65,22 @@ namespace BoatAttack
 
         // 양동 방향 필터용: 진수 시 스폰 각도 (모선 기준, -1=미설정)
         [HideInInspector] public float launchAngleDeg = -1f;
+
+        // 클러스터 배정 (Angular Binning)
+        [HideInInspector] public int   assignedClusterIdx = -1;   // CurrentClusters 내 인덱스
+        [HideInInspector] public Vector3 clusterCentroid;          // 클러스터 중심 세계 위치
+        [HideInInspector] public List<int> clusterEnemyIndices;    // 클러스터 내 적군 인덱스 목록
+    }
+
+    /// <summary>
+    /// 방향별 적군 클러스터 (Angular Binning 결과)
+    /// </summary>
+    public struct EnemyCluster
+    {
+        public float   centerAngleDeg;   // 클러스터 대표 방향 (모선 기준, 도)
+        public Vector3 centroidWorld;    // 클러스터 내 활성 적군 평균 위치
+        public int     representativeIdx;// centroid에 가장 가까운 적군 인덱스 (-1=없음)
+        public List<int> enemyIndices;   // enemies[] 배열 인덱스 목록 (비활성 포함)
     }
 
     /// <summary>
@@ -74,40 +90,47 @@ namespace BoatAttack
     /// </summary>
     public class LaunchZoneManager : MonoBehaviour
     {
-        [Header("Launch Zones (진수구역)")]
-        [Tooltip("진수구역 개수 (360°를 균등 분할)")]
-        [Range(1, 40)]
-        public int zoneCount = 10;
+        [Header("Launch Zones (씬 오브젝트 기반)")]
+        [Tooltip("진수구역 위치를 정의하는 씬 Transform 배열 (최대 3개). 비어있으면 후미 자동 생성 fallback 사용.")]
+        public Transform[] zoneTransforms;
 
-        [Tooltip("에피소드마다 방위각 jitter (±도, 과적합 방지)")]
+        [Tooltip("모선 후미 진수거리 (m) — zoneTransforms 미설정 시 fallback으로 사용")]
+        public float rearDistance = 80f;
+
+        [Tooltip("후미 좌/우 분산 각도 (°) — zoneTransforms 미설정 시 fallback으로 사용")]
+        [Range(0f, 45f)]
+        public float rearSpread = 20f;
+
+        [Tooltip("에피소드마다 진수 방위 jitter (±도, 과적합 방지)")]
         public float angleJitter = 10f;
 
         [HideInInspector]
         public LaunchZone[] launchZones;
 
         [Header("Ally Pool")]
-        [Tooltip("최대 아군 쌍 수 (풀 크기)")]
-        [Range(1, 20)]
-        public int maxPairCount = 15;
+        [Tooltip("최대 아군 쌍 수 (모선 탑재 최대 6척 = 3쌍)")]
+        [Range(1, 3)]
+        public int maxPairCount = 3;
 
-        [Tooltip("에피소드 시작 시 자동 배치 쌍 수 (0=버튼으로만 배치)")]
-        [Range(0, 20)]
-        public int activePairCount = 0;
-
-        [Tooltip("한 진수구역에서 동시에 출동할 수 있는 최대 쌍 수 (1=구역당 1쌍)")]
-        [Range(1, 10)]
-        public int maxPairsPerZone = 1;
+        [Tooltip("에피소드 시작 시 자동 배치 쌍 수")]
+        [Range(0, 3)]
+        public int activePairCount = 1;
 
         [Tooltip("초기 출동 쌍 수 (나머지는 예비로 대기, 0=activePairCount 전부 출동)")]
-        [Range(0, 20)]
+        [Range(0, 3)]
         public int initialDeployCount = 0;
 
         [Tooltip("에피소드 당 최대 배치 쌍 수 (0=무제한). 초기+추가 배치 합산")]
-        [Range(0, 50)]
+        [Range(0, 9)]
         public int maxTotalPairsPerEpisode = 0;
 
         [Tooltip("같은 진수구역에서 연속 출동 최소 간격 (스텝)")]
         public int zoneDeployCooldown = 100;
+
+        [Header("Enemy Clustering")]
+        [Tooltip("적군 방향 클러스터링 빈 폭 (°). 이 범위 내 적군을 동일 클러스터로 묶음. 60° 권장.")]
+        [Range(20f, 120f)]
+        public float clusterBinWidthDeg = 60f;
 
         [Header("Template")]
         [Tooltip("템플릿 쌍 (씬에 이미 배치된 기존 defenseAgent1/2/web). 비어있으면 프리팹에서 자동 생성")]
@@ -126,13 +149,6 @@ namespace BoatAttack
 
         [Tooltip("환경 컨트롤러")]
         public DefenseEnvController envController;
-
-        [Header("Ellipse Shape (타원 배치)")]
-        [Tooltip("타원 전후(Fore/Aft) 반경 - 선수/선미 방향 (0°/180°)")]
-        public float ellipseForeAft = 150f;
-
-        [Tooltip("타원 좌우(Beam) 반경 - 좌현/우현 방향 (90°/270°)")]
-        public float ellipseBeam = 80f;
 
         [Header("Zone Visual (원통)")]
         [Tooltip("진수구역 원통 비주얼 표시")]
@@ -175,6 +191,9 @@ namespace BoatAttack
         // 풀 리스트 (지연 생성: 필요할 때만 추가)
         private List<DefensePair> _pairPool;
         private bool _initialized = false;
+
+        /// <summary>현재 에피소드의 적군 클러스터 목록 (DeployPairs 호출 시 갱신)</summary>
+        public List<EnemyCluster> CurrentClusters { get; private set; } = new List<EnemyCluster>();
 
         // 진수구역별 마지막 출동 스텝 (쿨다운용)
         private int[] _zoneLastDeployStep;
@@ -543,8 +562,11 @@ namespace BoatAttack
                 return;
             }
 
-            pairCount = Mathf.Min(pairCount, maxPairCount);
+            pairCount = Mathf.Clamp(pairCount, 1, maxPairCount);
             _deployedPairCount = pairCount;
+
+            // 에피소드 시작마다 모선 현재 후미 방향으로 진수구역 갱신
+            GenerateLaunchZones();
 
             // Debug.LogWarning($"[DeployPairs] 시작: type={formationType}, pairCount={pairCount}, " +
             //     $"activePairCount={activePairCount}, poolCount={_pairPool.Count}");
@@ -618,7 +640,7 @@ namespace BoatAttack
                     }
                     float spawnAngleRad = spawnAngleDeg * Mathf.Deg2Rad;
                     Vector3 zoneDir = new Vector3(Mathf.Sin(spawnAngleRad), 0f, Mathf.Cos(spawnAngleRad));
-                    float zoneDist = GetEllipseDistance(spawnAngleDeg);
+                    float zoneDist = zone.distance; // 구역 고유 거리 사용
                     Vector3 lateralDir = new Vector3(zoneDir.z, 0f, -zoneDir.x);
 
                     float lateralOffset = startOffset + j * lateralSpacing;
@@ -628,10 +650,14 @@ namespace BoatAttack
                 }
             }
 
-            // 3-2. 2단계: 모든 pairCenter 확정 → Voronoi 배정 + 배치
-            Vector3[] allCenters = new Vector3[spawnInfos.Count];
-            for (int i = 0; i < spawnInfos.Count; i++)
-                allCenters[i] = spawnInfos[i].pairCenter;
+            // 3-2. 2단계: 모든 pairCenter 확정 → 클러스터 배정 + 배치
+            // Angular Binning → 최대 maxPairCount개로 병합
+            var enemyClusters = ClusterEnemiesByAngle(motherPos, enemies, clusterBinWidthDeg);
+            enemyClusters = LimitClusters(enemyClusters, maxPairCount, enemies);
+            CurrentClusters = enemyClusters; // 외부 접근용 캐시
+
+            var assignedClusterIndices = new HashSet<int>(); // 쌍별 클러스터 중복 방지
+            var assignedEnemyIndices   = new HashSet<int>(); // 적군 중복 배정 방지
 
             for (int i = 0; i < spawnInfos.Count; i++)
             {
@@ -647,21 +673,27 @@ namespace BoatAttack
                     pair.agent2.enemyShips = enemies;
                 }
 
-                // Voronoi 배정: 이 쌍이 담당하는 적 계산 (스폰 회전 결정에만 사용)
-                int bestEnemyIdx = GetClosestResponsibleEnemyForSpawn(
-                    pairCenter, allCenters, i, enemies);
+                // 클러스터 배정: 쌍 방향에 가장 가까운 미배정 클러스터 선택
+                float pairDirAngle = Mathf.Atan2(zoneDir.x, zoneDir.z) * Mathf.Rad2Deg;
+                if (pairDirAngle < 0f) pairDirAngle += 360f;
+                int clusterIdx = enemyClusters.Count > 0
+                    ? FindBestClusterForPair(pairDirAngle, enemyClusters, assignedClusterIndices)
+                    : -1;
+                assignedClusterIndices.Add(clusterIdx);
 
-                // Stage3/7/8: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
-                Quaternion rot;
-                if (envController != null && (envController.currentStage == TrainingStage.Stage3_Tactical || envController.currentStage == TrainingStage.Stage7_FleetManeuver || envController.currentStage == TrainingStage.Stage8_TacticalFullObs || envController.currentStage == TrainingStage.Stage9_DisarmReform))
-                {
-                    rot = Quaternion.LookRotation(zoneDir, Vector3.up);
-                }
-                else
-                {
-                    int targetIdx = bestEnemyIdx >= 0 ? bestEnemyIdx + 1 : -1;
-                    rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
-                }
+                // 클러스터 내 가장 가까운 미배정 적군 선택
+                int bestEnemyIdx = clusterIdx >= 0
+                    ? FindClosestUnassignedInCluster(pairCenter, enemyClusters[clusterIdx], enemies, assignedEnemyIndices)
+                    : -1;
+                if (bestEnemyIdx >= 0) assignedEnemyIndices.Add(bestEnemyIdx);
+
+                // 클러스터 정보를 쌍에 저장 (AutoAssign 및 시각화에 사용)
+                pair.assignedClusterIdx   = clusterIdx;
+                pair.clusterCentroid      = clusterIdx >= 0 ? enemyClusters[clusterIdx].centroidWorld : pairCenter;
+                pair.clusterEnemyIndices  = clusterIdx >= 0 ? new List<int>(enemyClusters[clusterIdx].enemyIndices) : null;
+
+                // 항상 모선 후미 방향(후방 직선각도)으로 스폰
+                Quaternion rot = GetRearFacingRotation();
 
                 // 2대 좌우 배치: 스폰 방향(rot)에 수직으로 배치 → 그물이 펴짐
                 Vector3 spawnForward = rot * Vector3.forward;
@@ -733,9 +765,10 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 포메이션에 따라 쌍을 진수구역에 배정
+        /// 쌍을 진수구역에 배정.
+        /// 진수 위치는 항상 모선 후미 구역 (zone 0~2) 고정.
+        /// 포메이션별 차이는 pairDirAngles(바라보는 방향)에만 반영.
         /// </summary>
-        /// <param name="zoneDirAngles">out: 양동 시 구역별 실제 적 방향 각도 (zoneIdx → angleDeg)</param>
         private Dictionary<int, List<int>> AssignPairsToZones(
             FormationType formationType, float approachAngleDeg,
             float[] diversionaryAngles, int pairCount,
@@ -745,107 +778,222 @@ namespace BoatAttack
             zoneDirAngles = new Dictionary<int, float>();
             pairDirAngles = new Dictionary<int, float>();
 
-            bool isFleet = envController != null && (envController.currentStage == TrainingStage.Stage7_FleetManeuver
-                || envController.currentStage == TrainingStage.Stage8_TacticalFullObs
-                || envController.currentStage == TrainingStage.Stage9_DisarmReform);
+            int zoneCount = launchZones.Length; // 1~3
 
+            // 쌍별 바라볼 방향 결정 (포메이션에 따라 다름, 진수 위치와 무관)
+            float[] pairLookAngles = new float[pairCount];
             if (formationType == FormationType.Diversionary && diversionaryAngles != null && diversionaryAngles.Length > 1)
             {
-                // 양동: 각 방향에 최소 1쌍 보장 → 나머지 라운드 로빈
                 int dirCount = diversionaryAngles.Length;
-
-                // 각 방향별 가장 가까운 구역 계산 (중복 방지: 이미 선점된 구역은 차순위)
-                float[] dirAnglesDeg = new float[dirCount];
-                int[] bestZonePerDir = new int[dirCount];
-                var usedZonesDiv = new HashSet<int>();
-
-                for (int d = 0; d < dirCount; d++)
-                    dirAnglesDeg[d] = diversionaryAngles[d] * Mathf.Rad2Deg;
-
-                // 1단계: 각 방향에 가장 가까운 구역 배정 (같은 구역 공유 허용)
-                for (int d = 0; d < dirCount; d++)
-                {
-                    var sorted = GetZonesSortedByAngle(dirAnglesDeg[d]);
-                    bestZonePerDir[d] = -1;
-                    foreach (int zi in sorted)
-                    {
-                        float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAnglesDeg[d], launchZones[zi].angleDeg));
-                        if (angleDiff > 90f) break;
-                        bestZonePerDir[d] = zi;
-                        break;
-                    }
-                    Debug.Log($"[LaunchZone] Diversionary dir {d}: angle={dirAnglesDeg[d]:F1}° → zone={bestZonePerDir[d]}");
-                }
-
-                // 구역 → 적 방향 각도 매핑 저장
-                for (int d = 0; d < dirCount; d++)
-                {
-                    if (bestZonePerDir[d] >= 0)
-                        zoneDirAngles[bestZonePerDir[d]] = dirAnglesDeg[d];
-                }
-
-                // 2단계: 각 방향에 최소 1쌍 배정 (쌍별 각도 저장, 구역 한도 초과 시 차순위 구역으로)
-                int pairIdx = 0;
-                for (int d = 0; d < dirCount && pairIdx < pairCount; d++)
-                {
-                    // maxPairsPerZone 초과 시 해당 방향에서 차순위 구역 탐색
-                    var sortedForDir = GetZonesSortedByAngle(dirAnglesDeg[d]);
-                    int zoneIdx = -1;
-                    foreach (int zi in sortedForDir)
-                    {
-                        float angleDiff = Mathf.Abs(Mathf.DeltaAngle(dirAnglesDeg[d], launchZones[zi].angleDeg));
-                        if (angleDiff > 90f) break;
-                        int currentCount = assignments.ContainsKey(zi) ? assignments[zi].Count : 0;
-                        if (currentCount < maxPairsPerZone) { zoneIdx = zi; break; }
-                    }
-                    if (zoneIdx < 0) continue; // 이 방향에 사용 가능 구역 없음
-                    if (!assignments.ContainsKey(zoneIdx))
-                        assignments[zoneIdx] = new List<int>();
-                    assignments[zoneIdx].Add(pairIdx);
-                    pairDirAngles[pairIdx] = dirAnglesDeg[d]; // 쌍별 실제 적 방향
-                    pairIdx++;
-                }
-
-                // 3단계: 남은 쌍은 라운드 로빈으로 균등 추가 (구역당 maxPairsPerZone 제한)
-                int dirSlot = 0;
-                while (pairIdx < pairCount && dirSlot < pairCount * dirCount)
-                {
-                    int d = dirSlot % dirCount;
-                    dirSlot++;
-                    if (bestZonePerDir[d] < 0) continue;
-                    int zoneIdx = bestZonePerDir[d];
-                    if (!assignments.ContainsKey(zoneIdx))
-                        assignments[zoneIdx] = new List<int>();
-                    if (assignments[zoneIdx].Count >= maxPairsPerZone) continue;
-                    assignments[zoneIdx].Add(pairIdx);
-                    pairDirAngles[pairIdx] = dirAnglesDeg[d]; // 쌍별 실제 적 방향
-                    pairIdx++;
-                }
+                for (int i = 0; i < pairCount; i++)
+                    pairLookAngles[i] = diversionaryAngles[i % dirCount] * Mathf.Rad2Deg;
             }
             else
             {
-                // Concentrated / Wave: 적 접근 방향 ±90° 이내 구역 사용
-                var sorted = GetZonesSortedByAngle(approachAngleDeg);
+                for (int i = 0; i < pairCount; i++)
+                    pairLookAngles[i] = approachAngleDeg;
+            }
 
-                int pairIdx = 0;
-                int zoneSlot = 0;
-                while (pairIdx < pairCount && zoneSlot < sorted.Count)
-                {
-                    int zoneIdx = sorted[zoneSlot];
-                    float angleDiff = Mathf.Abs(Mathf.DeltaAngle(approachAngleDeg, launchZones[zoneIdx].angleDeg));
-                    if (angleDiff > 90f) break;
-
-                    if (!assignments.ContainsKey(zoneIdx))
-                        assignments[zoneIdx] = new List<int>();
-                    assignments[zoneIdx].Add(pairIdx);
-                    pairIdx++;
-
-                    if (assignments[zoneIdx].Count >= maxPairsPerZone)
-                        zoneSlot++; // 구역 한도 도달 → 다음 구역
-                }
+            // 후미 구역에 순서대로 배정 (구역 수 = maxPairCount, 쌍 수 ≤ 구역 수 보장)
+            for (int i = 0; i < pairCount; i++)
+            {
+                int zoneIdx = i % zoneCount; // 0, 1, 2, 0, 1, ... (구역 순환)
+                if (!assignments.ContainsKey(zoneIdx))
+                    assignments[zoneIdx] = new List<int>();
+                assignments[zoneIdx].Add(i);
+                pairDirAngles[i] = pairLookAngles[i];
             }
 
             return assignments;
+        }
+
+        /// <summary>
+        /// 활성 적군을 모선 기준 접근 방향으로 Angular Bin 클러스터링
+        /// centroidWorld, representativeIdx 포함 계산
+        /// </summary>
+        public List<EnemyCluster> ClusterEnemiesByAngle(Vector3 motherPos, GameObject[] enemies, float binWidthDeg)
+        {
+            var result = new List<EnemyCluster>();
+            if (enemies == null || enemies.Length == 0) return result;
+
+            float halfBin = binWidthDeg * 0.5f;
+
+            // 1. 활성 적군 → (인덱스, 접근 각도) 수집
+            var angleList = new List<(int idx, float angleDeg)>();
+            for (int i = 0; i < enemies.Length; i++)
+            {
+                if (enemies[i] == null || !enemies[i].activeInHierarchy) continue;
+                Vector3 toEnemy = enemies[i].transform.position - motherPos;
+                toEnemy.y = 0f;
+                float angle = Mathf.Atan2(toEnemy.x, toEnemy.z) * Mathf.Rad2Deg;
+                if (angle < 0f) angle += 360f;
+                angleList.Add((i, angle));
+            }
+            if (angleList.Count == 0) return result;
+
+            // 2. 각도 오름차순 정렬
+            angleList.Sort((a, b) => a.angleDeg.CompareTo(b.angleDeg));
+
+            // 3. 순서대로 빈 클러스터에 할당
+            var processed = new bool[angleList.Count];
+            for (int i = 0; i < angleList.Count; i++)
+            {
+                if (processed[i]) continue;
+
+                var indices = new List<int> { angleList[i].idx };
+                processed[i] = true;
+
+                for (int j = i + 1; j < angleList.Count; j++)
+                {
+                    if (processed[j]) continue;
+                    if (Mathf.Abs(Mathf.DeltaAngle(angleList[i].angleDeg, angleList[j].angleDeg)) <= halfBin)
+                    {
+                        indices.Add(angleList[j].idx);
+                        processed[j] = true;
+                    }
+                }
+
+                result.Add(ComputeClusterMeta(angleList[i].angleDeg, indices, enemies));
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 클러스터 메타(centroid, representative) 계산 헬퍼
+        /// </summary>
+        private EnemyCluster ComputeClusterMeta(float centerAngleDeg, List<int> indices, GameObject[] enemies)
+        {
+            Vector3 centroid = Vector3.zero;
+            int validCount = 0;
+            foreach (int idx in indices)
+            {
+                if (enemies != null && idx < enemies.Length && enemies[idx] != null && enemies[idx].activeInHierarchy)
+                { centroid += enemies[idx].transform.position; validCount++; }
+            }
+            if (validCount > 0) centroid /= validCount;
+
+            // centroid에 가장 가까운 활성 적군 = representative
+            int repIdx = -1;
+            float repDist2 = float.MaxValue;
+            foreach (int idx in indices)
+            {
+                if (enemies == null || idx >= enemies.Length || enemies[idx] == null || !enemies[idx].activeInHierarchy) continue;
+                float d2 = Vector3.SqrMagnitude(enemies[idx].transform.position - centroid);
+                if (d2 < repDist2) { repDist2 = d2; repIdx = idx; }
+            }
+
+            return new EnemyCluster
+            {
+                centerAngleDeg   = centerAngleDeg,
+                centroidWorld    = centroid,
+                representativeIdx = repIdx,
+                enemyIndices     = indices
+            };
+        }
+
+        /// <summary>
+        /// 클러스터 수가 maxK 초과하면 가장 가까운 두 클러스터를 반복 병합 (circular mean 사용)
+        /// </summary>
+        public List<EnemyCluster> LimitClusters(List<EnemyCluster> clusters, int maxK, GameObject[] enemies)
+        {
+            while (clusters.Count > maxK)
+            {
+                // 각도가 가장 가까운 두 클러스터 탐색
+                int bestA = 0, bestB = 1;
+                float bestDiff = float.MaxValue;
+                for (int i = 0; i < clusters.Count - 1; i++)
+                    for (int j = i + 1; j < clusters.Count; j++)
+                    {
+                        float diff = Mathf.Abs(Mathf.DeltaAngle(clusters[i].centerAngleDeg, clusters[j].centerAngleDeg));
+                        if (diff < bestDiff) { bestDiff = diff; bestA = i; bestB = j; }
+                    }
+
+                // 병합 인덱스 목록
+                var mergedIndices = new List<int>(clusters[bestA].enemyIndices);
+                mergedIndices.AddRange(clusters[bestB].enemyIndices);
+
+                // 가중 원형 평균으로 중심각 계산
+                float wa = clusters[bestA].enemyIndices.Count;
+                float wb = clusters[bestB].enemyIndices.Count;
+                float sinSum = wa * Mathf.Sin(clusters[bestA].centerAngleDeg * Mathf.Deg2Rad)
+                             + wb * Mathf.Sin(clusters[bestB].centerAngleDeg * Mathf.Deg2Rad);
+                float cosSum = wa * Mathf.Cos(clusters[bestA].centerAngleDeg * Mathf.Deg2Rad)
+                             + wb * Mathf.Cos(clusters[bestB].centerAngleDeg * Mathf.Deg2Rad);
+                float mergedAngle = Mathf.Atan2(sinSum, cosSum) * Mathf.Rad2Deg;
+                if (mergedAngle < 0f) mergedAngle += 360f;
+
+                var merged = ComputeClusterMeta(mergedAngle, mergedIndices, enemies);
+
+                var next = new List<EnemyCluster>(clusters.Count - 1);
+                for (int i = 0; i < clusters.Count; i++)
+                    if (i != bestA && i != bestB) next.Add(clusters[i]);
+                next.Add(merged);
+                clusters = next;
+            }
+            return clusters;
+        }
+
+        /// <summary>
+        /// 클러스터 목록에서 쌍 방향(zoneDirAngleDeg)에 가장 가까운 클러스터 인덱스 반환
+        /// assignedClusters: 이미 다른 쌍에 배정된 클러스터 인덱스 집합 (중복 방지)
+        /// </summary>
+        private int FindBestClusterForPair(float zoneDirAngleDeg,
+            List<EnemyCluster> clusters, HashSet<int> assignedClusters)
+        {
+            int bestIdx = -1;
+            float bestDiff = float.MaxValue;
+            for (int c = 0; c < clusters.Count; c++)
+            {
+                float diff = Mathf.Abs(Mathf.DeltaAngle(zoneDirAngleDeg, clusters[c].centerAngleDeg));
+                if (diff < bestDiff)
+                {
+                    bestDiff = diff;
+                    bestIdx = c;
+                }
+            }
+            // 모든 클러스터 배정됐으면 가장 가까운 재사용 (다중 쌍 → 같은 클러스터)
+            if (bestIdx < 0 || !assignedClusters.Contains(bestIdx))
+                return bestIdx;
+
+            // 미배정 클러스터 중 가장 가까운 것
+            bestDiff = float.MaxValue;
+            bestIdx = -1;
+            for (int c = 0; c < clusters.Count; c++)
+            {
+                if (assignedClusters.Contains(c)) continue;
+                float diff = Mathf.Abs(Mathf.DeltaAngle(zoneDirAngleDeg, clusters[c].centerAngleDeg));
+                if (diff < bestDiff) { bestDiff = diff; bestIdx = c; }
+            }
+            // 미배정 없으면 가장 가까운 기존 클러스터 재사용
+            if (bestIdx < 0)
+            {
+                bestDiff = float.MaxValue;
+                for (int c = 0; c < clusters.Count; c++)
+                {
+                    float diff = Mathf.Abs(Mathf.DeltaAngle(zoneDirAngleDeg, clusters[c].centerAngleDeg));
+                    if (diff < bestDiff) { bestDiff = diff; bestIdx = c; }
+                }
+            }
+            return bestIdx;
+        }
+
+        /// <summary>
+        /// 클러스터 내에서 가장 가까운 미배정 적군 인덱스 반환 (-1 = 없음)
+        /// </summary>
+        private int FindClosestUnassignedInCluster(Vector3 pairCenter,
+            EnemyCluster cluster, GameObject[] enemies, HashSet<int> assignedEnemies)
+        {
+            int best = -1;
+            float bestDist = float.MaxValue;
+            foreach (int ei in cluster.enemyIndices)
+            {
+                if (assignedEnemies.Contains(ei)) continue;
+                if (enemies[ei] == null || !enemies[ei].activeInHierarchy) continue;
+                float d = Vector3.SqrMagnitude(pairCenter - enemies[ei].transform.position);
+                if (d < bestDist) { bestDist = d; best = ei; }
+            }
+            return best;
         }
 
         /// <summary>
@@ -1309,7 +1457,6 @@ namespace BoatAttack
                     float angleDiff = Mathf.Abs(Mathf.DeltaAngle(approachAngleDeg, launchZones[zi].angleDeg));
                     if (angleDiff > 90f) break; // 정렬 순서상 이후 전부 90° 초과
                     if (IsZoneOnCooldown(zi, currentStep)) continue;
-                    if (GetActivePairsInZone(zi) >= maxPairsPerZone) continue;
                     zoneIdx = zi;
                     break;
                 }
@@ -1318,11 +1465,11 @@ namespace BoatAttack
             if (zoneIdx >= launchZones.Length) zoneIdx = 0;
             LaunchZone zone = launchZones[zoneIdx];
 
-            // 적 접근 각도를 직접 사용 (구역 양자화 오차 제거) + jitter
-            float spawnAngleDeg = approachAngleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
+            // 진수 위치: 구역 각도 + jitter, 거리는 구역 고유값
+            float spawnAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
             float spawnAngleRad = spawnAngleDeg * Mathf.Deg2Rad;
             Vector3 zoneDir = new Vector3(Mathf.Sin(spawnAngleRad), 0f, Mathf.Cos(spawnAngleRad));
-            float zoneDist = GetEllipseDistance(spawnAngleDeg);
+            float zoneDist = zone.distance;
 
             Vector3 pairCenter = motherPos + zoneDir * zoneDist;
             float tempSpacing = envController != null ? envController.convoySpawnSpacing : 10f;
@@ -1396,16 +1543,8 @@ namespace BoatAttack
                 pairCenter, enemies, singleAssigned,
                 zoneDir, motherPos, filterByDirection: true);
             // 방향 필터 폴백 제거 — 해당 방향 적 없으면 미배정(-1) 유지 (엉뚱한 적 배정 방지)
-            // Stage3: 모선 바깥 방향(zoneDir)으로 스폰, 기타: 배정된 적 방향
-            if (envController != null && envController.currentStage == TrainingStage.Stage3_Tactical)
-            {
-                rot = Quaternion.LookRotation(zoneDir, Vector3.up);
-            }
-            else
-            {
-                int targetIdx = bestEnemy >= 0 ? bestEnemy + 1 : -1;
-                rot = ComputeSpawnRotation(zoneDir, pairCenter, enemies, targetIdx);
-            }
+            // 항상 모선 후미 방향(후방 직선각도)으로 스폰
+            rot = GetRearFacingRotation();
 
             // 스폰 방향에 수직으로 agent1/2 배치 → 그물이 펴짐
             Vector3 spawnFwd = rot * Vector3.forward;
@@ -1984,25 +2123,84 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// zoneCount 기반으로 진수구역 배열 자동 생성 (360° 균등 분할)
+        /// 모선 후미 기준 진수구역 생성
+        /// maxPairCount에 따라 후미 좌/중/우 구역을 자동 배치
         /// </summary>
         private void GenerateLaunchZones()
         {
-            launchZones = new LaunchZone[zoneCount];
-            float angleStep = 360f / zoneCount;
-            for (int i = 0; i < zoneCount; i++)
+            Vector3 motherPos = motherShip != null ? motherShip.transform.position : Vector3.zero;
+
+            // === 씬 오브젝트 기반 진수구역 (우선) ===
+            if (zoneTransforms != null && zoneTransforms.Length > 0)
             {
-                launchZones[i] = new LaunchZone
+                var validZones = new System.Collections.Generic.List<LaunchZone>();
+                foreach (var t in zoneTransforms)
                 {
-                    angleDeg = i * angleStep,
-                    distance = GetEllipseDistance(i * angleStep),
-                    angleJitter = this.angleJitter,
-                };
+                    if (t == null) continue;
+                    Vector3 offset = t.position - motherPos;
+                    offset.y = 0f;
+                    float angleDeg = Mathf.Atan2(offset.x, offset.z) * Mathf.Rad2Deg;
+                    if (angleDeg < 0f) angleDeg += 360f;
+                    float distance = Mathf.Max(offset.magnitude, 1f);
+                    validZones.Add(new LaunchZone { angleDeg = angleDeg, distance = distance, angleJitter = angleJitter });
+                }
+                launchZones = validZones.ToArray();
+                _zoneLastDeployStep = new int[launchZones.Length];
+                ResetZoneCooldowns();
+                return;
             }
-            // 진수구역별 쿨다운 배열 초기화
-            _zoneLastDeployStep = new int[zoneCount];
+
+            // === Fallback: 후미 자동 생성 ===
+            float rearAngleDeg = GetMotherShipRearAngleDeg();
+            int count = Mathf.Clamp(maxPairCount, 1, 3);
+            launchZones = new LaunchZone[count];
+
+            if (count == 1)
+            {
+                launchZones[0] = new LaunchZone { angleDeg = rearAngleDeg, distance = rearDistance, angleJitter = angleJitter };
+            }
+            else if (count == 2)
+            {
+                launchZones[0] = new LaunchZone { angleDeg = rearAngleDeg - rearSpread, distance = rearDistance, angleJitter = angleJitter };
+                launchZones[1] = new LaunchZone { angleDeg = rearAngleDeg + rearSpread, distance = rearDistance, angleJitter = angleJitter };
+            }
+            else
+            {
+                launchZones[0] = new LaunchZone { angleDeg = rearAngleDeg - rearSpread, distance = rearDistance, angleJitter = angleJitter };
+                launchZones[1] = new LaunchZone { angleDeg = rearAngleDeg,              distance = rearDistance, angleJitter = angleJitter };
+                launchZones[2] = new LaunchZone { angleDeg = rearAngleDeg + rearSpread, distance = rearDistance, angleJitter = angleJitter };
+            }
+
+            _zoneLastDeployStep = new int[count];
             ResetZoneCooldowns();
-            // Debug.Log($"[LaunchZoneManager] {zoneCount}개 진수구역 생성 (간격 {angleStep:F1}°)");
+        }
+
+        /// <summary>
+        /// 모선 후미 방향을 바라보는 Quaternion 반환 (진수 시 선박 초기 회전에 사용)
+        /// </summary>
+        private Quaternion GetRearFacingRotation()
+        {
+            if (motherShip != null)
+            {
+                Vector3 rearDir = -motherShip.transform.forward;
+                rearDir.y = 0f;
+                if (rearDir.sqrMagnitude > 0.001f)
+                    return Quaternion.LookRotation(rearDir, Vector3.up);
+            }
+            return Quaternion.identity;
+        }
+
+        /// <summary>
+        /// 모선의 현재 진행 방향 반대(후미) 각도를 월드 기준으로 반환 (도)
+        /// </summary>
+        private float GetMotherShipRearAngleDeg()
+        {
+            if (motherShip != null)
+            {
+                float heading = motherShip.transform.eulerAngles.y; // 모선 선수 방향 (0=North)
+                return (heading + 180f) % 360f;                     // 후미 방향
+            }
+            return 180f; // fallback: 정남쪽
         }
 
         /// <summary>
@@ -2054,14 +2252,10 @@ namespace BoatAttack
             return launchZones[zoneIndex].angleDeg;
         }
 
-        public float GetEllipseDistance(float angleDeg)
+        public float GetEllipseDistance(float _angleDeg)
         {
-            float angleRad = angleDeg * Mathf.Deg2Rad;
-            float cosA = Mathf.Cos(angleRad);
-            float sinA = Mathf.Sin(angleRad);
-            float a = ellipseForeAft;
-            float b = ellipseBeam;
-            return (a * b) / Mathf.Sqrt(b * b * cosA * cosA + a * a * sinA * sinA);
+            // 후미 고정 거리 반환 (타원 시스템 제거됨)
+            return rearDistance;
         }
 
         /// <summary>
@@ -2495,8 +2689,8 @@ namespace BoatAttack
                 prevPoint = point;
             }
 
-            // 진수구역 표시 (런타임 배열 또는 zoneCount 기반)
-            int count = (launchZones != null && launchZones.Length > 0) ? launchZones.Length : zoneCount;
+            // 진수구역 표시 (런타임 배열 또는 maxPairCount 기반)
+            int count = (launchZones != null && launchZones.Length > 0) ? launchZones.Length : maxPairCount;
             float angleStep = 360f / count;
 
             for (int i = 0; i < count; i++)

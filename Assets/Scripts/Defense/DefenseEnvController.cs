@@ -258,7 +258,7 @@ namespace BoatAttack
         public float enemyBreachThreshold = 20f;
 
         [Tooltip("에피소드 내 최대 아군 쌍 생성 수 (이 수 이상 생성 불가)")]
-        public int maxAllyPairsPerEpisode = 25;
+        public int maxAllyPairsPerEpisode = 3;
 
         [Header("Weather Randomization")]
         [Tooltip("에피소드 시작 시 날씨(파도/바람) 랜덤화 활성화")]
@@ -745,6 +745,9 @@ namespace BoatAttack
         /// <summary>
         /// 화면 좌상단에 카메라 타겟 정보 HUD 표시
         /// </summary>
+        // 클러스터 시각화용 색상 (최대 3개)
+        private static readonly Color[] _clusterColors = { Color.cyan, new Color(0.4f, 1f, 0.4f), new Color(1f, 0.5f, 1f) };
+
         private void OnGUI()
         {
             string mode = _camMode.ToString();
@@ -764,6 +767,32 @@ namespace BoatAttack
             GUI.Label(new Rect(10, 10, 500, 25), $"[CAM] {mode} | {target} | cam={camName} | [C]=switch",
                 new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold,
                     normal = { textColor = Color.yellow } });
+
+            // === 클러스터 시각화 ===
+            if (launchZoneManager == null || launchZoneManager.CurrentClusters == null) return;
+            var clusters = launchZoneManager.CurrentClusters;
+            var labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold };
+            int y = 40;
+            GUI.Label(new Rect(10, y, 350, 20),
+                $"Clusters: {clusters.Count} / {launchZoneManager.maxPairCount}",
+                new GUIStyle(GUI.skin.label) { fontSize = 14, normal = { textColor = Color.white } });
+            y += 22;
+            for (int c = 0; c < clusters.Count; c++)
+            {
+                // 클러스터 내 현재 활성 적군 수 계산
+                int activeCount = 0;
+                if (clusters[c].enemyIndices != null && enemyShips != null)
+                    foreach (int idx in clusters[c].enemyIndices)
+                        if (idx < enemyShips.Length && enemyShips[idx] != null
+                            && enemyShips[idx].activeInHierarchy && !IsEnemyNeutralized(enemyShips[idx]))
+                            activeCount++;
+
+                labelStyle.normal.textColor = _clusterColors[c % _clusterColors.Length];
+                GUI.Label(new Rect(10, y, 420, 20),
+                    $"  [C{c + 1}] dir={clusters[c].centerAngleDeg:F0}°  enemies={activeCount}  centroid=({clusters[c].centroidWorld.x:F0},{clusters[c].centroidWorld.z:F0})",
+                    labelStyle);
+                y += 20;
+            }
         }
 
         /// <summary>
@@ -2647,14 +2676,36 @@ namespace BoatAttack
 
                 float bestScore = float.MaxValue;
                 int bestIdx = -1;
-                for (int e = 0; e < enemyShips.Length; e++)
+
+                // 클러스터 제약: 배정된 클러스터가 있으면 그 클러스터 내 적만 후보로
+                // 클러스터 내 활성 적이 없으면 전체 적으로 폴백
+                bool useCluster = pair.clusterEnemyIndices != null && pair.clusterEnemyIndices.Count > 0;
+                if (useCluster)
                 {
+                    bool hasActiveInCluster = false;
+                    foreach (int ci in pair.clusterEnemyIndices)
+                    {
+                        if (ci < enemyShips.Length && enemyShips[ci] != null
+                            && enemyShips[ci].activeInHierarchy && !IsEnemyNeutralized(enemyShips[ci]))
+                        { hasActiveInCluster = true; break; }
+                    }
+                    if (!hasActiveInCluster) useCluster = false;
+                }
+
+                // 후보 인덱스 목록: 클러스터 제약 또는 전체
+                System.Collections.Generic.IEnumerable<int> candidates = useCluster
+                    ? (System.Collections.Generic.IEnumerable<int>)pair.clusterEnemyIndices
+                    : System.Linq.Enumerable.Range(0, enemyShips.Length);
+
+                foreach (int e in candidates)
+                {
+                    if (e < 0 || e >= enemyShips.Length) continue;
                     if (assigned.Contains(e)) continue;
                     if (enemyShips[e] == null || !enemyShips[e].activeInHierarchy) continue;
                     if (IsEnemyNeutralized(enemyShips[e])) continue;
 
-                    // 양동 방향 필터: 진수 각도와 적 접근 각도가 허용 범위 초과면 스킵
-                    if (assignAngleTolerance > 0f && pair.launchAngleDeg >= 0f)
+                    // 양동 방향 필터 (클러스터 사용 시 생략 — 클러스터가 이미 방향 제약)
+                    if (!useCluster && assignAngleTolerance > 0f && pair.launchAngleDeg >= 0f)
                     {
                         Vector3 enemyToMother = motherPos - enemyShips[e].transform.position; enemyToMother.y = 0f;
                         if (enemyToMother.sqrMagnitude > 0.01f)
@@ -2666,7 +2717,7 @@ namespace BoatAttack
                     }
 
                     float enemyDistToMother = Vector3.Distance(enemyShips[e].transform.position, motherPos);
-                    if (allyDistToMother >= enemyDistToMother) continue; // 차단 불가 위치
+                    if (allyDistToMother >= enemyDistToMother) continue;
 
                     Vector3 toEnemy = enemyShips[e].transform.position - webCenter; toEnemy.y = 0f;
                     float interceptAngle = toEnemy.sqrMagnitude > 0.01f
