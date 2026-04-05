@@ -516,12 +516,17 @@ PrefabInstance:
     - target: {fileID: 1046895372862771327, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_FollowOffset.x
-      value: 200
+      value: 250
       objectReference: {fileID: 0}
     - target: {fileID: 1046895372862771327, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_FollowOffset.y
-      value: -100
+      value: -200
+      objectReference: {fileID: 0}
+    - target: {fileID: 1046895372862771327, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      propertyPath: m_FollowOffset.z
+      value: -10
       objectReference: {fileID: 0}
     - target: {fileID: 1857749394586354482, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
@@ -754,7 +759,7 @@ MonoBehaviour:
   phantomCount: 0
   phantomsInitialized: 0
   useArrowKeys: 0
-  enableLOSHeuristic: 1
+  enableLOSHeuristic: 0
   losOffset: 80
   losSteerGain: 8
   losDerivGain: 1
@@ -765,9 +770,9 @@ MonoBehaviour:
   enableDemoRecording: 0
   demoDirectory: Assets/Demos
   demoName: LOS_Defense
-  showRaycasts: 1
+  showRaycasts: 0
   enableDebugLog: 0
-  showMatchingLine: 1
+  showMatchingLine: 0
   lastObservations: []
   lastObservationsCount: 0
   collectObsCallCount: 0

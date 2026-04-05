@@ -257,9 +257,6 @@ namespace BoatAttack
         [Tooltip("적이 그물보다 모선에 이 거리 이상 더 가까우면 방어선 돌파 (m)")]
         public float enemyBreachThreshold = 20f;
 
-        [Tooltip("좌/우 교차 판정 임계값 (cos): 0=90°반전, 0.01≈89.4°, 1=완전일치")]
-        public float swapDotThreshold = 0.02f;
-
         [Tooltip("에피소드 내 최대 아군 쌍 생성 수 (이 수 이상 생성 불가)")]
         public int maxAllyPairsPerEpisode = 25;
 
@@ -1311,6 +1308,37 @@ namespace BoatAttack
                     }
 
                     totalStepReward += pairReward;
+
+                    // 가장 가까운 적 정면 정렬 보상: Gaussian f(b) = exp(-b²/(2σ²)), bearing=0(정면)일 때 최대
+                    if (rewardCalculator.bearingAlignRewardCoeff > 0f && _enemyPool != null)
+                    {
+                        GameObject nearestEnemy = null;
+                        float nearestDist2 = float.MaxValue;
+                        foreach (var e in _enemyPool)
+                        {
+                            if (e == null || !e.activeSelf || IsEnemyNeutralized(e)) continue;
+                            float d2 = (e.transform.position - webCenter).sqrMagnitude;
+                            if (d2 < nearestDist2) { nearestDist2 = d2; nearestEnemy = e; }
+                        }
+                        if (nearestEnemy != null)
+                        {
+                            Vector3 webFwd = (pair.agent1.transform.forward + pair.agent2.transform.forward) * 0.5f;
+                            webFwd.y = 0f;
+                            Vector3 toEnemy = nearestEnemy.transform.position - webCenter;
+                            toEnemy.y = 0f;
+                            if (webFwd.sqrMagnitude > 0.01f && toEnemy.sqrMagnitude > 0.01f)
+                            {
+                                float angleDeg = Vector3.Angle(webFwd, toEnemy);
+                                float bearing = Mathf.Sqrt(angleDeg / 180f);
+                                float sigma = rewardCalculator.bearingGaussianSigma;
+                                float gaussian = Mathf.Exp(-(bearing * bearing) / (2f * sigma * sigma));
+                                float alignReward = rewardCalculator.bearingAlignRewardCoeff * gaussian;
+                                pair.agent1.AddReward(alignReward);
+                                pair.agent2.AddReward(alignReward);
+                                totalStepReward += alignReward;
+                            }
+                        }
+                    }
                 }
             }
             else if (defenseAgent1 != null && defenseAgent2 != null)
@@ -1344,6 +1372,12 @@ namespace BoatAttack
             if (motherShip != null && _enemyPool != null && rewardCalculator.raycastInterceptReward > 0f && _resetTimer % 5 == 0)
             {
                 Vector3 motherPos = motherShip.transform.position;
+
+                // 활성 적 수 집계 (보상 스케일 정규화용 — 적 수와 무관하게 동일 스케일 유지)
+                int activeEnemyCountForRay = 0;
+                foreach (var e in _enemyPool)
+                    if (e != null && e.activeSelf && !IsEnemyNeutralized(e)) activeEnemyCountForRay++;
+                float enemyNorm = activeEnemyCountForRay > 0 ? 1f / activeEnemyCountForRay : 1f;
 
                 for (int ei = 0; ei < _enemyPool.Length; ei++)
                 {
@@ -1428,7 +1462,7 @@ namespace BoatAttack
 
                             // 위협도 가중치: 적이 모선에 가까울수록 보상 증가 (1.0 ~ 2.0)
                             float threatWeight = 1f + Mathf.Clamp01(1f - distToMother / 500f);
-                            float reward = rewardCalculator.raycastInterceptReward * perpBonus * centerBonus * threatWeight;
+                            float reward = rewardCalculator.raycastInterceptReward * perpBonus * centerBonus * threatWeight * enemyNorm;
                             agent.AddReward(reward);
                             if (agent.partnerAgent != null)
                                 agent.partnerAgent.AddReward(reward);
@@ -1458,7 +1492,7 @@ namespace BoatAttack
                     if (!hitWeb && rewardCalculator.raycastDirectHitPenalty < 0f)
                     {
                         float threatWeight = 1f + Mathf.Clamp01(1f - distToMother / 500f);
-                        float penalty = rewardCalculator.raycastDirectHitPenalty * threatWeight;
+                        float penalty = rewardCalculator.raycastDirectHitPenalty * threatWeight * enemyNorm;
                         if (m_AgentGroup != null)
                             m_AgentGroup.AddGroupReward(penalty);
                         totalStepReward += penalty;
@@ -1935,7 +1969,6 @@ namespace BoatAttack
         /// </summary>
         public void OnEnemyHitWeb(GameObject enemyBoat, DynamicWeb capturingWeb = null)
         {
-            Debug.Log($"[OnEnemyHitWeb] CALLED! stage={currentStage}, capturingWeb={capturingWeb != null}, enemy={enemyBoat?.name}");
             if (_episodeEnding) return;
             if (_resetTimer <= 10) return;
             if (enemyBoat == null) return;
@@ -1963,8 +1996,7 @@ namespace BoatAttack
                 : 0f;
             // 순차 포획 보너스: n번째 포획 = 기본보상 × (1 + (n-1) × 계수)
             float seqBonus = 1f + (_capturedEnemyCount - 1) * rewardCalculator.sequentialCaptureBonus;
-            float reward = rewardCalculator.captureReward * seqBonus
-                + rewardCalculator.captureDistanceBonus * distRatio;
+            float reward = rewardCalculator.captureReward * seqBonus;
 
             // 보상 부여: 그룹 보상(전액) + 포획한 쌍에 개별 보너스
             if (m_AgentGroup != null)
@@ -2130,8 +2162,8 @@ namespace BoatAttack
                         return;
 
                     // 1. 충돌 당한 쌍 페널티 + 비활성화
-                    if (hitPair?.agent1 != null) hitPair.agent1.AddReward(rewardCalculator.allyWebCollisionPenalty);
-                    if (hitPair?.agent2 != null) hitPair.agent2.AddReward(rewardCalculator.allyWebCollisionPenalty);
+                    if (hitPair?.agent1 != null) hitPair.agent1.AddReward(rewardCalculator.collisionPenalty);
+                    if (hitPair?.agent2 != null) hitPair.agent2.AddReward(rewardCalculator.collisionPenalty);
                     DisableOrDisarmPair(hitPairIdx);
                     NotifyCameraPairDisabled(hitPair);
 
@@ -2148,8 +2180,8 @@ namespace BoatAttack
                             if (webPairIdx >= 0 && webPairIdx != hitPairIdx)
                             {
                                 DefensePair webPair = launchZoneManager.GetPair(webPairIdx);
-                                if (webPair?.agent1 != null) webPair.agent1.AddReward(rewardCalculator.allyWebCollisionPenalty);
-                                if (webPair?.agent2 != null) webPair.agent2.AddReward(rewardCalculator.allyWebCollisionPenalty);
+                                if (webPair?.agent1 != null) webPair.agent1.AddReward(rewardCalculator.collisionPenalty);
+                                if (webPair?.agent2 != null) webPair.agent2.AddReward(rewardCalculator.collisionPenalty);
                                 DisableOrDisarmPair(webPairIdx);
                                 NotifyCameraPairDisabled(webPair);
                             }
@@ -2163,7 +2195,7 @@ namespace BoatAttack
             }
 
             // 레거시 fallback
-            RestartEpisode("AllyHitWeb", rewardCalculator.allyWebCollisionPenalty);
+            RestartEpisode("AllyHitWeb", rewardCalculator.collisionPenalty);
         }
 
         /// <summary>
@@ -2776,10 +2808,6 @@ namespace BoatAttack
                             pair.agent2.SetDeployMode(true, agent2Steer);
                         }
 
-                        // 4. Deploy 트리거 보너스
-                        if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.deployTriggerBonus);
-                        if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.deployTriggerBonus);
-
                         Debug.Log($"[ConvoyDeploy] Pair {pi} DEPLOY: Joint destroyed, nearestEnemy={nearestDist:F0}m");
                     }
                     continue;
@@ -2933,8 +2961,8 @@ namespace BoatAttack
             if (pair.isDisarmed) return;
 
             // 페널티 (아군 Web 충돌과 동일)
-            if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.allyWebCollisionPenalty);
-            if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.allyWebCollisionPenalty);
+            if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.collisionPenalty);
+            if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.collisionPenalty);
 
             // 비활성화 (Stage9이면 직진 이탈)
             DisableOrDisarmPair(pairIdx);
@@ -4592,44 +4620,6 @@ namespace BoatAttack
 
                 ApplyStageSettings();
             }
-        }
-
-        /// <summary>
-        /// 포획 보상 활성화 여부 (Stage2, Stage3, Stage6에서 true)
-        /// </summary>
-        public bool IsCaptureRewardEnabled()
-        {
-            return currentStage == TrainingStage.Stage2_Capture ||
-                   currentStage == TrainingStage.Stage3_Tactical ||
-                   currentStage == TrainingStage.Stage6_PhantomFormation ||
-                   currentStage == TrainingStage.Stage7_FleetManeuver ||
-                   currentStage == TrainingStage.Stage8_TacticalFullObs ||
-                   currentStage == TrainingStage.Stage9_DisarmReform;
-        }
-
-        /// <summary>
-        /// 모선 충돌 페널티 활성화 여부 (Stage2, Stage3, Stage6에서 true)
-        /// </summary>
-        public bool IsMotherShipPenaltyEnabled()
-        {
-            return currentStage == TrainingStage.Stage2_Capture ||
-                   currentStage == TrainingStage.Stage3_Tactical ||
-                   currentStage == TrainingStage.Stage6_PhantomFormation ||
-                   currentStage == TrainingStage.Stage7_FleetManeuver ||
-                   currentStage == TrainingStage.Stage8_TacticalFullObs ||
-                   currentStage == TrainingStage.Stage9_DisarmReform;
-        }
-
-        /// <summary>
-        /// 전술 기동 보상 활성화 여부 (Stage3, Stage6에서 true)
-        /// </summary>
-        public bool IsTacticalRewardEnabled()
-        {
-            return currentStage == TrainingStage.Stage3_Tactical ||
-                   currentStage == TrainingStage.Stage6_PhantomFormation ||
-                   currentStage == TrainingStage.Stage7_FleetManeuver ||
-                   currentStage == TrainingStage.Stage8_TacticalFullObs ||
-                   currentStage == TrainingStage.Stage9_DisarmReform;
         }
 
         /// <summary>

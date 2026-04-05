@@ -204,10 +204,9 @@ namespace BoatAttack
         private float _prevGoalBrg = 0f;  // LOS D 제어용 이전 bearing 오차
 
         [Header("Debug")]
-        public bool showRaycasts = true;
         public bool enableDebugLog = false;
         [Tooltip("Game View에서 배정 라인 실시간 표시 (LineRenderer 사용)")]
-        public bool showMatchingLine = true;
+        public bool showMatchingLine = false;
 
         // ── 런타임 매칭 LineRenderer ──
         private LineRenderer _matchingLR;   // Web 중심 → 배정 적군 (노란선)
@@ -224,12 +223,6 @@ namespace BoatAttack
         /// <summary>모니터링용: 아군 버퍼 관측 임시 저장</summary>
         [HideInInspector] public List<float> lastAllyBufferObs = new List<float>();
 
-        [Header("Reward Display")]
-        #pragma warning disable CS0414
-        [SerializeField] private float _totalReward = 0f;
-        [SerializeField] private float _lastStepReward = 0f;
-        #pragma warning restore CS0414
-
         private bool _episodeEnded = false;
         private bool _neutralized = false;
         private bool _straightMode = false;  // Stage9: 직진 이탈 모드
@@ -238,9 +231,6 @@ namespace BoatAttack
         private bool _convoyMode = false;   // FixedJoint 쌍동선: 차동 추력 모드
 
         [Header("=== Convoy (FixedJoint) ===")]
-        [Tooltip("차동 추력 감도 (steering → 좌우 추력 차이 비율, 1.0=한쪽 정지/반대쪽 전속력)")]
-        [Range(0.1f, 2f)]
-        public float differentialSensitivity = 1.0f;
         private float _prevThrottle = 0f;
         private float _prevSteering = 0f;
 
@@ -487,8 +477,6 @@ namespace BoatAttack
             assignedTargetIndex = -1; // Commander가 새로 배정
             // _neutralized는 여기서 리셋하지 않음
             // SetNeutralized(false)로만 해제 (DeployPairs/ResetScene에서 호출)
-            _totalReward = 0f;
-            _lastStepReward = 0f;
             _prevThrottle = 0f;
             _prevSteering = 0f;
             _throttleDelta = 0f;
