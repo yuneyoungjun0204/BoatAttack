@@ -565,11 +565,22 @@ namespace BoatAttack
                 return;
             }
 
+            // 에피소드 시작마다 모선 현재 후미 방향으로 진수구역 갱신
+            GenerateLaunchZones();
+
+            // 클러스터를 먼저 계산 → pairCount = 클러스터 수 (1:1 배정)
+            GameObject[] enemiesEarly = envController != null ? envController.enemyShips : null;
+            var earlyClusters = ClusterEnemiesByAngle(motherPos, enemiesEarly, clusterBinWidthDeg);
+            earlyClusters = LimitClusters(earlyClusters, maxPairCount, enemiesEarly);
+            CurrentClusters = earlyClusters;
+
+            if (earlyClusters.Count > 0)
+                pairCount = earlyClusters.Count; // 클러스터 수만큼만 출동
+
             pairCount = Mathf.Clamp(pairCount, 1, maxPairCount);
             _deployedPairCount = pairCount;
 
-            // 에피소드 시작마다 모선 현재 후미 방향으로 진수구역 갱신
-            GenerateLaunchZones();
+            Debug.LogWarning($"[DeployPairs] 클러스터={earlyClusters.Count} → pairCount={pairCount}");
 
             // Debug.LogWarning($"[DeployPairs] 시작: type={formationType}, pairCount={pairCount}, " +
             //     $"activePairCount={activePairCount}, poolCount={_pairPool.Count}");
@@ -618,7 +629,7 @@ namespace BoatAttack
 
                 // 쌍 간 횡 간격 (convoySpawnSpacing + 여유)
                 float spawnSpacing = envController != null ? envController.convoySpawnSpacing : 10f;
-                float lateralSpacing = spawnSpacing + 10f;
+                float lateralSpacing = spawnSpacing + 40f;
 
                 // 중심 기준 횡 오프셋 계산 (0이 중앙)
                 float totalWidth = (pairIndices.Count - 1) * lateralSpacing;
@@ -630,17 +641,9 @@ namespace BoatAttack
                     if (pi < 0) break;
                     _pairPool[pi].isActive = true; // 즉시 예약 — 같은 쌍 중복 반환 방지
 
-                    // 양동: 쌍별 실제 적 방향 사용, 그 외: approachAngleDeg 사용
+                    // 스폰 위치는 항상 모선 후미 방향 고정 — 적군 방향 무관
                     int pairLogicalIdx = pairIndices[j];
-                    float spawnAngleDeg;
-                    if (formationType == FormationType.Diversionary && pairDirAngles.ContainsKey(pairLogicalIdx))
-                    {
-                        spawnAngleDeg = pairDirAngles[pairLogicalIdx] + Random.Range(-zone.angleJitter, zone.angleJitter);
-                    }
-                    else
-                    {
-                        spawnAngleDeg = approachAngleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
-                    }
+                    float spawnAngleDeg = GetMotherShipRearAngleDeg();
                     float spawnAngleRad = spawnAngleDeg * Mathf.Deg2Rad;
                     Vector3 zoneDir = new Vector3(Mathf.Sin(spawnAngleRad), 0f, Mathf.Cos(spawnAngleRad));
                     float zoneDist = zone.distance; // 구역 고유 거리 사용
@@ -770,6 +773,13 @@ namespace BoatAttack
                     agentGroup.RegisterAgent(pair.agent1);
                     agentGroup.RegisterAgent(pair.agent2);
                 }
+
+                // PD LOS 가이던스 시작 — 클러스터 중심 방향으로 유도
+                Vector3 guidanceTarget = pair.clusterCentroid != Vector3.zero
+                    ? pair.clusterCentroid
+                    : pairCenter + (rot * Vector3.forward) * 200f; // fallback: 전방 200m
+                if (pair.agent1 != null) pair.agent1.StartGuidance(guidanceTarget);
+                if (pair.agent2 != null) pair.agent2.StartGuidance(guidanceTarget);
             }
 
             _lastDeploymentInfo = $"{formationType}, pairs={pairCount}, zones={zoneAssignments.Count}";

@@ -231,6 +231,20 @@ namespace BoatAttack
         private float _deploySteerOverride = -0.5f;
         private bool _convoyMode = false;   // FixedJoint 쌍동선: 차동 추력 모드
 
+        // PD LOS 가이던스 (배치 후 일정 시간 동안 클러스터 방향으로 직진)
+        [Header("=== PD LOS Guidance ===")]
+        [Tooltip("배치 후 PD 가이던스 유지 시간 (초). 0이면 즉시 RL 전환")]
+        public float guidanceDuration = 15f;
+        [Tooltip("PD 가이던스 조향 비례 게인 (Kp)")]
+        public float guidanceKp = 1.5f;
+        [Tooltip("PD 가이던스 조향 미분 게인 (Kd)")]
+        public float guidanceKd = 0.3f;
+
+        private bool _guidancePhase = false;
+        private float _guidanceEndTime = 0f;
+        private Vector3 _guidanceTarget = Vector3.zero;
+        private float _prevBearingError = 0f;
+
         [Header("=== Convoy (FixedJoint) ===")]
         private float _prevThrottle = 0f;
         private float _prevSteering = 0f;
@@ -482,12 +496,27 @@ namespace BoatAttack
             _straightMode = false;
             _deployMode = false;
             _convoyMode = false;
+            _guidancePhase = false;
+            _guidanceEndTime = 0f;
+            _prevBearingError = 0f;
             assignedTargetIndex = -1;
             _prevThrottle = 0f;
             _prevSteering = 0f;
             _throttleDelta = 0f;
             _steeringDelta = 0f;
             DeactivateSingleNet();
+        }
+
+        /// <summary>
+        /// PD LOS 가이던스 시작 — LaunchZoneManager에서 배치 직후 호출
+        /// </summary>
+        public void StartGuidance(Vector3 worldTarget)
+        {
+            if (guidanceDuration <= 0f) return;
+            _guidanceTarget   = worldTarget;
+            _guidanceEndTime  = Time.time + guidanceDuration;
+            _guidancePhase    = true;
+            _prevBearingError = 0f;
         }
 
         public override void OnEpisodeBegin()
@@ -961,6 +990,39 @@ namespace BoatAttack
                     $"ended={_episodeEnded}, neutral={_neutralized}, convoy={_convoyMode}, " +
                     $"kinematic={_engine?.RB?.isKinematic}, secondary={_engine?.isConvoySecondary}");
                 return;
+            }
+
+            // PD LOS 가이던스 — 배치 후 guidanceDuration초 동안 클러스터 방향으로 유도
+            if (_guidancePhase)
+            {
+                if (Time.time >= _guidanceEndTime)
+                {
+                    _guidancePhase = false; // 시간 종료 → RL 전환
+                }
+                else
+                {
+                    // 목표 방향 베어링 오차 계산
+                    Vector3 toTarget = _guidanceTarget - transform.position;
+                    toTarget.y = 0f;
+                    float bearingError = 0f;
+                    if (toTarget.sqrMagnitude > 0.1f)
+                    {
+                        float targetAngle = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
+                        float myAngle     = transform.eulerAngles.y;
+                        bearingError      = Mathf.DeltaAngle(myAngle, targetAngle) / 180f; // [-1, 1]
+                    }
+
+                    // PD 조향
+                    float dError  = (bearingError - _prevBearingError) / Mathf.Max(Time.fixedDeltaTime, 0.001f);
+                    float steering = Mathf.Clamp(guidanceKp * bearingError + guidanceKd * dError, -1f, 1f);
+                    _prevBearingError = bearingError;
+
+                    _engine.Accelerate(maxThrottle);
+                    _engine.Turn(steering);
+                    _prevThrottle = maxThrottle;
+                    _prevSteering = steering;
+                    return;
+                }
             }
 
             // Stage9: 직진 이탈 모드 — ML 정책 무시, 현재 헤딩으로 전속력 직진
