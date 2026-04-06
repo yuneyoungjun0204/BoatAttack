@@ -226,6 +226,7 @@ namespace BoatAttack
         private bool _episodeEnded = false;
         private bool _neutralized = false;
         private bool _straightMode = false;  // Stage9: 직진 이탈 모드
+        private SingleNetCapture _singleNetCapture;  // Disarm 후 소형 포획 존
         private bool _deployMode = false;   // Convoy-Deploy: 그물 전개 모드
         private float _deploySteerOverride = -0.5f;
         private bool _convoyMode = false;   // FixedJoint 쌍동선: 차동 추력 모드
@@ -291,6 +292,11 @@ namespace BoatAttack
             // 런타임 매칭 LineRenderer 생성
             _matchingLR = CreateLineRenderer("_MatchingLine", new Color(1f, 0.9f, 0.1f, 0.85f), 0.6f);
             _partnerLR  = CreateLineRenderer("_PartnerLine",  new Color(0.2f, 1f, 0.3f, 0.7f),  0.4f);
+
+            // SingleNetCapture: 없으면 자동 추가 (기본 비활성 상태)
+            _singleNetCapture = GetComponent<SingleNetCapture>();
+            if (_singleNetCapture == null)
+                _singleNetCapture = gameObject.AddComponent<SingleNetCapture>();
         }
 
         private LineRenderer CreateLineRenderer(string childName, Color col, float width)
@@ -362,6 +368,20 @@ namespace BoatAttack
             Debug.Log($"[{name}] SetStraightMode: {_straightMode} → {value}");
             _straightMode = value;
             _straightModeLogCount = 0;
+        }
+
+        /// <summary>Disarm 이후 소형 포획 존 활성화</summary>
+        public void ActivateSingleNet()
+        {
+            if (_singleNetCapture == null) return;
+            if (envController != null) _singleNetCapture.Init(envController);
+            _singleNetCapture.Activate();
+        }
+
+        /// <summary>에피소드 리셋 시 소형 포획 존 비활성화</summary>
+        public void DeactivateSingleNet()
+        {
+            if (_singleNetCapture != null) _singleNetCapture.Deactivate();
         }
 
         /// <summary>
@@ -462,11 +482,12 @@ namespace BoatAttack
             _straightMode = false;
             _deployMode = false;
             _convoyMode = false;
-            assignedTargetIndex = -1; // Commander가 새로 배정
+            assignedTargetIndex = -1;
             _prevThrottle = 0f;
             _prevSteering = 0f;
             _throttleDelta = 0f;
             _steeringDelta = 0f;
+            DeactivateSingleNet();
         }
 
         public override void OnEpisodeBegin()
@@ -1274,23 +1295,28 @@ namespace BoatAttack
 
             if (otherAgent != null || isMotherShip)
             {
+                Transform envRoot = transform.parent != null ? transform.parent : transform;
+                DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
+
+                // 모선 충돌: 페널티만, 비활성화 없음
+                if (isMotherShip)
+                {
+                    if (envController != null)
+                        envController.OnPartnerCollision(this); // 페널티 재사용
+                    return;
+                }
+
                 // 파트너 아군 충돌: 페널티만 (비활성화 없음)
                 if (otherAgent != null && otherAgent == partnerAgent)
                 {
-                    Transform envRoot = transform.parent != null ? transform.parent : transform;
-                    DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
                     if (envController != null)
                         envController.OnPartnerCollision(this);
                     return;
                 }
 
-                // 다른 쌍/모선 충돌: 기존 처리 (쌍 비활성화)
-                {
-                    Transform envRoot = transform.parent != null ? transform.parent : transform;
-                    DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
-                    if (envController != null)
-                        envController.OnFriendlyCollision(this);
-                }
+                // 다른 쌍 충돌: 기존 처리 (쌍 비활성화)
+                if (envController != null)
+                    envController.OnFriendlyCollision(this);
             }
         }
 

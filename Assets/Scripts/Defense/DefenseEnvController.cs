@@ -1991,6 +1991,55 @@ namespace BoatAttack
         }
         
         /// <summary>
+        /// SingleNetCapture(개별 소형 포획 존)에 적 진입 시 처리.
+        /// OnEnemyHitWeb과 동일한 보상/무력화 로직, capturingWeb 없이 단일 에이전트에 개별 보상.
+        /// </summary>
+        public void OnEnemyHitSingleNet(GameObject enemyBoat, DefenseAgent capturer)
+        {
+            if (_episodeEnding) return;
+            if (_resetTimer <= 10) return;
+            if (enemyBoat == null) return;
+
+            enemyBoat = ResolveToPoolEntry(enemyBoat);
+
+            float currentTime = Time.time;
+            if (_collisionCooldownTimes.ContainsKey(enemyBoat))
+            {
+                if (currentTime - _collisionCooldownTimes[enemyBoat] < _collisionCooldown)
+                    return;
+            }
+            _collisionCooldownTimes[enemyBoat] = currentTime;
+            _totalCollisionCount++;
+            _capturedEnemyCount++;
+
+            float seqBonus = 1f + (_capturedEnemyCount - 1) * rewardCalculator.sequentialCaptureBonus;
+            float reward = rewardCalculator.captureReward * seqBonus;
+
+            if (m_AgentGroup != null)
+            {
+                m_AgentGroup.AddGroupReward(reward);
+                if (capturer != null)
+                    capturer.AddReward(reward * captureIndividualShare);
+            }
+            else
+            {
+                if (capturer != null) capturer.AddReward(reward);
+            }
+
+            if (commanderAgent != null && IsCommanderStage())
+            {
+                commanderAgent.AddReward(reward);
+                commanderAgent.OnEnemyCaptured();
+            }
+
+            var capturedAttack = enemyBoat.GetComponent<AttackAgent>();
+            if (capturedAttack != null) capturedAttack.OnCapturedBySelfPlay();
+
+            DisableEnemy(enemyBoat);
+            CheckEpisodeEndCondition();
+        }
+
+        /// <summary>
         /// 적군이 Web에 충돌 시 처리:
         /// 1. 팀 보상 부여
         /// 2. 적군 무력화

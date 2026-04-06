@@ -86,6 +86,13 @@ namespace BoatAttack
         [Tooltip("풍향 텍스트")]
         public Text textWindDirection;
 
+        [Header("=== UI Range Override ===")]
+        [Tooltip("레이더 감지 범위 배수 (RadarDisplay.rangeMultiplier와 중복 적용 주의 — 기본 1 유지)")]
+        public float radarRangeMultiplier = 1f;
+
+        [Tooltip("전술맵 표시 범위 배수 (1=원본. 2.5=현재 mapRange×2.5 → 더 넓게 표시)")]
+        public float tacticalMapRangeMultiplier = 2.5f;
+
         [Header("=== Mode Button Colors ===")]
         public Color activeButtonColor = new Color(0.2f, 0.8f, 0.2f, 1f);
         public Color inactiveButtonColor = new Color(0.3f, 0.3f, 0.3f, 1f);
@@ -99,11 +106,22 @@ namespace BoatAttack
             if (launchZoneManager == null)
                 launchZoneManager = FindObjectOfType<LaunchZoneManager>();
 
+            ApplyUIScales();
             InitSliderValues();
             UpdateAllLabels();
             BindSliderListeners();
             SetupButtons();
             SetAttackMode(AttackMode.Wave);
+        }
+
+        /// <summary>맵 표시 범위 배수 적용 (레이더는 RadarDisplay.rangeMultiplier에서 직접 처리)</summary>
+        private void ApplyUIScales()
+        {
+            if (tacticalMap != null && tacticalMapRangeMultiplier > 0f)
+            {
+                tacticalMap.mapRange *= tacticalMapRangeMultiplier;
+                Debug.Log($"[TacticalUIController] 전술맵 범위 ×{tacticalMapRangeMultiplier} → {tacticalMap.mapRange}m");
+            }
         }
 
         /// <summary>

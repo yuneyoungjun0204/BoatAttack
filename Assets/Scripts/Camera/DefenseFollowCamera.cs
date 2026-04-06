@@ -40,6 +40,10 @@ namespace BoatAttack
         [Tooltip("LaunchZoneManager (미설정 시 자동 탐색)")]
         public LaunchZoneManager launchZoneManager;
 
+        [Header("Extra Cameras")]
+        [Tooltip("C키 순환에 포함할 추가 카메라 오브젝트들 (Inspector 할당 or 자동 탐색)")]
+        public GameObject[] extraCameraObjects;
+
         [Header("Camera Settings")]
         [Tooltip("카메라 오프셋 (타겟 로컬 좌표)")]
         public Vector3 offset = new Vector3(0f, 5f, -10f);
@@ -82,6 +86,22 @@ namespace BoatAttack
         private Transform _currentTarget;
         private int _currentIndex = 0;
         private bool _followingAllies = true;
+        private bool _isExtraCamera = false;  // 현재 추가 카메라 시점인지
+
+        // 추가 카메라 전환 시 Main Camera를 끄고 해당 카메라를 켬
+        private UnityEngine.Camera _activatedExtraCam;
+        private UnityEngine.Camera _thisCam;  // 이 스크립트가 붙은 오브젝트의 카메라
+
+        // 드론 조종 상태
+        [Header("Drone Control")]
+        [Tooltip("드론 이동 속도 (m/s)")]
+        public float droneMoveSpeed = 30f;
+        [Tooltip("드론 회전 속도 (도/초)")]
+        public float droneRotateSpeed = 90f;
+        [Tooltip("드론 스크롤 속도 배율")]
+        public float droneScrollStep = 10f;
+        private float _droneYaw;
+        private float _dronePitch;
 
         // C키 전환 직후 자동전환 방지
         private int _switchCooldown = 0;
@@ -114,6 +134,19 @@ namespace BoatAttack
             if (launchZoneManager == null)
                 launchZoneManager = FindObjectOfType<LaunchZoneManager>();
             _allBrains = FindObjectsOfType<Cinemachine.CinemachineBrain>();
+            _thisCam = GetComponent<UnityEngine.Camera>();  // 이 오브젝트의 카메라 고정 참조
+
+            // extraCameraObjects가 비어있으면 "Camera Drone" 이름으로 자동 탐색
+            if (extraCameraObjects == null || extraCameraObjects.Length == 0)
+            {
+                var droneObj = GameObject.Find("Camera Drone");
+                if (droneObj != null)
+                {
+                    extraCameraObjects = new GameObject[] { droneObj };
+                    Debug.Log("[FollowCam] Camera Drone 자동 등록 완료");
+                }
+            }
+
             _freeFlyCamera = GetComponent<FreeFlyCamera>();
             if (_freeFlyCamera == null)
                 _freeFlyCamera = FindObjectOfType<FreeFlyCamera>();
@@ -158,6 +191,16 @@ namespace BoatAttack
                 _debugCurrentTarget = "[Top-Down]";
                 _debugAllyCount = GetAliveAllies().Count;
                 _debugEnemyCount = GetAliveEnemies().Count;
+                return;
+            }
+
+            // 추가 카메라 시점이면 드론 조종 처리
+            if (_isExtraCamera)
+            {
+                _debugCurrentTarget = _currentTarget != null ? $"[Cam] {_currentTarget.name}" : "None";
+                _debugAllyCount = GetAliveAllies().Count;
+                _debugEnemyCount = GetAliveEnemies().Count;
+                HandleDroneControl();
                 return;
             }
 
@@ -301,38 +344,160 @@ namespace BoatAttack
 
         private void SwitchToNext()
         {
-            var allies = GetAliveAllies();
+            var allies  = GetAliveAllies();
             var enemies = GetAliveEnemies();
-            int total = allies.Count + enemies.Count;
+            var extras  = GetValidExtraCameras();
 
-            if (total == 0)
-            {
-                _currentTarget = null;
-                return;
-            }
-
-            // 통합 리스트: [아군들..., 적군들...]
+            // 통합 리스트: [아군들..., 적군들..., 추가카메라들...]
             var all = new List<GameObject>(allies);
             all.AddRange(enemies);
 
-            // 현재 타겟의 인덱스
+            int total = all.Count + extras.Count;
+            if (total == 0) { _currentTarget = null; return; }
+
+            // 현재 타겟 인덱스 탐색 — DeactivateExtraCamera 전에 먼저 찾아야 함
             int curIdx = -1;
             if (_currentTarget != null)
             {
                 for (int i = 0; i < all.Count; i++)
                 {
-                    if (all[i].transform == _currentTarget)
+                    if (all[i].transform == _currentTarget) { curIdx = i; break; }
+                }
+                if (curIdx < 0 && _isExtraCamera)
+                {
+                    for (int i = 0; i < extras.Count; i++)
                     {
-                        curIdx = i;
-                        break;
+                        if (extras[i].transform == _currentTarget)
+                        { curIdx = all.Count + i; break; }
                     }
                 }
             }
 
-            int nextIdx = (curIdx + 1) % all.Count;
-            _currentTarget = all[nextIdx].transform;
-            _followingAllies = nextIdx < allies.Count;
-            _currentIndex = _followingAllies ? nextIdx : nextIdx - allies.Count;
+            // 현재 추가 카메라 시점이면 해제 (인덱스 탐색 이후)
+            if (_isExtraCamera)
+                DeactivateExtraCamera();
+
+            int nextIdx = (curIdx + 1) % total;
+
+            if (nextIdx < all.Count)
+            {
+                // 선박 시점
+                _isExtraCamera   = false;
+                _currentTarget   = all[nextIdx].transform;
+                _followingAllies = nextIdx < allies.Count;
+                _currentIndex    = _followingAllies ? nextIdx : nextIdx - allies.Count;
+            }
+            else
+            {
+                // 추가 카메라 시점
+                var extraObj     = extras[nextIdx - all.Count];
+                _isExtraCamera   = true;
+                _currentTarget   = extraObj.transform;
+                _followingAllies = false;
+                ActivateExtraCamera(extraObj);
+            }
+        }
+
+        private List<GameObject> GetValidExtraCameras()
+        {
+            var result = new List<GameObject>();
+            if (extraCameraObjects == null) return result;
+            foreach (var obj in extraCameraObjects)
+                if (obj != null) result.Add(obj);
+            return result;
+        }
+
+        private void ActivateExtraCamera(GameObject camObj)
+        {
+            var cam = camObj.GetComponent<UnityEngine.Camera>();
+            if (cam == null)
+            {
+                cam = camObj.AddComponent<UnityEngine.Camera>();
+                if (_thisCam != null)
+                {
+                    cam.fieldOfView     = _thisCam.fieldOfView;
+                    cam.nearClipPlane   = _thisCam.nearClipPlane;
+                    cam.farClipPlane    = _thisCam.farClipPlane;
+                    cam.clearFlags      = _thisCam.clearFlags;
+                    cam.backgroundColor = _thisCam.backgroundColor;
+                    cam.cullingMask     = _thisCam.cullingMask;
+                }
+            }
+
+            // 이 스크립트의 카메라 OFF, 추가 카메라 ON
+            if (_thisCam != null) _thisCam.enabled = false;
+            cam.enabled = true;
+            _activatedExtraCam = cam;
+
+            // 드론 현재 회전으로 yaw/pitch 초기화
+            _droneYaw   = camObj.transform.eulerAngles.y;
+            _dronePitch = camObj.transform.eulerAngles.x;
+            if (_dronePitch > 180f) _dronePitch -= 360f;
+
+            Debug.LogWarning($"[FollowCam] ★ 드론 카메라 ON: {camObj.name}  WASD로 조종하세요");
+        }
+
+        private void DeactivateExtraCamera()
+        {
+            if (_activatedExtraCam != null)
+            {
+                _activatedExtraCam.enabled = false;
+                _activatedExtraCam = null;
+            }
+
+            // 이 스크립트의 카메라 복원
+            if (_thisCam != null) _thisCam.enabled = true;
+            _isExtraCamera = false;
+        }
+
+        private void HandleDroneControl()
+        {
+            if (_currentTarget == null) return;
+
+            var kb = Keyboard.current;
+            var mouse = Mouse.current;
+
+            // 이동
+            Vector3 move = Vector3.zero;
+            Quaternion rot = Quaternion.Euler(_dronePitch, _droneYaw, 0f);
+            if (kb != null)
+            {
+                if (kb.wKey.isPressed) move += rot * Vector3.forward;
+                if (kb.sKey.isPressed) move -= rot * Vector3.forward;
+                if (kb.aKey.isPressed) move -= rot * Vector3.right;
+                if (kb.dKey.isPressed) move += rot * Vector3.right;
+                if (kb.spaceKey.isPressed)     move += Vector3.up;
+                if (kb.leftShiftKey.isPressed) move -= Vector3.up;
+            }
+            if (move.sqrMagnitude > 0.01f)
+                _currentTarget.position += move.normalized * droneMoveSpeed * Time.unscaledDeltaTime;
+
+            // 회전: 우클릭 드래그 or QE/RZ
+            float yawDelta = 0f, pitchDelta = 0f;
+            if (kb != null)
+            {
+                if (kb.qKey.isPressed) yawDelta   -= droneRotateSpeed * Time.unscaledDeltaTime;
+                if (kb.eKey.isPressed) yawDelta   += droneRotateSpeed * Time.unscaledDeltaTime;
+                if (kb.rKey.isPressed) pitchDelta -= droneRotateSpeed * Time.unscaledDeltaTime;
+                if (kb.zKey.isPressed) pitchDelta += droneRotateSpeed * Time.unscaledDeltaTime;
+            }
+            if (mouse != null && mouse.rightButton.isPressed)
+            {
+                Vector2 delta = mouse.delta.ReadValue();
+                yawDelta   += delta.x *  0.3f;
+                pitchDelta += delta.y * -0.3f;
+            }
+            _droneYaw   += yawDelta;
+            _dronePitch  = Mathf.Clamp(_dronePitch + pitchDelta, -85f, 85f);
+            _currentTarget.rotation = Quaternion.Euler(_dronePitch, _droneYaw, 0f);
+
+            // 스크롤: 이동 속도 조절
+            if (mouse != null)
+            {
+                float scroll = mouse.scroll.ReadValue().y;
+                if (Mathf.Abs(scroll) > 0.01f)
+                    droneMoveSpeed = Mathf.Clamp(droneMoveSpeed + (scroll > 0 ? droneScrollStep : -droneScrollStep), 5f, 300f);
+            }
         }
 
         private void SwitchToNextAlive()
@@ -427,6 +592,8 @@ namespace BoatAttack
 
         public void OnEpisodeReset()
         {
+            if (_isExtraCamera)
+                DeactivateExtraCamera();
             _currentIndex = 0;
             _followingAllies = true;
             _currentTarget = null;
@@ -501,7 +668,12 @@ namespace BoatAttack
             GUILayout.Label($"ENEMY: {enemyCount} ships", _hudStyleEnemy);
             GUILayout.Label($"  Captured: {capturedCount}  |  Breached: {breachedCount}", _hudStyleTarget);
 
-            if (_freeFlyCamera != null && _freeFlyCamera.IsActive)
+            if (_isExtraCamera && _currentTarget != null)
+            {
+                GUILayout.Label($"CAM: [Drone] {_currentTarget.name}  [C=next]  speed:{droneMoveSpeed:F0}", _hudStyleTarget);
+                GUILayout.Label($"  WASD=이동  Space/Shift=상하  QE/RZ=회전  RDrag=마우스회전  Scroll=속도", _hudStyleTarget);
+            }
+            else if (_freeFlyCamera != null && _freeFlyCamera.IsActive)
             {
                 GUILayout.Label($"CAM: [FreeFly]  [F=exit]", _hudStyleTarget);
                 GUILayout.Label($"  WASD=move  RDrag=rotate  Scroll=speed", _hudStyleTarget);

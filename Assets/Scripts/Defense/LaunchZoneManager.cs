@@ -104,6 +104,9 @@ namespace BoatAttack
         [Tooltip("에피소드마다 진수 방위 jitter (±도, 과적합 방지)")]
         public float angleJitter = 10f;
 
+        [Tooltip("같은 구역에서 다수 쌍 생성 시 전후 간격 (m) — 겹침 방지")]
+        public float pairDepthStagger = 20f;
+
         [HideInInspector]
         public LaunchZone[] launchZones;
 
@@ -643,9 +646,18 @@ namespace BoatAttack
                     float zoneDist = zone.distance; // 구역 고유 거리 사용
                     Vector3 lateralDir = new Vector3(zoneDir.z, 0f, -zoneDir.x);
 
-                    float lateralOffset = startOffset + j * lateralSpacing;
-                    Vector3 pairCenter = motherPos + zoneDir * zoneDist + lateralDir * lateralOffset;
+                    // 직렬화 문제로 0이 되는 경우 기본값 강제 적용
+                    float effectiveStagger = pairDepthStagger > 0.1f ? pairDepthStagger : 20f;
+                    float effectiveLateral = lateralSpacing > 0.1f ? lateralSpacing : 20f;
 
+                    float lateralOffset = startOffset + j * effectiveLateral;
+                    // 같은 구역 내 쌍별 전후 stagger (중앙 기준 균등 분산)
+                    // 3쌍: -stagger, 0, +stagger / 2쌍: -stagger*0.5, +stagger*0.5
+                    float totalDepth = (pairIndices.Count - 1) * effectiveStagger;
+                    float depthOffset = j * effectiveStagger - totalDepth * 0.5f;
+                    Vector3 pairCenter = motherPos + zoneDir * (zoneDist + depthOffset) + lateralDir * lateralOffset;
+
+                    Debug.LogWarning($"[DeployPairs] j={j} pairCenter={pairCenter} lat={lateralOffset:F1} depth={depthOffset:F1}");
                     spawnInfos.Add((pi, pairCenter, zoneDir, zoneIdx, spawnAngleDeg));
                 }
             }
@@ -1919,6 +1931,10 @@ namespace BoatAttack
             // 직진 모드 활성화 (ML 정책 대신 하드코딩 직진)
             if (pair.agent1 != null) pair.agent1.SetStraightMode(true);
             if (pair.agent2 != null) pair.agent2.SetStraightMode(true);
+
+            // 소형 포획 존 활성화 (Disarm 이후 개별 Net Capture)
+            if (pair.agent1 != null) pair.agent1.ActivateSingleNet();
+            if (pair.agent2 != null) pair.agent2.ActivateSingleNet();
 
             // 상태 전환: Active → Disarmed (isActive는 유지 — 관측에 보임)
             pair.isDisarmed = true;

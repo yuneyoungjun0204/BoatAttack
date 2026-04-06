@@ -23,6 +23,9 @@ namespace BoatAttack
         [Tooltip("레이더 탐지 반경 (미터)")]
         public float radarRange = 1000f;
 
+        [Tooltip("시작 시 radarRange에 곱할 배수 (1=그대로, 6=6배 확장). Inspector radarRange 값은 유지됨")]
+        public float rangeMultiplier = 1f;
+
         [Tooltip("자동 범위 맞춤")]
         public bool autoFitRange = false;
 
@@ -109,6 +112,10 @@ namespace BoatAttack
             base.Start();
             color = Color.white;
             raycastTarget = false;
+
+            if (rangeMultiplier > 0f && !Mathf.Approximately(rangeMultiplier, 1f))
+                radarRange *= rangeMultiplier;
+
             CacheIslands();
         }
 
