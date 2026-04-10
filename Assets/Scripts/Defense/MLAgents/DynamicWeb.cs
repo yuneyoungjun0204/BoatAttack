@@ -137,6 +137,11 @@ namespace BoatAttack
         private bool _convoyBarActive = false;
 
 
+        // Stage10: 그물 고정 (선박 이탈 후 현재 위치에 고정)
+        private bool _isFrozen = false;
+        private Vector3 _frozenPos1;
+        private Vector3 _frozenPos2;
+
         // 어부 그물용
         private GameObject _netContainer;
         private LineRenderer[] _verticalLines;
@@ -155,6 +160,9 @@ namespace BoatAttack
 
         private void OnEnable()
         {
+            // 에피소드 재시작 시 freeze 상태 초기화
+            _isFrozen = false;
+
             // 아직 Initialize 안 됐으면 여기서 실행 (풀에서 꺼낸 클론 대응)
             if (!_initialized)
             {
@@ -245,7 +253,8 @@ namespace BoatAttack
 
         private void Update()
         {
-            if (defenseShip1 == null || defenseShip2 == null)
+            // 고정 상태가 아닐 때만 선박 null 체크
+            if (!_isFrozen && (defenseShip1 == null || defenseShip2 == null))
                 return;
 
             UpdateWebTransform();
@@ -263,12 +272,34 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// Web 위치 및 크기 업데이트
+        /// 현재 그물 위치를 고정 (Stage10: 선박 이탈 후 그물을 제자리에 유지)
         /// </summary>
+        public void FreezeAtCurrentPositions()
+        {
+            _frozenPos1 = (webAnchor1 != null) ? webAnchor1.position : (defenseShip1 != null ? defenseShip1.position : transform.position);
+            _frozenPos2 = (webAnchor2 != null) ? webAnchor2.position : (defenseShip2 != null ? defenseShip2.position : transform.position);
+            _isFrozen = true;
+        }
+
+        /// <summary>고정 해제 (에피소드 리셋 시 호출)</summary>
+        public void UnfreezeWeb()
+        {
+            _isFrozen = false;
+        }
+
         private void UpdateWebTransform()
         {
-            Vector3 pos1 = (webAnchor1 != null) ? webAnchor1.position : defenseShip1.position;
-            Vector3 pos2 = (webAnchor2 != null) ? webAnchor2.position : defenseShip2.position;
+            Vector3 pos1, pos2;
+            if (_isFrozen)
+            {
+                pos1 = _frozenPos1;
+                pos2 = _frozenPos2;
+            }
+            else
+            {
+                pos1 = (webAnchor1 != null) ? webAnchor1.position : defenseShip1.position;
+                pos2 = (webAnchor2 != null) ? webAnchor2.position : defenseShip2.position;
+            }
 
             // Web 중심 위치
             Vector3 centerPos = (pos1 + pos2) / 2f;

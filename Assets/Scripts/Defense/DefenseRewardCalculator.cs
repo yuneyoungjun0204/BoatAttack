@@ -90,6 +90,16 @@ namespace BoatAttack
         [Tooltip("적이 아군보다 모선에 가까울 때 페널티")]
         public float enemyOvertakePenalty = -1.0f;
 
+        [Header("=== 추격 트랩 (Stage10 / Flank Phase) ===")]
+        [Tooltip("적과 같은 방향 헤딩 정렬 보상 계수 (headingDiff≈0일수록 최대)")]
+        public float flankHeadingAlignCoeff = 0.0002f;
+
+        [Tooltip("측면 감지 Ray 최대 거리 (m) — 이 이내에 적이 있으면 측면 근접 보상")]
+        public float flankSideRayRange = 20f;
+
+        [Tooltip("SingleNet 투척 트리거 거리 (m) — 측면 거리가 이 이하이면 자동 투척")]
+        public float flankCaptureThreshold = 8f;
+
         [Header("=== Convoy / Deploy ===")]
         [Tooltip("적이 이 거리(m) 이내 진입 시 그물 전개 시작")]
         public float deployRange = 150f;
@@ -171,6 +181,33 @@ namespace BoatAttack
                 float avgSpeed = (agent1.speed + agent2.speed) * 0.5f;
                 reward += Mathf.Clamp01(avgSpeed / 15f) * throttleRewardCoeff;
             }
+
+            return reward;
+        }
+
+        /// <summary>
+        /// Stage10 Flank Phase 매 스텝 보상.
+        /// Phase 0 보상 체계를 재활용하되 기준만 반전:
+        ///   - 헤딩 정렬: 적과 같은 방향일수록 보상 (headingDiff≈0 → max)
+        ///   - 측면 근접: 적이 측면 flankSideRayRange 이내에 있을수록 보상
+        ///   - 시간 페널티: timePenalty 동일 적용
+        /// </summary>
+        /// <param name="headingDiff">NormalizeHeadingDiff(myYaw, enemyYaw) 결과 (-1~+1, 0=동방향)</param>
+        /// <param name="lateralDist">적까지 측면 거리(m), transform.right 기준 절댓값</param>
+        public float CalculateFlankStepReward(float headingDiff, float lateralDist)
+        {
+            float reward = 0f;
+
+            // 1. 헤딩 정렬: headingDiff=0(동방향)일수록 보상 최대
+            if (flankHeadingAlignCoeff > 0f)
+                reward += flankHeadingAlignCoeff * Mathf.Max(1f - Mathf.Abs(headingDiff), 0f);
+
+            // 2. 측면 근접: 적이 flankSideRayRange 이내에 있으면 거리에 반비례 보상
+            if (lateralDist >= 0f && lateralDist < flankSideRayRange)
+                reward += raycastInterceptReward * (1f - lateralDist / flankSideRayRange);
+
+            // 3. 시간 페널티 (기존과 동일)
+            reward += timePenalty;
 
             return reward;
         }

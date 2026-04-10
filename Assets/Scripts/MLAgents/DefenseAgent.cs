@@ -226,6 +226,8 @@ namespace BoatAttack
         private bool _episodeEnded = false;
         private bool _neutralized = false;
         private bool _straightMode = false;  // Stage9: 직진 이탈 모드
+        private bool _isFlankPhase = false;  // Stage10: 측면 추격 모드
+        private GameObject _flankTarget = null; // Stage10: 담당 적군
         private SingleNetCapture _singleNetCapture;  // Disarm 후 소형 포획 존
         private bool _deployMode = false;   // Convoy-Deploy: 그물 전개 모드
         private float _deploySteerOverride = -0.5f;
@@ -384,6 +386,22 @@ namespace BoatAttack
             _straightModeLogCount = 0;
         }
 
+        /// <summary>Stage10: 현재 Flank Phase 여부 (EnvController 체크용)</summary>
+        public bool IsFlankPhase => _isFlankPhase;
+
+        /// <summary>Stage10: 현재 담당 적군 (EnvController 체크용)</summary>
+        public GameObject FlankTarget => _flankTarget;
+
+        /// <summary>
+        /// Stage10: Flank Phase 활성화/비활성화.
+        /// EnvController의 TriggerFlankPhase()에서 호출.
+        /// </summary>
+        public void SetFlankPhase(bool active, GameObject target = null)
+        {
+            _isFlankPhase = active;
+            _flankTarget  = active ? target : null;
+        }
+
         /// <summary>Disarm 이후 소형 포획 존 활성화</summary>
         public void ActivateSingleNet()
         {
@@ -504,6 +522,8 @@ namespace BoatAttack
             _prevSteering = 0f;
             _throttleDelta = 0f;
             _steeringDelta = 0f;
+            _isFlankPhase = false;
+            _flankTarget  = null;
             DeactivateSingleNet();
         }
 
@@ -993,7 +1013,8 @@ namespace BoatAttack
             }
 
             // PD LOS 가이던스 — 배치 후 guidanceDuration초 동안 클러스터 방향으로 유도
-            if (_guidancePhase)
+            // CONVOY 모드에서는 스킵: convoy 조향이 직접 액션을 받아야 함 (heuristic 포함)
+            if (_guidancePhase && !_convoyMode)
             {
                 if (Time.time >= _guidanceEndTime)
                 {
@@ -1014,15 +1035,43 @@ namespace BoatAttack
 
                     // PD 조향
                     float dError  = (bearingError - _prevBearingError) / Mathf.Max(Time.fixedDeltaTime, 0.001f);
-                    float steering = Mathf.Clamp(guidanceKp * bearingError + guidanceKd * dError, -1f, 1f);
+                    float guidanceSteering = Mathf.Clamp(guidanceKp * bearingError + guidanceKd * dError, -1f, 1f);
                     _prevBearingError = bearingError;
 
                     _engine.Accelerate(maxThrottle);
-                    _engine.Turn(steering);
+                    _engine.Turn(guidanceSteering);
                     _prevThrottle = maxThrottle;
-                    _prevSteering = steering;
+                    _prevSteering = guidanceSteering;
                     return;
                 }
+            }
+
+            // Stage10: Flank Phase — RL이 조종하되, 보상 신호만 측면 추격 기준으로 변경
+            if (_isFlankPhase && _flankTarget != null && _flankTarget.activeInHierarchy)
+            {
+                // 담당 적과의 측면 거리 (transform.right 기준)
+                Vector3 toTarget = _flankTarget.transform.position - transform.position;
+                float lateralDist = Mathf.Abs(Vector3.Dot(toTarget, transform.right));
+
+                // 헤딩 차이 (동방향=0, 역방향=±1)
+                float hdgDiff = NormalizeHeadingDiff(transform.eulerAngles.y,
+                                                     _flankTarget.transform.eulerAngles.y);
+
+                // Flank 보상 계산 후 적용
+                if (envController?.rewardCalculator != null)
+                {
+                    float flankRew = envController.rewardCalculator
+                                        .CalculateFlankStepReward(hdgDiff, lateralDist);
+                    AddReward(flankRew);
+                }
+
+                // 투척 트리거: 측면 거리가 임계값 이하면 SingleNet 발사
+                float threshold = envController?.rewardCalculator != null
+                    ? envController.rewardCalculator.flankCaptureThreshold : 8f;
+                if (lateralDist < threshold && _singleNetCapture != null)
+                    _singleNetCapture.Activate(); // 이미 활성화 상태면 내부에서 무시됨
+
+                // RL 조종은 계속 실행 (return 없음 → 아래 throttle/steering 처리로 진행)
             }
 
             // Stage9: 직진 이탈 모드 — ML 정책 무시, 현재 헤딩으로 전속력 직진
