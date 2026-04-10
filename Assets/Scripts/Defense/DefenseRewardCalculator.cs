@@ -97,6 +97,9 @@ namespace BoatAttack
         [Tooltip("측면 감지 Ray 최대 거리 (m) — 이 이내에 적이 있으면 측면 근접 보상")]
         public float flankSideRayRange = 20f;
 
+        [Tooltip("담당 적 측면으로 접근 시 lateral 거리 감소 1m당 보상 계수 (직선 돌진 방지, 0=비활성)")]
+        public float flankApproachRewardCoeff = 0.001f;
+
         [Tooltip("SingleNet 투척 트리거 거리 (m) — 측면 거리가 이 이하이면 자동 투척")]
         public float flankCaptureThreshold = 8f;
 

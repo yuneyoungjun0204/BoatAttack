@@ -231,6 +231,7 @@ namespace BoatAttack
         private SingleNetCapture _singleNetCapture;  // Disarm 후 소형 포획 존
         private bool _deployMode = false;   // Convoy-Deploy: 그물 전개 모드
         private float _deploySteerOverride = -0.5f;
+        private float _flankAlignEndTime = -1f; // Stage10: 분리 후 방향 정렬 타이머
         private bool _convoyMode = false;   // FixedJoint 쌍동선: 차동 추력 모드
 
         // PD LOS 가이던스 (배치 후 일정 시간 동안 클러스터 방향으로 직진)
@@ -246,6 +247,7 @@ namespace BoatAttack
         private float _guidanceEndTime = 0f;
         private Vector3 _guidanceTarget = Vector3.zero;
         private float _prevBearingError = 0f;
+        private float _prevFlankLateralDist = -1f; // Stage10: 이전 스텝의 담당 적 측면 거리 (측면 접근 보상용)
 
         [Header("=== Convoy (FixedJoint) ===")]
         private float _prevThrottle = 0f;
@@ -489,8 +491,21 @@ namespace BoatAttack
 
         public void SetDeployMode(bool value, float steerOverride = -0.5f)
         {
+            if (value) _deploySteerOverride = steerOverride; // 비활성화 시엔 override 보존 (정렬 단계가 재사용)
             _deployMode = value;
-            _deploySteerOverride = steerOverride;
+            if (value) { _guidancePhase = false; _guidanceEndTime = 0f; }
+        }
+
+        /// <summary>
+        /// Stage10 EXIT: deploy 방향을 duration초간 유지 후 RL 전환 (적과 방향 정렬)
+        /// _deploySteerOverride는 이미 DEPLOY에서 설정된 값 재사용
+        /// </summary>
+        public void BeginFlankAlign(float duration)
+        {
+            _deployMode = false;
+            _flankAlignEndTime = Time.time + duration;
+            _guidancePhase = false;
+            _guidanceEndTime = 0f;
         }
 
         /// <summary>
@@ -524,6 +539,8 @@ namespace BoatAttack
             _steeringDelta = 0f;
             _isFlankPhase = false;
             _flankTarget  = null;
+            _flankAlignEndTime = -1f;
+            _prevFlankLateralDist = -1f;
             DeactivateSingleNet();
         }
 
@@ -544,6 +561,7 @@ namespace BoatAttack
             _episodeEnded = false;
             _deployMode = false;
             _convoyMode = false;
+            _flankAlignEndTime = -1f;
             assignedTargetIndex = -1; // Commander가 새로 배정
             // _neutralized는 여기서 리셋하지 않음
             // SetNeutralized(false)로만 해제 (DeployPairs/ResetScene에서 호출)
@@ -643,16 +661,25 @@ namespace BoatAttack
         {
             collectObsCallCount++;
 
-            const int VECTOR_OBS_COUNT = 0;
+            const int VECTOR_OBS_COUNT = 1; // phaseFlag 1개
             if (lastObservations == null)
                 lastObservations = new float[1];
             int oi = 0;
 
             if (_engine == null || _engine.RB == null)
             {
+                sensor.AddObservation(0f); // phaseFlag
                 lastObservationsCount = 0;
                 return;
             }
+
+            // phaseFlag: 0 = CONVOY/일반, 1 = Flank Phase (정지 트랩 투하 완료)
+            float phaseFlag = _isFlankPhase ? 1f : 0f;
+            sensor.AddObservation(phaseFlag);
+            if (lastObservations == null || lastObservations.Length < 1)
+                lastObservations = new float[1];
+            lastObservations[0] = phaseFlag;
+            oi = 1;
 
             // Web 중심 기준: 자기 쌍의 agent1+agent2 중점을 관측 원점으로 사용
             Vector3 partnerPos = (partnerAgent != null) ? partnerAgent.transform.position : transform.position;
@@ -665,44 +692,57 @@ namespace BoatAttack
             // 4. AllyBufferSensor: 가까운 아군 쌍 최대 3개
             CollectAllyPairBufferObs(webCenter, webForward);
 
-            // 5. EnemyBufferSensor: 모든 활성 적군 (3개/적: Dist, SignedBrg, Hdg) — 거리순 정렬
+            // 5. EnemyBufferSensor
+            // Flank Phase: 배정된 적 1개만 / 일반: 모든 활성 적 거리순
             lastEnemyBufferObs.Clear();
-            if (enemyBufferSensor != null && enemyShips != null)
+            if (enemyBufferSensor != null)
             {
-                // 활성 적군을 거리순 정렬 (Web 중심 기준)
+                float eDistS = (envController != null) ? envController.enemyDistScale    : enemyDistScale;
+                float eBrgS  = (envController != null) ? envController.enemyBearingScale : enemyBearingScale;
+                float eHdgS  = (envController != null) ? envController.enemyHeadingScale : enemyHeadingScale;
+
+                // Flank Phase — 배정된 _flankTarget 1개만 관측
+                if (_isFlankPhase && _flankTarget != null && _flankTarget.activeInHierarchy
+                    && (envController == null || !envController.IsEnemyNeutralized(_flankTarget)))
+                {
+                    _heuristicNearestEnemy = _flankTarget;
+                    Vector3 rel  = _flankTarget.transform.position - transform.position;
+                    float dist   = rel.magnitude;
+                    float d   = NormalizePosition(dist, enemyNormK) * eDistS;
+                    float brg = ComputeSignedBearing(transform.forward, rel) * eBrgS;
+                    float hdg = NormalizeHeadingDiff(transform.eulerAngles.y,
+                                    _flankTarget.transform.eulerAngles.y) * eHdgS;
+                    enemyBufferSensor.AppendObservation(new float[] { d, brg, hdg });
+                    lastEnemyBufferObs.Add(d); lastEnemyBufferObs.Add(brg); lastEnemyBufferObs.Add(hdg);
+                }
+                else if (enemyShips != null)
+                {
+                // 일반 Phase — 활성 적군 전체 거리순 정렬
                 var enemyByDist = new List<(int idx, float dist)>();
                 for (int i = 0; i < enemyShips.Length; i++)
                 {
                     if (enemyShips[i] == null || !enemyShips[i].activeInHierarchy) continue;
-                    // 무력화된 적 제외 (트랩/포획됨)
                     if (envController != null && envController.IsEnemyNeutralized(enemyShips[i])) continue;
                     float d = Vector3.Distance(webCenter, enemyShips[i].transform.position);
                     enemyByDist.Add((i, d));
                 }
                 enemyByDist.Sort((a, b) => a.dist.CompareTo(b.dist));
-
-                // Heuristic() LOS 캐시 갱신 (가장 가까운 적군)
                 _heuristicNearestEnemy = enemyByDist.Count > 0 ? enemyShips[enemyByDist[0].idx] : null;
 
-                // 모든 활성 적군을 Buffer에 추가 (MaxNumObservables까지)
                 int count = Mathf.Min(enemyByDist.Count, enemyBufferSensor.MaxNumObservables);
                 for (int ei = 0; ei < count; ei++)
                 {
                     var enemy = enemyShips[enemyByDist[ei].idx];
                     Vector3 rel = enemy.transform.position - webCenter;
                     float dist = rel.magnitude;
-
-                    float eDistS = (envController != null) ? envController.enemyDistScale    : enemyDistScale;
-                    float eBrgS  = (envController != null) ? envController.enemyBearingScale : enemyBearingScale;
-                    float eHdgS  = (envController != null) ? envController.enemyHeadingScale : enemyHeadingScale;
                     float d   = NormalizePosition(dist, enemyNormK) * eDistS;
                     float brg = ComputeSignedBearing(webForward, rel) * eBrgS;
-                    // hdg: Web 헤딩과 적 헤딩의 차이 (±180°대치→0, 동방향→±1)
                     float hdg = NormalizeHeadingDiff(webAngle, enemy.transform.eulerAngles.y) * eHdgS;
                     enemyBufferSensor.AppendObservation(new float[] { d, brg, hdg });
                     lastEnemyBufferObs.Add(d); lastEnemyBufferObs.Add(brg); lastEnemyBufferObs.Add(hdg);
                 }
-            }
+                } // else if (enemyShips != null)
+            } // if (enemyBufferSensor != null)
 
             // 전체 관측을 lastObservations에 병합 (VectorSensor + EnemyBuffer + AllyBuffer)
             int totalObs = oi + lastEnemyBufferObs.Count + lastAllyBufferObs.Count;
@@ -1013,8 +1053,8 @@ namespace BoatAttack
             }
 
             // PD LOS 가이던스 — 배치 후 guidanceDuration초 동안 클러스터 방향으로 유도
-            // CONVOY 모드에서는 스킵: convoy 조향이 직접 액션을 받아야 함 (heuristic 포함)
-            if (_guidancePhase && !_convoyMode)
+            // CONVOY 모드 포함: 정렬 먼저 → 이후 RL(차동 추력) 전환
+            if (_guidancePhase)
             {
                 if (Time.time >= _guidanceEndTime)
                 {
@@ -1040,6 +1080,14 @@ namespace BoatAttack
 
                     _engine.Accelerate(maxThrottle);
                     _engine.Turn(guidanceSteering);
+
+                    // CONVOY 모드: Agent2(Neutralized)도 동일하게 구동 (FixedJoint이므로 방향은 같음)
+                    if (_convoyMode && partnerAgent != null)
+                    {
+                        partnerAgent._engine.Accelerate(maxThrottle);
+                        partnerAgent._engine.Turn(guidanceSteering);
+                    }
+
                     _prevThrottle = maxThrottle;
                     _prevSteering = guidanceSteering;
                     return;
@@ -1049,29 +1097,39 @@ namespace BoatAttack
             // Stage10: Flank Phase — RL이 조종하되, 보상 신호만 측면 추격 기준으로 변경
             if (_isFlankPhase && _flankTarget != null && _flankTarget.activeInHierarchy)
             {
-                // 담당 적과의 측면 거리 (transform.right 기준)
                 Vector3 toTarget = _flankTarget.transform.position - transform.position;
+
+                // 측면 거리 (transform.right 기준)
                 float lateralDist = Mathf.Abs(Vector3.Dot(toTarget, transform.right));
+
+                // 직선 거리 (접근 보상용)
+                float dist = toTarget.magnitude;
 
                 // 헤딩 차이 (동방향=0, 역방향=±1)
                 float hdgDiff = NormalizeHeadingDiff(transform.eulerAngles.y,
                                                      _flankTarget.transform.eulerAngles.y);
 
-                // Flank 보상 계산 후 적용
                 if (envController?.rewardCalculator != null)
                 {
-                    float flankRew = envController.rewardCalculator
-                                        .CalculateFlankStepReward(hdgDiff, lateralDist);
-                    AddReward(flankRew);
-                }
+                    var rc = envController.rewardCalculator;
 
-                // 투척 트리거: 측면 거리가 임계값 이하면 SingleNet 발사
-                float threshold = envController?.rewardCalculator != null
-                    ? envController.rewardCalculator.flankCaptureThreshold : 8f;
-                if (lateralDist < threshold && _singleNetCapture != null)
-                    _singleNetCapture.Activate(); // 이미 활성화 상태면 내부에서 무시됨
+                    // 1. 헤딩 정렬 + 측면 근접 보상
+                    AddReward(rc.CalculateFlankStepReward(hdgDiff, lateralDist));
+
+                    // 2. 측면 접근 보상: 적의 옆으로 파고들수록 + (직선 돌진이 아닌 측면 진입 유도)
+                    if (_prevFlankLateralDist >= 0f && rc.flankApproachRewardCoeff > 0f)
+                    {
+                        float lateralDelta = _prevFlankLateralDist - lateralDist; // 양수 = 측면으로 접근
+                        AddReward(lateralDelta * rc.flankApproachRewardCoeff);
+                    }
+                }
+                _prevFlankLateralDist = lateralDist;
 
                 // RL 조종은 계속 실행 (return 없음 → 아래 throttle/steering 처리로 진행)
+            }
+            else
+            {
+                _prevFlankLateralDist = -1f; // 타겟 없을 때 리셋
             }
 
             // Stage9: 직진 이탈 모드 — ML 정책 무시, 현재 헤딩으로 전속력 직진
@@ -1086,6 +1144,16 @@ namespace BoatAttack
 
             // Convoy-Deploy: 그물 전개 모드 — ML 정책 무시, 지정 방향으로 전속력 분리
             if (_deployMode)
+            {
+                _engine.Accelerate(maxThrottle);
+                _engine.Turn(_deploySteerOverride);
+                _prevThrottle = maxThrottle;
+                _prevSteering = _deploySteerOverride;
+                return;
+            }
+
+            // Stage10 플랭크 정렬 단계 — EXIT 직후 3초간 deploy 방향 유지 (적과 방향 정렬)
+            if (_flankAlignEndTime > 0f && Time.time < _flankAlignEndTime)
             {
                 _engine.Accelerate(maxThrottle);
                 _engine.Turn(_deploySteerOverride);

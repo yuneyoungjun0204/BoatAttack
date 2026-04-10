@@ -142,6 +142,9 @@ namespace BoatAttack
         [Range(0f, 3f)]
         public float deploySteerStrength = 3f;
 
+        [Tooltip("Stage10: 그물 전개 후 방향 정렬 주행 시간 (초). 이 시간 동안 분리 방향 유지 후 RL 전환")]
+        public float flankAlignDuration = 0.5f;
+
         [Tooltip("포획 후 그물+선박 유지 (다중 포획 허용, false=기존 방식: 포획 후 비활성화)")]
         public bool keepWebAfterCapture = true;
 
@@ -1111,8 +1114,9 @@ namespace BoatAttack
                         bool shouldDisable = false;
                         string disableReason = null;
 
-                        // 좌/우 교차 체크: 유예 후 고정 기준에서 agent1의 좌/우가 뒤바뀌었는지
-                        if (!shouldDisable && pair.prevLateralDir.sqrMagnitude > 0.5f)
+                        // 좌/우 교차 체크: Convoy-Deploy 시스템 사용 중이면 스킵
+                        // (DEPLOY 후 선박이 의도적으로 좌/우로 분리되므로 교차가 정상)
+                        if (!shouldDisable && !enableConvoyDeploy && pair.prevLateralDir.sqrMagnitude > 0.5f)
                         {
                             Vector3 center = (p1 + p2) * 0.5f;
                             float dot1 = Vector3.Dot(p1 - center, pair.prevLateralDir);
@@ -2648,6 +2652,8 @@ namespace BoatAttack
                 DefensePair pair = launchZoneManager.GetPair(i);
                 if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                 if (pair.agent1 == null) continue;
+                if (pair.isConvoyLinked) continue; // Convoy 이동 중 — 아직 차단 위치 미도달
+                if (pair.isDeploying) continue;    // Deploy 전개 중 — 분리 직후 오판 방지
 
                 Vector3 pairCenter = pair.agent2 != null
                     ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f
@@ -2975,9 +2981,6 @@ namespace BoatAttack
 
                 if (widthReached || deployTimeout)
                 {
-                    // Deploy 모드 해제
-                    if (pair.agent1 != null) pair.agent1.SetDeployMode(false);
-                    if (pair.agent2 != null) pair.agent2.SetDeployMode(false);
                     pair.isDeploying = false;
 
                     Debug.Log($"[ConvoyDeploy] Pair {pi} EXIT: webWidth={webWidth:F1}m, " +
@@ -2985,8 +2988,11 @@ namespace BoatAttack
 
                     if (currentStage == TrainingStage.Stage10_FlankCapture)
                     {
-                        // Stage10: 선박을 중립화하지 않고 개별 기동 전환
-                        // 그물은 현재 위치에 고정 (선박은 독립 기동으로 SingleNet 포획)
+                        // Stage10: 3초 정렬 주행 후 독립 기동 전환
+                        // (SetDeployMode(false) 대신 BeginFlankAlign → 3초간 같은 방향 유지)
+                        if (pair.agent1 != null) pair.agent1.BeginFlankAlign(flankAlignDuration);
+                        if (pair.agent2 != null) pair.agent2.BeginFlankAlign(flankAlignDuration);
+
                         pair.isDisarmed = true; // ProcessDeployTrigger 재진입 방지
 
                         // 그물 현재 위치에 고정
@@ -3001,15 +3007,17 @@ namespace BoatAttack
                     }
                     else
                     {
-                        // 기존: EXIT → 속도 제거 + Neutralized (정지 그물)
+                        // 기존: EXIT → Deploy 해제 + 속도 제거 + Neutralized (정지 그물)
                         if (pair.agent1 != null)
                         {
+                            pair.agent1.SetDeployMode(false);
                             Rigidbody rb1 = pair.agent1.GetComponent<Rigidbody>();
                             if (rb1 != null) { rb1.velocity = Vector3.zero; rb1.angularVelocity = Vector3.zero; }
                             pair.agent1.SetNeutralized(true);
                         }
                         if (pair.agent2 != null)
                         {
+                            pair.agent2.SetDeployMode(false);
                             Rigidbody rb2 = pair.agent2.GetComponent<Rigidbody>();
                             if (rb2 != null) { rb2.velocity = Vector3.zero; rb2.angularVelocity = Vector3.zero; }
                             pair.agent2.SetNeutralized(true);
@@ -3045,37 +3053,41 @@ namespace BoatAttack
                 return;
             }
 
-            // 활성 USV(에이전트)를 수집해서 생존 적군과 1:1 배정
-            int assignIdx = 0;
+            // 활성 USV를 수집
+            var flankCandidates = new System.Collections.Generic.List<DefenseAgent>();
             int poolCap = launchZoneManager.GetPoolCapacity();
-            for (int pi = 0; pi < poolCap && assignIdx < survivors.Count; pi++)
+            for (int pi = 0; pi < poolCap; pi++)
             {
                 var pair = launchZoneManager.GetPair(pi);
                 if (pair == null || !pair.isActive) continue;
-
-                // Neutralized(정지 트랩 전개 완료) 상태의 USV는 Flank 불가 → 건너뜀
-                bool a1Neutral = pair.agent1 != null && pair.agent1.IsNeutralized;
-                bool a2Neutral = pair.agent2 != null && pair.agent2.IsNeutralized;
-                if (a1Neutral && a2Neutral) continue;
-
-                // 비중립 에이전트에게 SingleNet 활성화 + FlankPhase 시작
-                if (pair.agent1 != null && !pair.agent1.IsNeutralized && assignIdx < survivors.Count)
-                {
-                    pair.agent1.ActivateSingleNet();
-                    pair.agent1.SetFlankPhase(true, survivors[assignIdx]);
-                    _flankAgents.Add(pair.agent1);
-                    assignIdx++;
-                }
-                if (pair.agent2 != null && !pair.agent2.IsNeutralized && assignIdx < survivors.Count)
-                {
-                    pair.agent2.ActivateSingleNet();
-                    pair.agent2.SetFlankPhase(true, survivors[assignIdx]);
-                    _flankAgents.Add(pair.agent2);
-                    assignIdx++;
-                }
+                if (pair.agent1 != null && !pair.agent1.IsNeutralized) flankCandidates.Add(pair.agent1);
+                if (pair.agent2 != null && !pair.agent2.IsNeutralized) flankCandidates.Add(pair.agent2);
             }
 
-            Debug.Log($"[Stage10] FlankPhase 시작: 생존적={survivors.Count}대, 배정됨={assignIdx}대, flankAgents={_flankAgents.Count}");
+            // 각 USV에게 자신과 가장 가까운 생존 적 1:1 배정 (위치 기반 greedy)
+            var remainingSurvivors = new System.Collections.Generic.List<GameObject>(survivors);
+            foreach (var agent in flankCandidates)
+            {
+                if (remainingSurvivors.Count == 0) break;
+
+                // 이 선박에서 가장 가까운 생존 적 탐색
+                float minDist = float.MaxValue;
+                int minIdx = 0;
+                for (int i = 0; i < remainingSurvivors.Count; i++)
+                {
+                    float d = Vector3.Distance(agent.transform.position, remainingSurvivors[i].transform.position);
+                    if (d < minDist) { minDist = d; minIdx = i; }
+                }
+
+                GameObject target = remainingSurvivors[minIdx];
+                remainingSurvivors.RemoveAt(minIdx);
+
+                agent.ActivateSingleNet();
+                agent.SetFlankPhase(true, target);
+                _flankAgents.Add(agent);
+            }
+
+            Debug.Log($"[Stage10] FlankPhase 시작: 생존적={survivors.Count}대, 배정됨={_flankAgents.Count}대");
 
             // 카메라를 첫 번째 flank 에이전트로 전환
             if (_flankAgents.Count > 0)
@@ -3109,7 +3121,33 @@ namespace BoatAttack
             if (agent == null || !agent.IsFlankPhase) return;
             var target = agent.FlankTarget;
             if (target == null || !target.activeInHierarchy || IsEnemyNeutralized(target))
-                agent.SetFlankPhase(false);
+            {
+                // 배정 적 무력화 → 생존 적 중 가장 가까운 적으로 재배정
+                GameObject newTarget = FindNearestActiveEnemyTo(agent.transform.position);
+                if (newTarget != null)
+                {
+                    agent.SetFlankPhase(true, newTarget);
+                    Debug.Log($"[Stage10] {agent.name} 플랭크 타겟 재배정: {newTarget.name}");
+                }
+                else
+                {
+                    agent.SetFlankPhase(false); // 생존 적 없음
+                }
+            }
+        }
+
+        private GameObject FindNearestActiveEnemyTo(Vector3 pos)
+        {
+            if (_enemyPool == null) return null;
+            GameObject nearest = null;
+            float minDist = float.MaxValue;
+            foreach (var e in _enemyPool)
+            {
+                if (e == null || !e.activeInHierarchy || IsEnemyNeutralized(e)) continue;
+                float d = Vector3.Distance(pos, e.transform.position);
+                if (d < minDist) { minDist = d; nearest = e; }
+            }
+            return nearest;
         }
 
         /// <summary>
@@ -3146,6 +3184,9 @@ namespace BoatAttack
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
                 if (pair == null || !pair.isDisarmed) continue;
+
+                // Stage10: isDisarmed = 플랭크 포획 모드 진입 의미 → 타임아웃 비활성화 없음
+                if (currentStage == TrainingStage.Stage10_FlankCapture) continue;
 
                 int elapsed = _resetTimer - pair.disarmStep;
 
@@ -3249,6 +3290,14 @@ namespace BoatAttack
                     && checkPair.agent2 != null && checkPair.agent2.IsNeutralized)
                 {
                     return; // 회수 차단
+                }
+
+                // Stage10 플랭크 쌍 보호: isDisarmed=true는 플랭크 포획 모드 진입 의미
+                // (Neutralized가 아니어도 비활성화 불가)
+                if (checkPair != null && checkPair.isDisarmed
+                    && currentStage == TrainingStage.Stage10_FlankCapture)
+                {
+                    return; // 플랭크 선박 회수 차단
                 }
             }
 
@@ -3569,6 +3618,9 @@ namespace BoatAttack
                     // 해당 쌍에만 페널티
                     if (pair?.agent1 != null) pair.agent1.AddReward(penalty);
                     if (pair?.agent2 != null) pair.agent2.AddReward(penalty);
+
+                    // isDisarmed(플랭크/EXIT 쌍)는 충돌 페널티만, 비활성화 없음
+                    if (pair != null && pair.isDisarmed) return;
 
                     DisableOrDisarmPair(pairIdx);
                     NotifyCameraPairDisabled(pair);

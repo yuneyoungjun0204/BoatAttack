@@ -674,7 +674,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 0
+    VectorObservationSize: 1
     NumStackedVectorObservations: 1
     m_ActionSpec:
       m_NumContinuousActions: 2
@@ -770,7 +770,6 @@ MonoBehaviour:
   enableDemoRecording: 0
   demoDirectory: Assets/Demos
   demoName: LOS_Defense
-  showRaycasts: 0
   enableDebugLog: 0
   showMatchingLine: 0
   lastObservations: []
@@ -778,9 +777,9 @@ MonoBehaviour:
   collectObsCallCount: 0
   lastEnemyBufferObs: []
   lastAllyBufferObs: []
-  _totalReward: 0
-  _lastStepReward: 0
-  differentialSensitivity: 1
+  guidanceDuration: 15
+  guidanceKp: 1.5
+  guidanceKd: 0.3
 --- !u!114 &7411346295538081491
 MonoBehaviour:
   m_ObjectHideFlags: 0

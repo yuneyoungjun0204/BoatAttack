@@ -132,7 +132,7 @@ namespace BoatAttack
 
         [Header("Enemy Clustering")]
         [Tooltip("적군 방향 클러스터링 빈 폭 (°). 이 범위 내 적군을 동일 클러스터로 묶음. 60° 권장.")]
-        [Range(20f, 120f)]
+        [Range(10f, 120f)]
         public float clusterBinWidthDeg = 60f;
 
         [Header("Template")]
