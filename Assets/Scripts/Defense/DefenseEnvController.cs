@@ -1556,6 +1556,23 @@ namespace BoatAttack
                             if (agent.partnerAgent != null)
                                 agent.partnerAgent.AddReward(reward);
                             totalStepReward += reward;
+
+                            // 근접 포획 보상: 적이 Web hit 지점 근처에 있을 때 강화 신호
+                            // Ray는 차단됐지만 물리 충돌 전 → 포획 직전 위치 유지 강화
+                            if (rewardCalculator.nearCaptureReward > 0f
+                                && rewardCalculator.nearCaptureDistance > 0f)
+                            {
+                                float distEnemyToHit = Vector3.Distance(enemyPos, hit.point);
+                                if (distEnemyToHit < rewardCalculator.nearCaptureDistance)
+                                {
+                                    float proxScore = 1f - distEnemyToHit / rewardCalculator.nearCaptureDistance;
+                                    float nearBonus = rewardCalculator.nearCaptureReward * proxScore * enemyNorm;
+                                    agent.AddReward(nearBonus);
+                                    if (agent.partnerAgent != null)
+                                        agent.partnerAgent.AddReward(nearBonus);
+                                    totalStepReward += nearBonus;
+                                }
+                            }
                         }
 
                         // 타임아웃 타이머 갱신: hit한 Web의 pair를 찾아서 lastRaycastHitStep 갱신
@@ -2287,13 +2304,6 @@ namespace BoatAttack
             if (_episodeEnding || allyShip == null) return;
             if (_resetTimer <= 10) return;
 
-            // 쿨다운: OnTriggerStay로 매 프레임 호출되므로 중복 방지
-            float now = Time.time;
-            if (_allyWebCollisionTimes.TryGetValue(allyShip, out float lastTime)
-                && now - lastTime < _allyWebCollisionCooldown)
-                return;
-            _allyWebCollisionTimes[allyShip] = now;
-
             if (launchZoneManager == null || rewardCalculator == null) return;
 
             // 충돌 당한 쌍 (allyShip이 속한 쌍)
@@ -2301,17 +2311,44 @@ namespace BoatAttack
             if (hitPairIdx < 0) return;
 
             DefensePair hitPair = launchZoneManager.GetPair(hitPairIdx);
-            if (hitPair == null) return;
+            if (hitPair == null || !hitPair.isActive) return;
 
-            // 배치 직후 유예 (50스텝) + Disarmed(이탈 중) 쌍은 무시
-            if (hitPair.deployStep >= 0 && (_resetTimer - hitPair.deployStep) < 50) return;
-            if (hitPair.isDisarmed) return;
+            // 정지 트랩 여부를 먼저 판별 — 이후 모든 가드의 예외 기준
+            bool isFrozenTrap = currentStage == TrainingStage.Stage10_FlankCapture
+                && collidedWeb != null && collidedWeb.IsFrozen;
+
+            // 쿨다운: 정지 트랩은 1회만 처리하면 되므로 쿨다운 적용
+            float now = Time.time;
+            if (_allyWebCollisionTimes.TryGetValue(allyShip, out float lastTime)
+                && now - lastTime < _allyWebCollisionCooldown)
+                return;
+            _allyWebCollisionTimes[allyShip] = now;
+
+            // 배치 직후 유예 (50스텝) — 정지 트랩은 예외
+            if (!isFrozenTrap && hitPair.deployStep >= 0 && (_resetTimer - hitPair.deployStep) < 50) return;
+
+            // Disarmed(이탈/플랭크 중) 쌍은 일반 Web 충돌만 무시 — 정지 트랩은 예외
+            if (!isFrozenTrap && hitPair.isDisarmed) return;
+
+            float penalty = isFrozenTrap
+                ? (rewardCalculator != null ? rewardCalculator.allyHitTrapPenalty : -0.5f)
+                : (rewardCalculator != null ? rewardCalculator.collisionPenalty   : -0.5f);
 
             // 충돌 당한 쌍 벌점
-            if (hitPair.agent1 != null) hitPair.agent1.AddReward(rewardCalculator.collisionPenalty);
-            if (hitPair.agent2 != null) hitPair.agent2.AddReward(rewardCalculator.collisionPenalty);
+            if (hitPair.agent1 != null) hitPair.agent1.AddReward(penalty);
+            if (hitPair.agent2 != null) hitPair.agent2.AddReward(penalty);
 
-            // Web을 가진 쌍(가해 쌍)에도 벌점
+            if (isFrozenTrap)
+            {
+                // 정지 트랩 충돌 → 강제 비활성화 (플랭크 쌍 보호 우회)
+                DisableOrDisarmPair(hitPairIdx, forceDisable: true);
+                NotifyCameraPairDisabled(hitPair);
+                Debug.LogWarning($"[DefenseEnv] AllyHitFrozenTrap → Pair {hitPairIdx} 강제 비활성화 (penalty={penalty}), step={_resetTimer}");
+                CheckEpisodeEndCondition();
+                return;
+            }
+
+            // 일반 Web 충돌: Web을 가진 쌍(가해 쌍)에도 벌점
             if (collidedWeb != null && collidedWeb.defenseShip1 != null)
             {
                 DefenseAgent webOwner = collidedWeb.defenseShip1.GetComponent<DefenseAgent>();
@@ -3036,58 +3073,80 @@ namespace BoatAttack
             _isFlankPhase = true;
             _flankAgents.Clear();
 
-            // 생존(무력화되지 않은) 적군 목록 수집
-            var survivors = new System.Collections.Generic.List<GameObject>();
-            if (_enemyPool != null)
-            {
-                foreach (var e in _enemyPool)
-                {
-                    if (e != null && e.activeInHierarchy && !IsEnemyNeutralized(e))
-                        survivors.Add(e);
-                }
-            }
+            if (launchZoneManager == null) return;
 
-            if (survivors.Count == 0 || launchZoneManager == null)
-            {
-                Debug.Log("[Stage10] TriggerFlankPhase: 생존 적 없음 또는 LZM 없음");
-                return;
-            }
-
-            // 활성 USV를 수집
-            var flankCandidates = new System.Collections.Generic.List<DefenseAgent>();
             int poolCap = launchZoneManager.GetPoolCapacity();
+
+            // ── 1단계: 쌍별로 클러스터 내 후보 배정 생성 (agent, enemy, dist) ──
+            var candidates = new System.Collections.Generic.List<(DefenseAgent agent, GameObject enemy, float dist)>();
+
             for (int pi = 0; pi < poolCap; pi++)
             {
                 var pair = launchZoneManager.GetPair(pi);
                 if (pair == null || !pair.isActive) continue;
-                if (pair.agent1 != null && !pair.agent1.IsNeutralized) flankCandidates.Add(pair.agent1);
-                if (pair.agent2 != null && !pair.agent2.IsNeutralized) flankCandidates.Add(pair.agent2);
+
+                var pairAgents = new System.Collections.Generic.List<DefenseAgent>();
+                if (pair.agent1 != null && !pair.agent1.IsNeutralized) pairAgents.Add(pair.agent1);
+                if (pair.agent2 != null && !pair.agent2.IsNeutralized) pairAgents.Add(pair.agent2);
+                if (pairAgents.Count == 0) continue;
+
+                // 클러스터 내 생존 적군만 수집
+                var clusterSurvivors = new System.Collections.Generic.List<GameObject>();
+                if (pair.clusterEnemyIndices != null && _enemyPool != null)
+                {
+                    foreach (int ei in pair.clusterEnemyIndices)
+                    {
+                        if (ei < 0 || ei >= _enemyPool.Length) continue;
+                        var e = _enemyPool[ei];
+                        if (e != null && e.activeInHierarchy && !IsEnemyNeutralized(e))
+                            clusterSurvivors.Add(e);
+                    }
+                }
+                if (clusterSurvivors.Count == 0) continue;
+
+                // lateral 축으로 에이전트·적 정렬
+                Vector3 lateralAxis = Vector3.right;
+                if (motherShip != null)
+                {
+                    Vector3 approachDir = motherShip.transform.position - clusterSurvivors[0].transform.position;
+                    approachDir.y = 0f;
+                    if (approachDir.sqrMagnitude > 0.01f)
+                        lateralAxis = Vector3.Cross(approachDir.normalized, Vector3.up).normalized;
+                }
+                pairAgents.Sort((a, b) =>
+                    Vector3.Dot(a.transform.position, lateralAxis)
+                        .CompareTo(Vector3.Dot(b.transform.position, lateralAxis)));
+                clusterSurvivors.Sort((a, b) =>
+                    Vector3.Dot(a.transform.position, lateralAxis)
+                        .CompareTo(Vector3.Dot(b.transform.position, lateralAxis)));
+
+                for (int i = 0; i < pairAgents.Count && i < clusterSurvivors.Count; i++)
+                {
+                    float dist = Vector3.Distance(pairAgents[i].transform.position,
+                                                  clusterSurvivors[i].transform.position);
+                    candidates.Add((pairAgents[i], clusterSurvivors[i], dist));
+                }
             }
 
-            // 각 USV에게 자신과 가장 가까운 생존 적 1:1 배정 (위치 기반 greedy)
-            var remainingSurvivors = new System.Collections.Generic.List<GameObject>(survivors);
-            foreach (var agent in flankCandidates)
+            // ── 2단계: 거리 오름차순 정렬 후 greedy 확정 (중복 적군은 가까운 쪽만) ──
+            candidates.Sort((a, b) => a.dist.CompareTo(b.dist));
+
+            var assignedAgents  = new System.Collections.Generic.HashSet<DefenseAgent>();
+            var assignedEnemies = new System.Collections.Generic.HashSet<GameObject>();
+
+            foreach (var (agent, enemy, dist) in candidates)
             {
-                if (remainingSurvivors.Count == 0) break;
-
-                // 이 선박에서 가장 가까운 생존 적 탐색
-                float minDist = float.MaxValue;
-                int minIdx = 0;
-                for (int i = 0; i < remainingSurvivors.Count; i++)
-                {
-                    float d = Vector3.Distance(agent.transform.position, remainingSurvivors[i].transform.position);
-                    if (d < minDist) { minDist = d; minIdx = i; }
-                }
-
-                GameObject target = remainingSurvivors[minIdx];
-                remainingSurvivors.RemoveAt(minIdx);
+                if (assignedAgents.Contains(agent) || assignedEnemies.Contains(enemy)) continue;
 
                 agent.ActivateSingleNet();
-                agent.SetFlankPhase(true, target);
+                agent.SetFlankPhase(true, enemy);
                 _flankAgents.Add(agent);
+                assignedAgents.Add(agent);
+                assignedEnemies.Add(enemy);
+                Debug.Log($"[Stage10] {agent.name} → {enemy.name} (dist={dist:F0}m)");
             }
 
-            Debug.Log($"[Stage10] FlankPhase 시작: 생존적={survivors.Count}대, 배정됨={_flankAgents.Count}대");
+            Debug.Log($"[Stage10] FlankPhase 시작: 배정됨={_flankAgents.Count}대");
 
             // 카메라를 첫 번째 flank 에이전트로 전환
             if (_flankAgents.Count > 0)
@@ -3263,15 +3322,16 @@ namespace BoatAttack
             // 이미 비활성화/Disarm 처리된 쌍은 무시
             if (pair.isDisarmed) return;
 
-            // 페널티 (아군 Web 충돌과 동일)
-            if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.collisionPenalty);
-            if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.collisionPenalty);
+            // 트랩 충돌 전용 페널티 (Inspector: allyHitTrapPenalty, 기본 -0.5)
+            float trapPenalty = rewardCalculator != null ? rewardCalculator.allyHitTrapPenalty : -0.5f;
+            if (pair.agent1 != null) pair.agent1.AddReward(trapPenalty);
+            if (pair.agent2 != null) pair.agent2.AddReward(trapPenalty);
 
             // 비활성화 (Stage9이면 직진 이탈)
             DisableOrDisarmPair(pairIdx);
             NotifyCameraPairDisabled(pair);
 
-            Debug.LogWarning($"[DefenseEnv] AllyHitTrap → Pair {pairIdx} 트랩 그물 충돌 무력화, step={_resetTimer}");
+            Debug.LogWarning($"[DefenseEnv] AllyHitTrap → Pair {pairIdx} 트랩 충돌 무력화 (penalty={trapPenalty}), step={_resetTimer}");
 
             CheckEpisodeEndCondition();
         }
@@ -3279,10 +3339,10 @@ namespace BoatAttack
         /// <summary>
         /// 쌍 비활성화 (정지). Stage9에서는 추가로 트랩 그물 생성.
         /// </summary>
-        private void DisableOrDisarmPair(int pairIdx)
+        private void DisableOrDisarmPair(int pairIdx, bool forceDisable = false)
         {
             // Neutralized 쌍 보호: 전개 완료 후 그물 유지 중인 쌍은 절대 회수 불가
-            if (enableConvoyDeploy)
+            if (enableConvoyDeploy && !forceDisable)
             {
                 var checkPair = launchZoneManager.GetPair(pairIdx);
                 if (checkPair != null
@@ -3631,7 +3691,7 @@ namespace BoatAttack
                 }
             }
 
-            // LaunchZoneManager 없거나 쌍 못찾으면 레거시: 전체 페널티
+            // LaunchZoneManager 없거나 쌍 못찾으면 레거시: 전체 페널티 (에피소드 유지)
             if (m_AgentGroup != null)
                 m_AgentGroup.AddGroupReward(penalty);
             else
@@ -3639,7 +3699,7 @@ namespace BoatAttack
                 if (defenseAgent1 != null) defenseAgent1.AddReward(penalty);
                 if (defenseAgent2 != null) defenseAgent2.AddReward(penalty);
             }
-            RestartEpisode("FriendlyCollision", penalty);
+            Debug.LogWarning($"[DefenseEnv] FriendlyCollision (레거시) → 페널티만 부여, 에피소드 유지, step={_resetTimer}");
         }
         
         #region DefenseBoatManager 통합 기능

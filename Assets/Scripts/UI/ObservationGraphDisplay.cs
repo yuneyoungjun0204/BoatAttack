@@ -60,15 +60,20 @@ namespace BoatAttack
         private int _lastCallCount = -1; // collectObsCallCount 변화 추적
         private int _staleFrames = 0;    // 관측 갱신 없이 경과한 프레임 수
 
-        // VectorSensor 0개 (BufferSensor만 사용)
-        private static readonly string[] Labels = { };
+        // VectorSensor 3개: phaseFlag, 모선 거리, 모선 베어링
+        private static readonly string[] Labels = { "Phase", "MthDst", "MthBrg" };
 
-        // EnemyBuffer: 3개씩 (Dist, SignedBrg, Hdg)
+        // EnemyBuffer: 3개씩 (Dist, Brg, Hdg)
         private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "Hdg" };
         // AllyBuffer: 3개씩 (Dist, Brg, Hdg)
         private static readonly string[] AllyObsSuffix = { "Dist", "Brg", "Hdg" };
 
-        private static readonly Color[] GraphColors = { };
+        private static readonly Color[] GraphColors =
+        {
+            new Color(0.9f, 0.9f, 0.4f, 1f),  // Phase - 노랑
+            new Color(0.4f, 0.9f, 0.9f, 1f),  // MthDst - 청록
+            new Color(0.9f, 0.5f, 0.9f, 1f),  // MthBrg - 보라
+        };
 
         // P키 포커스 모드: -1=전체, 0~N=해당 인덱스만 확대
         private int _focusIndex = -1;

@@ -724,7 +724,7 @@ MonoBehaviour:
   envController: {fileID: 0}
   enemyBufferSensor: {fileID: 0}
   allyBufferSensor: {fileID: 0}
-  enemyMaxObservables: 3
+  enemyMaxObservables: 6
   allyMaxObservables: 3
   maxLinearVelocity: 20
   maxAngularVelocity: 90
@@ -737,7 +737,9 @@ MonoBehaviour:
   steeringSensitivity: 1.112
   speedMultiplier: 1
   inputSmoothing: 0.2
-  enemyNormK: 1000
+  enemyNormK: 2000
+  useLOSObservation: 1
+  losLookAheadDist: 300
   bearingNormK: 10
   enemyDistScale: 1
   enemyBearingScale: 1
@@ -748,7 +750,7 @@ MonoBehaviour:
   speedNormK: 10
   forwardSpeedScale: 1
   driftSpeedScale: 1
-  allyPairNormK: 100
+  allyPairNormK: 300
   webLengthNormK: 50
   phantomSpacing: 80
   phantomSpeed: 50
@@ -777,9 +779,13 @@ MonoBehaviour:
   collectObsCallCount: 0
   lastEnemyBufferObs: []
   lastAllyBufferObs: []
-  guidanceDuration: 15
-  guidanceKp: 1.5
-  guidanceKd: 0.3
+  guidanceDuration: 5
+  guidanceKp: 10
+  guidanceKd: 0.5
+  showLOSVisualization: 1
+  enableResidualPolicy: 1
+  residualSteerScale: 1
+  residualThrottleScale: 0.25
 --- !u!114 &7411346295538081491
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -807,5 +813,5 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_SensorName: BufferSensor
-  m_ObservableSize: 2
+  m_ObservableSize: 3
   m_MaxNumObservables: 10

@@ -103,16 +103,24 @@ namespace BoatAttack
         public float inputSmoothing = 1.0f;
 
         [Header("Observation NormK (출력 0.5 지점 거리)")]
-        [Range(1f, 1000f)] public float enemyNormK = 250f;
-        // rayNormK 제거됨 (LOS 관측 제거)
+        [Range(1f, 2000f)] public float enemyNormK = 500f;
+
+        [Header("=== LOS Observation ===")]
+        [Tooltip("true: 적→모선 LOS 기반 관측 (perp, along, hdg) / false: 기존 (dist, bearing, hdg)")]
+        public bool useLOSObservation = true;
+
+        [Tooltip("LOS 위 예측 지점까지 거리 (m). 적이 이 거리만큼 전진한 위치를 기준으로 차단 위치를 계산")]
+        [Range(10f, 300f)] public float losLookAheadDist = 50f;
 
         [Header("Observation Scale (정규화 후 가중치)")]
         [Tooltip("베어링 유리함수 k값 (작을수록 정면 민감도↑, 0.5지점=k도)")]
         [Range(5f, 90f)] public float bearingNormK = 30f;
 
         [Header("Enemy Observation Scale (적군 관측 계수)")]
+        [Tooltip("LOS 모드: obs[0] = LOS 수직 편차(perp) 가중치 / 기존 모드: 거리 가중치")]
         [Range(1f, 10f)] public float enemyDistScale = 1f;
-        [Range(1f, 10f)] public float enemyBearingScale = 1f;  // 2번 관측: CTE 스케일 (Inspector 이름 유지)
+        [Tooltip("LOS 모드: obs[1] = LOS 전진 편차(along) 가중치 / 기존 모드: 베어링 가중치")]
+        [Range(1f, 10f)] public float enemyBearingScale = 1f;
         [Range(1f, 10f)] public float enemyHeadingScale = 1f;
 
         [Header("Ally Observation Scale (아군 관측 계수)")]
@@ -239,15 +247,42 @@ namespace BoatAttack
         [Tooltip("배치 후 PD 가이던스 유지 시간 (초). 0이면 즉시 RL 전환")]
         public float guidanceDuration = 15f;
         [Tooltip("PD 가이던스 조향 비례 게인 (Kp)")]
+        [Range(0f, 10f)]
         public float guidanceKp = 1.5f;
         [Tooltip("PD 가이던스 조향 미분 게인 (Kd)")]
+        [Range(0f, 10f)]
         public float guidanceKd = 0.3f;
 
         private bool _guidancePhase = false;
         private float _guidanceEndTime = 0f;
         private Vector3 _guidanceTarget = Vector3.zero;
         private float _prevBearingError = 0f;
-        private float _prevFlankLateralDist = -1f; // Stage10: 이전 스텝의 담당 적 측면 거리 (측면 접근 보상용)
+        private float _prevFlankLateralDist = -1f;
+
+        // LOS 가이던스 시각화
+        private Vector3 _losFootPoint      = Vector3.zero;
+        private Vector3 _losLookAheadPoint = Vector3.zero;
+
+        [Header("=== LOS Visualization ===")]
+        [Tooltip("게임 뷰에서 LOS 가이던스 라인/마커 표시")]
+        public bool showLOSVisualization = true;
+
+        private LineRenderer _losLine;      // 적→모선 전체 LOS
+        private LineRenderer _losFootLine;  // 에이전트→foot 수선
+        private LineRenderer _losAheadLine; // foot→P
+        private LineRenderer _losSteerLine; // 에이전트→P (조향 방향)
+        private Transform    _losMarker;    // P 위치 구체 마커
+
+        [Header("=== Residual Policy (LOS Baseline + RL Delta) ===")]
+        [Tooltip("true: LOS 추종을 베이스라인으로 두고 RL이 잔차(δ)를 학습\n" +
+                 "false: 기존 순수 RL (action=[-1,1] 전범위 탐색)")]
+        public bool enableResidualPolicy = true;
+
+        [Tooltip("RL 잔차 조향 스케일 (0=완전 LOS 고정, 1=RL이 ±1 전범위 수정 가능)")]
+        [Range(0f, 1f)] public float residualSteerScale = 0.5f;
+
+        [Tooltip("RL 잔차 스로틀 스케일 (0=LOS 최대 스로틀 고정, 0.5=±0.5×max 조절)")]
+        [Range(0f, 0.5f)] public float residualThrottleScale = 0.25f;
 
         [Header("=== Convoy (FixedJoint) ===")]
         private float _prevThrottle = 0f;
@@ -311,6 +346,25 @@ namespace BoatAttack
             _matchingLR = CreateLineRenderer("_MatchingLine", new Color(1f, 0.9f, 0.1f, 0.85f), 0.6f);
             _partnerLR  = CreateLineRenderer("_PartnerLine",  new Color(0.2f, 1f, 0.3f, 0.7f),  0.4f);
 
+            // LOS 시각화 LineRenderer 생성
+            _losLine      = CreateLineRenderer("_LOS_Full",  new Color(0.5f, 0.5f, 0.5f, 0.4f), 0.3f);
+            _losFootLine  = CreateLineRenderer("_LOS_Foot",  new Color(1f,   1f,   1f,   0.7f), 0.4f);
+            _losAheadLine = CreateLineRenderer("_LOS_Ahead", new Color(0f,   1f,   0.8f, 1f),   0.6f);
+            _losSteerLine = CreateLineRenderer("_LOS_Steer", new Color(1f,   0.8f, 0f,   1f),   0.5f);
+
+            // look-ahead 점 P 마커 (구체)
+            var markerGo = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            markerGo.name = "_LOS_Marker";
+            markerGo.transform.SetParent(transform.parent ?? transform, false);
+            markerGo.transform.localScale = Vector3.one * 4f;
+            Destroy(markerGo.GetComponent<Collider>());
+            var mr = markerGo.GetComponent<MeshRenderer>();
+            mr.material = new Material(Shader.Find("Sprites/Default"));
+            mr.material.color = new Color(0f, 1f, 0.8f, 1f);
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _losMarker = markerGo.transform;
+            _losMarker.gameObject.SetActive(false);
+
             // SingleNetCapture: 없으면 자동 추가 (기본 비활성 상태)
             _singleNetCapture = GetComponent<SingleNetCapture>();
             if (_singleNetCapture == null)
@@ -331,6 +385,83 @@ namespace BoatAttack
             lr.endColor   = new Color(col.r, col.g, col.b, col.a * 0.4f);
             lr.enabled = false;
             return lr;
+        }
+
+        private void UpdateLOSVisualizers()
+        {
+            if (!showLOSVisualization || !Application.isPlaying)
+            {
+                SetLOSVisualizersActive(false);
+                return;
+            }
+
+            bool hasLookAhead  = _losLookAheadPoint != Vector3.zero;
+            bool isFlank = _isFlankPhase && _flankTarget != null;
+            bool isConvoyOrGuidance = !isFlank && (_guidancePhase || _convoyMode) && _guidanceTarget != Vector3.zero;
+            float h = 2f;
+
+            if (hasLookAhead && isFlank && _flankTarget != null && motherShip != null)
+            {
+                // 포획 트랩: 적→모선 LOS 전체선 (회색)
+                SetLine(_losLine,     _flankTarget.transform.position + Vector3.up * h,
+                                      motherShip.transform.position   + Vector3.up * h);
+                // 에이전트 → foot (흰색 수선)
+                SetLine(_losFootLine, transform.position + Vector3.up * h,
+                                      _losFootPoint       + Vector3.up * h);
+                // foot → P (청록, look-ahead)
+                SetLine(_losAheadLine, _losFootPoint + Vector3.up * h, _losLookAheadPoint + Vector3.up * h);
+                // 에이전트 → P (노랑, 실제 조향 방향)
+                SetLine(_losSteerLine, transform.position + Vector3.up * h, _losLookAheadPoint + Vector3.up * h);
+                _losMarker.position = _losLookAheadPoint + Vector3.up * h;
+                SetLOSVisualizersActive(true);
+            }
+            else if (hasLookAhead && isConvoyOrGuidance && motherShip != null)
+            {
+                // 정지트랩 설치: 클러스터→모선 기준선 (회색)
+                SetLine(_losLine, _guidanceTarget + Vector3.up * h,
+                                  motherShip.transform.position + Vector3.up * h);
+                // 에이전트 → foot (흰색 수선)
+                SetLine(_losFootLine, transform.position + Vector3.up * h,
+                                      _losFootPoint       + Vector3.up * h);
+                // foot → P (청록, look-ahead)
+                SetLine(_losAheadLine, _losFootPoint + Vector3.up * h, _losLookAheadPoint + Vector3.up * h);
+                // 에이전트 → P (노랑, 조향)
+                SetLine(_losSteerLine, transform.position + Vector3.up * h, _losLookAheadPoint + Vector3.up * h);
+                _losMarker.position = _losLookAheadPoint + Vector3.up * h;
+                SetLOSVisualizersActive(true);
+            }
+            else if (hasLookAhead && _heuristicNearestEnemy != null)
+            {
+                // 일반 RL 구간: 에이전트 → 적군 (기준선 회색)
+                SetLine(_losLine,      transform.position + Vector3.up * h,
+                                       _heuristicNearestEnemy.transform.position + Vector3.up * h);
+                if (_losFootLine) _losFootLine.enabled = false;
+                SetLine(_losAheadLine, transform.position + Vector3.up * h, _losLookAheadPoint + Vector3.up * h);
+                SetLine(_losSteerLine, transform.position + Vector3.up * h, _losLookAheadPoint + Vector3.up * h);
+                _losMarker.position = _losLookAheadPoint + Vector3.up * h;
+                SetLOSVisualizersActive(true);
+            }
+            else
+            {
+                SetLOSVisualizersActive(false);
+            }
+        }
+
+        private void SetLine(LineRenderer lr, Vector3 from, Vector3 to)
+        {
+            if (lr == null) return;
+            lr.SetPosition(0, from);
+            lr.SetPosition(1, to);
+            lr.enabled = true;
+        }
+
+        private void SetLOSVisualizersActive(bool active)
+        {
+            if (_losLine)      _losLine.enabled      = active;
+            if (_losFootLine)  _losFootLine.enabled  = active;
+            if (_losAheadLine) _losAheadLine.enabled = active;
+            if (_losSteerLine) _losSteerLine.enabled = active;
+            if (_losMarker)    _losMarker.gameObject.SetActive(active);
         }
 
         protected override void OnEnable()
@@ -424,6 +555,7 @@ namespace BoatAttack
         private void LateUpdate()
         {
             UpdateMatchingLines();
+            UpdateLOSVisualizers();
         }
 
         private void UpdateMatchingLines()
@@ -531,6 +663,7 @@ namespace BoatAttack
             _convoyMode = false;
             _guidancePhase = false;
             _guidanceEndTime = 0f;
+            _guidanceTarget = Vector3.zero;  // 클러스터 타겟 리셋 (이전 에피소드 잔류 방지)
             _prevBearingError = 0f;
             assignedTargetIndex = -1;
             _prevThrottle = 0f;
@@ -561,6 +694,9 @@ namespace BoatAttack
             _episodeEnded = false;
             _deployMode = false;
             _convoyMode = false;
+            _guidancePhase = false;
+            _guidanceEndTime = 0f;
+            _guidanceTarget = Vector3.zero;
             _flankAlignEndTime = -1f;
             assignedTargetIndex = -1; // Commander가 새로 배정
             // _neutralized는 여기서 리셋하지 않음
@@ -604,6 +740,138 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// Residual Policy 베이스라인 조향 계산.
+        /// 가이던스 중: _guidanceTarget 방향 PD
+        /// RL 구간: 가장 가까운 적(_heuristicNearestEnemy) 기준 LOS look-ahead P 방향 P제어
+        /// 반환: [-1, 1] 스티어링값
+        /// </summary>
+        private float ComputeLOSBaselineSteering()
+        {
+            Vector3 steerTarget = Vector3.zero;
+            bool valid = false;
+
+            // FlankPhase (포획 트랩): 적→모선 LOS 선 위에서 모선 방향으로 look-ahead
+            // 수선의 발(foot) F를 구한 뒤 모선 방향으로 losLookAheadDist만큼 이동 → P
+            if (_isFlankPhase && _flankTarget != null && _flankTarget.activeInHierarchy
+                && motherShip != null)
+            {
+                Vector3 ePos = _flankTarget.transform.position; ePos.y = 0f;
+                Vector3 mPos = motherShip.transform.position;   mPos.y = 0f;
+                Vector3 aPos = transform.position;              aPos.y = 0f;
+
+                Vector3 losVec = mPos - ePos;
+                float losDist  = losVec.magnitude;
+                if (losDist > 0.1f)
+                {
+                    Vector3 losDir = losVec / losDist;           // 적→모선 단위벡터
+
+                    // 에이전트→적 벡터를 LOS에 투영 → foot point F
+                    float proj = Vector3.Dot(aPos - ePos, losDir);
+                    proj = Mathf.Clamp(proj, 0f, losDist);       // 선분 안에 clamped
+                    Vector3 foot = ePos + losDir * proj;
+
+                    // F에서 모선 방향으로 look-ahead
+                    float ahead = Mathf.Min(losLookAheadDist, losDist - proj);
+                    steerTarget = foot + losDir * ahead;
+
+                    _losFootPoint      = foot;
+                    _losLookAheadPoint = steerTarget;
+                    valid = true;
+                }
+            }
+            else if (_guidanceTarget != Vector3.zero)
+            {
+                // 클러스터 배정(정지 트랩 설치):
+                // 기준선 = 클러스터 centroid → 모선 (에피소드 초기 고정, 적 이동 무관)
+                // foot 투영 후 클러스터 방향(모선 반대)으로 look-ahead
+                if (motherShip != null)
+                {
+                    Vector3 cPos = _guidanceTarget;                  cPos.y = 0f;  // 클러스터
+                    Vector3 mPos = motherShip.transform.position;    mPos.y = 0f;  // 모선
+                    Vector3 aPos = transform.position;               aPos.y = 0f;
+
+                    Vector3 losVec = mPos - cPos;   // 클러스터→모선
+                    float losDist  = losVec.magnitude;
+                    if (losDist > 0.1f)
+                    {
+                        Vector3 losDir = losVec / losDist;       // 클러스터→모선 단위벡터
+                        Vector3 toClusterDir = -losDir;          // 모선→클러스터 (진행 방향)
+
+                        // 에이전트를 기준선에 투영 → foot F
+                        float proj = Vector3.Dot(aPos - cPos, losDir);
+                        proj = Mathf.Clamp(proj, 0f, losDist);
+                        Vector3 foot = cPos + losDir * proj;
+
+                        // F에서 클러스터 방향으로 look-ahead
+                        float toClusterDist = Vector3.Distance(foot, cPos);
+                        float ahead = Mathf.Min(losLookAheadDist, toClusterDist * 0.98f);
+                        steerTarget = foot + toClusterDir * ahead;
+
+                        _losFootPoint      = foot;
+                        _losLookAheadPoint = steerTarget;
+                        valid = true;
+                    }
+                }
+
+                // fallback: 모선 없으면 클러스터 직접 향함
+                if (!valid)
+                {
+                    Vector3 toCluster = _guidanceTarget - transform.position;
+                    toCluster.y = 0f;
+                    float clusterDist = toCluster.magnitude;
+                    if (clusterDist > 0.1f)
+                    {
+                        Vector3 d = toCluster / clusterDist;
+                        steerTarget = transform.position + d * Mathf.Min(losLookAheadDist, clusterDist * 0.98f);
+                        _losFootPoint      = transform.position;
+                        _losLookAheadPoint = steerTarget;
+                        valid = true;
+                    }
+                    else
+                    {
+                        steerTarget = _guidanceTarget;
+                        _losLookAheadPoint = steerTarget;
+                        valid = true;
+                    }
+                }
+            }
+            else
+            {
+                // 클러스터 미배정: 배정된 적군(없으면 최근접 적) 기준 LOS
+                GameObject targetEnemy = GetAssignedEnemy();
+                if (targetEnemy != null && targetEnemy.activeInHierarchy)
+                {
+                    Vector3 toEnemy = targetEnemy.transform.position - transform.position;
+                    toEnemy.y = 0f;
+                    float dist = toEnemy.magnitude;
+                    if (dist > 0.1f)
+                    {
+                        Vector3 losDir = toEnemy / dist;
+                        float ahead = Mathf.Min(losLookAheadDist, dist * 0.98f);
+                        steerTarget = transform.position + losDir * ahead;
+                        _losFootPoint = transform.position;
+                        _losLookAheadPoint = steerTarget;
+                        valid = true;
+                    }
+                }
+            }
+
+            if (!valid) return 0f;
+
+            Vector3 toTarget = steerTarget - transform.position;
+            toTarget.y = 0f;
+            if (toTarget.sqrMagnitude < 0.1f) return 0f;
+
+            float targetAngle = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
+            float bearingError = Mathf.DeltaAngle(transform.eulerAngles.y, targetAngle) / 180f; // [-1,1]
+
+            float dError = (bearingError - _prevBearingError) / Mathf.Max(Time.fixedDeltaTime, 0.001f);
+            float result = Mathf.Clamp(guidanceKp * bearingError + guidanceKd * dError, -1f, 1f);
+            _prevBearingError = bearingError;
+            return result;
+        }
+
+        /// <summary>
         /// 부호 있는 베어링: 바디 좌표계 기준 (-1~+1)
         /// 0=정면, ±1=후방, 부호=좌(-)우(+)
         /// sqrt(angle/180)로 정면 민감도 유지, XZ 평면 cross product로 좌/우 판별
@@ -617,6 +885,50 @@ namespace BoatAttack
             float norm = Mathf.Sqrt(angleDeg / 180f);
             float cross = fwd.x * dir.z - fwd.z * dir.x;
             return cross >= 0f ? norm : -norm;
+        }
+
+        /// <summary>
+        /// 적→모선 LOS 기반 관측값 계산.
+        /// LOS 선 위 look-ahead 지점 P 기준으로 에이전트의 수직/전진 편차를 반환.
+        ///
+        /// perpNorm : LOS에 수직인 방향 편차 (0 = LOS 선 위, ±1 = 크게 벗어남)
+        ///            부호: LOS 오른쪽(+) / 왼쪽(-)  [Cross(LOSdir, up) 기준]
+        /// alongNorm: look-ahead 포인트 P 기준 전진(+) / 후퇴(-) 편차
+        ///            (+) = P를 지나 모선 쪽 / (-) = 아직 P에 못 미침
+        ///
+        /// 학습 목표: perpNorm≈0, alongNorm≈0 → 완벽한 예측 차단 위치
+        /// </summary>
+        private (float perpNorm, float alongNorm) ComputeLOSObs(
+            Vector3 enemyPos, Vector3 observerPos, Vector3 motherPos, float lookAheadDist, float normK)
+        {
+            // y 평탄화
+            enemyPos.y    = 0f;
+            observerPos.y = 0f;
+            motherPos.y   = 0f;
+
+            Vector3 LOSvec = motherPos - enemyPos;
+            float LOSdist  = LOSvec.magnitude;
+            if (LOSdist < 0.1f) return (0f, 0f); // degenerate: 적이 모선 위에 있음
+
+            Vector3 LOSdir  = LOSvec / LOSdist;
+
+            // LOS 오른쪽 수직벡터 (Cross(LOSdir, up) → LOSdir 기준 오른쪽)
+            Vector3 LOSperp = Vector3.Cross(LOSdir, Vector3.up).normalized;
+
+            // look-ahead 포인트 P — 모선을 넘지 않도록 clamp
+            float ahead = Mathf.Min(lookAheadDist, LOSdist * 0.9f);
+            Vector3 P   = enemyPos + LOSdir * ahead;
+
+            // 수직 편차: 관측자가 LOS 선에서 얼마나 옆으로 벗어났나
+            float signedPerp = Vector3.Dot(observerPos - enemyPos, LOSperp);
+
+            // 전진 편차: 관측자가 P 기준 얼마나 앞/뒤에 있나
+            float alongLOS = Vector3.Dot(observerPos - P, LOSdir);
+
+            float perpNorm  = signedPerp / (Mathf.Abs(signedPerp) + normK);
+            float alongNorm = alongLOS   / (Mathf.Abs(alongLOS)   + normK);
+
+            return (perpNorm, alongNorm);
         }
 
         /// <summary>
@@ -661,14 +973,16 @@ namespace BoatAttack
         {
             collectObsCallCount++;
 
-            const int VECTOR_OBS_COUNT = 1; // phaseFlag 1개
+            const int VECTOR_OBS_COUNT = 3; // phaseFlag + motherDistNorm + motherBearing
             if (lastObservations == null)
-                lastObservations = new float[1];
+                lastObservations = new float[VECTOR_OBS_COUNT];
             int oi = 0;
 
             if (_engine == null || _engine.RB == null)
             {
                 sensor.AddObservation(0f); // phaseFlag
+                sensor.AddObservation(0f); // motherDistNorm
+                sensor.AddObservation(0f); // motherBearing
                 lastObservationsCount = 0;
                 return;
             }
@@ -676,10 +990,29 @@ namespace BoatAttack
             // phaseFlag: 0 = CONVOY/일반, 1 = Flank Phase (정지 트랩 투하 완료)
             float phaseFlag = _isFlankPhase ? 1f : 0f;
             sensor.AddObservation(phaseFlag);
-            if (lastObservations == null || lastObservations.Length < 1)
-                lastObservations = new float[1];
+            if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
+                lastObservations = new float[VECTOR_OBS_COUNT];
             lastObservations[0] = phaseFlag;
-            oi = 1;
+
+            // 모선 거리 + 베어링 (에이전트 자신 기준)
+            float motherDistNorm = 0f;
+            float motherBearing  = 0f;
+            if (motherShip != null)
+            {
+                Vector3 toMother = motherShip.transform.position - transform.position;
+                toMother.y = 0f;
+                float mDist = toMother.magnitude;
+                // k/(dist+k): 모선에 가까울수록 1, 멀수록 0 (k=enemyNormK 재활용)
+                motherDistNorm = enemyNormK / (mDist + enemyNormK);
+                // 부호 있는 베어링: 0=정면, ±1=후방
+                motherBearing = ComputeSignedBearing(transform.forward, toMother);
+            }
+            sensor.AddObservation(motherDistNorm);
+            sensor.AddObservation(motherBearing);
+            lastObservations[1] = motherDistNorm;
+            lastObservations[2] = motherBearing;
+
+            oi = VECTOR_OBS_COUNT;
 
             // Web 중심 기준: 자기 쌍의 agent1+agent2 중점을 관측 원점으로 사용
             Vector3 partnerPos = (partnerAgent != null) ? partnerAgent.transform.position : transform.position;
@@ -701,23 +1034,40 @@ namespace BoatAttack
                 float eBrgS  = (envController != null) ? envController.enemyBearingScale : enemyBearingScale;
                 float eHdgS  = (envController != null) ? envController.enemyHeadingScale : enemyHeadingScale;
 
+                // 가이던스 중: 클러스터 추상 없이 개별 적군 raw obs 강제
+                // RL 이후: useLOSObservation 토글 따름
+                bool useLOS = useLOSObservation && !_guidancePhase && motherShip != null;
+
                 // Flank Phase — 배정된 _flankTarget 1개만 관측
                 if (_isFlankPhase && _flankTarget != null && _flankTarget.activeInHierarchy
                     && (envController == null || !envController.IsEnemyNeutralized(_flankTarget)))
                 {
                     _heuristicNearestEnemy = _flankTarget;
-                    Vector3 rel  = _flankTarget.transform.position - transform.position;
-                    float dist   = rel.magnitude;
-                    float d   = NormalizePosition(dist, enemyNormK) * eDistS;
-                    float brg = ComputeSignedBearing(transform.forward, rel) * eBrgS;
                     float hdg = NormalizeHeadingDiff(transform.eulerAngles.y,
                                     _flankTarget.transform.eulerAngles.y) * eHdgS;
-                    enemyBufferSensor.AppendObservation(new float[] { d, brg, hdg });
-                    lastEnemyBufferObs.Add(d); lastEnemyBufferObs.Add(brg); lastEnemyBufferObs.Add(hdg);
+                    float obs0, obs1;
+                    if (useLOS)
+                    {
+                        // LOS 기반: 적→모선 선 위 look-ahead 지점과의 관계
+                        var (perp, along) = ComputeLOSObs(
+                            _flankTarget.transform.position, transform.position,
+                            motherShip.transform.position, losLookAheadDist, enemyNormK);
+                        obs0 = perp  * eDistS;
+                        obs1 = along * eBrgS;
+                    }
+                    else
+                    {
+                        // 개별 적군 raw: 거리 + 베어링
+                        Vector3 rel = _flankTarget.transform.position - transform.position;
+                        obs0 = NormalizePosition(rel.magnitude, enemyNormK) * eDistS;
+                        obs1 = ComputeSignedBearing(transform.forward, rel) * eBrgS;
+                    }
+                    enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, hdg });
+                    lastEnemyBufferObs.Add(obs0); lastEnemyBufferObs.Add(obs1); lastEnemyBufferObs.Add(hdg);
                 }
                 else if (enemyShips != null)
                 {
-                // 일반 Phase — 활성 적군 전체 거리순 정렬
+                // 일반 Phase — 활성 적군 전체 거리순 정렬, 하나하나 개별 관측
                 var enemyByDist = new List<(int idx, float dist)>();
                 for (int i = 0; i < enemyShips.Length; i++)
                 {
@@ -733,13 +1083,26 @@ namespace BoatAttack
                 for (int ei = 0; ei < count; ei++)
                 {
                     var enemy = enemyShips[enemyByDist[ei].idx];
-                    Vector3 rel = enemy.transform.position - webCenter;
-                    float dist = rel.magnitude;
-                    float d   = NormalizePosition(dist, enemyNormK) * eDistS;
-                    float brg = ComputeSignedBearing(webForward, rel) * eBrgS;
                     float hdg = NormalizeHeadingDiff(webAngle, enemy.transform.eulerAngles.y) * eHdgS;
-                    enemyBufferSensor.AppendObservation(new float[] { d, brg, hdg });
-                    lastEnemyBufferObs.Add(d); lastEnemyBufferObs.Add(brg); lastEnemyBufferObs.Add(hdg);
+                    float obs0, obs1;
+                    if (useLOS)
+                    {
+                        // LOS 기반: 적→모선 선 위 look-ahead 지점과 웹 중심의 관계
+                        var (perp, along) = ComputeLOSObs(
+                            enemy.transform.position, webCenter,
+                            motherShip.transform.position, losLookAheadDist, enemyNormK);
+                        obs0 = perp  * eDistS;
+                        obs1 = along * eBrgS;
+                    }
+                    else
+                    {
+                        // 개별 적군 raw: 적 위치 기준 거리 + 베어링 (클러스터 추상 없음)
+                        Vector3 rel = enemy.transform.position - webCenter;
+                        obs0 = NormalizePosition(rel.magnitude, enemyNormK) * eDistS;
+                        obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
+                    }
+                    enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, hdg });
+                    lastEnemyBufferObs.Add(obs0); lastEnemyBufferObs.Add(obs1); lastEnemyBufferObs.Add(hdg);
                 }
                 } // else if (enemyShips != null)
             } // if (enemyBufferSensor != null)
@@ -1054,15 +1417,16 @@ namespace BoatAttack
 
             // PD LOS 가이던스 — 배치 후 guidanceDuration초 동안 클러스터 방향으로 유도
             // CONVOY 모드 포함: 정렬 먼저 → 이후 RL(차동 추력) 전환
+            // Residual Policy: 가이던스가 베이스라인을 제공하고 RL이 잔차를 더함 (return 없이 fall-through)
             if (_guidancePhase)
             {
                 if (Time.time >= _guidanceEndTime)
                 {
                     _guidancePhase = false; // 시간 종료 → RL 전환
                 }
-                else
+                else if (!enableResidualPolicy)
                 {
-                    // 목표 방향 베어링 오차 계산
+                    // 기존 동작: 가이던스 중 ML 완전 무시, LOS만으로 구동
                     Vector3 toTarget = _guidanceTarget - transform.position;
                     toTarget.y = 0f;
                     float bearingError = 0f;
@@ -1070,10 +1434,8 @@ namespace BoatAttack
                     {
                         float targetAngle = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
                         float myAngle     = transform.eulerAngles.y;
-                        bearingError      = Mathf.DeltaAngle(myAngle, targetAngle) / 180f; // [-1, 1]
+                        bearingError      = Mathf.DeltaAngle(myAngle, targetAngle) / 180f;
                     }
-
-                    // PD 조향
                     float dError  = (bearingError - _prevBearingError) / Mathf.Max(Time.fixedDeltaTime, 0.001f);
                     float guidanceSteering = Mathf.Clamp(guidanceKp * bearingError + guidanceKd * dError, -1f, 1f);
                     _prevBearingError = bearingError;
@@ -1081,7 +1443,6 @@ namespace BoatAttack
                     _engine.Accelerate(maxThrottle);
                     _engine.Turn(guidanceSteering);
 
-                    // CONVOY 모드: Agent2(Neutralized)도 동일하게 구동 (FixedJoint이므로 방향은 같음)
                     if (_convoyMode && partnerAgent != null)
                     {
                         partnerAgent._engine.Accelerate(maxThrottle);
@@ -1162,16 +1523,31 @@ namespace BoatAttack
                 return;
             }
 
-            // 쌍동선 모드 — 한 대의 배처럼 throttle+steering 제어 (Agent2는 kinematic 동기화)
+            // 쌍동선 모드 — 정지트랩 설치 구간: LOS가 항상 기본 조향
+            // enableResidualPolicy=true → RL이 잔차(δ) 추가
+            // enableResidualPolicy=false → 순수 LOS 추종 (RL 무시)
             if (_convoyMode)
             {
-                float tInput = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
-                float sInput = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
+                // LOS 베이스라인 조향 (가이던스 타겟 or 적→모선 look-ahead)
+                float baseSteering = ComputeLOSBaselineSteering();
 
-                // Throttle: [-1,+1] → [0, maxThrottle]
-                float convoyThrottle = (tInput + 1f) * 0.5f * maxThrottle;
-                // Steering: 일반 조향과 동일
-                float convoySteering = Mathf.Clamp(sInput * steeringSensitivity, -1f, 1f);
+                float convoyThrottle, convoySteering;
+
+                if (enableResidualPolicy)
+                {
+                    float tInput = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
+                    float sInput = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
+                    // 기본 추력: (1 - residualThrottleScale) * max → RL이 ±residualThrottleScale 범위로 전후 대칭 조절
+                    float baseThrottle = (1f - residualThrottleScale) * maxThrottle;
+                    convoyThrottle = Mathf.Clamp(baseThrottle + tInput * residualThrottleScale * maxThrottle, 0f, maxThrottle);
+                    convoySteering = Mathf.Clamp(baseSteering + sInput * residualSteerScale, -1f, 1f);
+                }
+                else
+                {
+                    // 순수 LOS: RL 액션 무시, LOS 조향만 사용
+                    convoyThrottle = maxThrottle;
+                    convoySteering = baseSteering;
+                }
 
                 _engine.Accelerate(convoyThrottle);
                 _engine.Turn(convoySteering);
@@ -1180,7 +1556,7 @@ namespace BoatAttack
                 _prevSteering = convoySteering;
 
                 if (enableDebugLog || CompletedEpisodes < 2)
-                    Debug.Log($"[{name}] CONVOY: throttle={convoyThrottle:F2}, steer={convoySteering:F2}, " +
+                    Debug.Log($"[{name}] CONVOY: throttle={convoyThrottle:F2}, steer={convoySteering:F2}(base={baseSteering:F2}), " +
                         $"vel={_engine.RB?.velocity.magnitude:F1}, secondary={_engine.isConvoySecondary}");
                 return;
             }
@@ -1195,12 +1571,22 @@ namespace BoatAttack
             throttleInput = Mathf.Clamp(throttleInput, -1f, 1f);
             steeringInput = Mathf.Clamp(steeringInput, -1f, 1f);
 
-            // Throttle Mapping: action [-1,+1] → throttle [0, maxThrottle]
-            //   -1 → 0 (정지), 0 → 0.5×max, +1 → max (전진 최대)
-            float throttle = (throttleInput + 1f) * 0.5f * maxThrottle;
-
-            // Steering
-            float steering = Mathf.Clamp(steeringInput * steeringSensitivity, -1f, 1f);
+            // LOS를 항상 기본 명령으로 사용, RL은 좌우(δsteering)/전후(δthrottle) 잔차 학습
+            // enableResidualPolicy=false → 순수 LOS
+            float throttle, steering;
+            if (enableResidualPolicy)
+            {
+                float baseSteering = ComputeLOSBaselineSteering();
+                float baseThrottle = (1f - residualThrottleScale) * maxThrottle;
+                throttle = Mathf.Clamp(baseThrottle + throttleInput * residualThrottleScale * maxThrottle, 0f, maxThrottle);
+                steering = Mathf.Clamp(baseSteering + steeringInput * residualSteerScale, -1f, 1f);
+            }
+            else
+            {
+                // 순수 LOS (RL 액션 무시)
+                throttle = maxThrottle;
+                steering = ComputeLOSBaselineSteering();
+            }
 
             // Smoothing
             if (inputSmoothing < 1f)
@@ -1547,6 +1933,37 @@ namespace BoatAttack
             {
                 Gizmos.color = Color.yellow;
                 Gizmos.DrawWireSphere(webObject.transform.position, 3f);
+            }
+
+            // LOS 가이던스 시각화
+            if (_losLookAheadPoint != Vector3.zero)
+            {
+                // 수선의 발 (foot): 흰 구
+                Gizmos.color = Color.white;
+                Gizmos.DrawWireSphere(_losFootPoint, 3f);
+
+                // look-ahead 타겟 P: 밝은 청록 구
+                Gizmos.color = new Color(0f, 1f, 0.8f, 1f);
+                Gizmos.DrawSphere(_losLookAheadPoint, 4f);
+
+                // 에이전트 → foot (수선): 흰 점선 느낌의 선
+                Gizmos.color = new Color(1f, 1f, 1f, 0.5f);
+                Gizmos.DrawLine(transform.position, _losFootPoint);
+
+                // foot → P (look-ahead 방향): 청록 선
+                Gizmos.color = new Color(0f, 1f, 0.8f, 0.8f);
+                Gizmos.DrawLine(_losFootPoint, _losLookAheadPoint);
+
+                // 에이전트 → P (실제 조향 방향): 노란 선
+                Gizmos.color = new Color(1f, 0.8f, 0f, 1f);
+                Gizmos.DrawLine(transform.position, _losLookAheadPoint);
+            }
+            else if (_guidancePhase && _guidanceTarget != Vector3.zero)
+            {
+                // guidance 단계: 클러스터 타겟 직선
+                Gizmos.color = new Color(0f, 1f, 0.8f, 1f);
+                Gizmos.DrawSphere(_guidanceTarget, 4f);
+                Gizmos.DrawLine(transform.position, _guidanceTarget);
             }
         }
     }

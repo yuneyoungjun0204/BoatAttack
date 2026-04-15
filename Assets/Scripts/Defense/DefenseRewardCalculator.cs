@@ -59,6 +59,12 @@ namespace BoatAttack
         [Tooltip("중앙 차단 보너스 계수 (centerScore × 계수가 보상 배율에 추가)")]
         public float centerBonusCoeff = 0.5f;
 
+        [Tooltip("근접 포획 보상: 적이 Web hit 지점 nearCaptureDistance 이내 진입 시 추가 보상 (포획 직전 강화 신호)")]
+        public float nearCaptureReward = 0.05f;
+
+        [Tooltip("근접 포획 보상 발동 거리 (m) — 적→Web hit 거리가 이 이내일 때 발동")]
+        public float nearCaptureDistance = 60f;
+
         [Tooltip("적→모선 Ray가 차단 없이 모선에 직통할 때 팀 전체 매 스텝 페널티 (적 1대당)")]
         public float raycastDirectHitPenalty = -0.002f;
 
@@ -79,6 +85,9 @@ namespace BoatAttack
         [Header("=== 충돌 페널티 ===")]
         [Tooltip("충돌 페널티 (아군 간 물리 충돌)")]
         public float collisionPenalty = -0.5f;
+
+        [Tooltip("아군이 설치된 정지 트랩 그물에 충돌 시 페널티 (해당 쌍 비활성화)")]
+        public float allyHitTrapPenalty = -0.5f;
 
         [Tooltip("쌍 간 최소 허용 거리 (m)")]
         public float pairProximityMinDistance = 40f;

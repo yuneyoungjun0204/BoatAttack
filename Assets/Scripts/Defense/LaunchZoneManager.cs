@@ -694,7 +694,7 @@ namespace BoatAttack
                 int clusterIdx = enemyClusters.Count > 0
                     ? FindBestClusterForPair(pairDirAngle, enemyClusters, assignedClusterIndices)
                     : -1;
-                assignedClusterIndices.Add(clusterIdx);
+                if (clusterIdx >= 0) assignedClusterIndices.Add(clusterIdx);
 
                 // 클러스터 내 가장 가까운 미배정 적군 선택
                 int bestEnemyIdx = clusterIdx >= 0
@@ -704,7 +704,7 @@ namespace BoatAttack
 
                 // 클러스터 정보를 쌍에 저장 (AutoAssign 및 시각화에 사용)
                 pair.assignedClusterIdx   = clusterIdx;
-                pair.clusterCentroid      = clusterIdx >= 0 ? enemyClusters[clusterIdx].centroidWorld : pairCenter;
+                pair.clusterCentroid      = clusterIdx >= 0 ? enemyClusters[clusterIdx].centroidWorld : Vector3.zero;
                 pair.clusterEnemyIndices  = clusterIdx >= 0 ? new List<int>(enemyClusters[clusterIdx].enemyIndices) : null;
 
                 // 항상 모선 후미 방향(후방 직선각도)으로 스폰
@@ -774,12 +774,12 @@ namespace BoatAttack
                     agentGroup.RegisterAgent(pair.agent2);
                 }
 
-                // PD LOS 가이던스 시작 — 클러스터 중심 방향으로 유도
-                Vector3 guidanceTarget = pair.clusterCentroid != Vector3.zero
-                    ? pair.clusterCentroid
-                    : pairCenter + (rot * Vector3.forward) * 200f; // fallback: 전방 200m
-                if (pair.agent1 != null) pair.agent1.StartGuidance(guidanceTarget);
-                if (pair.agent2 != null) pair.agent2.StartGuidance(guidanceTarget);
+                // PD LOS 가이던스 시작 — 클러스터 배정 쌍만, 한 클러스터 = 하나의 쌍
+                if (pair.clusterCentroid != Vector3.zero)
+                {
+                    if (pair.agent1 != null) pair.agent1.StartGuidance(pair.clusterCentroid);
+                    if (pair.agent2 != null) pair.agent2.StartGuidance(pair.clusterCentroid);
+                }
             }
 
             _lastDeploymentInfo = $"{formationType}, pairs={pairCount}, zones={zoneAssignments.Count}";
@@ -987,17 +987,8 @@ namespace BoatAttack
                 float diff = Mathf.Abs(Mathf.DeltaAngle(zoneDirAngleDeg, clusters[c].centerAngleDeg));
                 if (diff < bestDiff) { bestDiff = diff; bestIdx = c; }
             }
-            // 미배정 없으면 가장 가까운 기존 클러스터 재사용
-            if (bestIdx < 0)
-            {
-                bestDiff = float.MaxValue;
-                for (int c = 0; c < clusters.Count; c++)
-                {
-                    float diff = Mathf.Abs(Mathf.DeltaAngle(zoneDirAngleDeg, clusters[c].centerAngleDeg));
-                    if (diff < bestDiff) { bestDiff = diff; bestIdx = c; }
-                }
-            }
-            return bestIdx;
+            // 미배정 클러스터 없음 → 해당 쌍은 클러스터 없음 (-1 반환, 가이던스 비활성)
+            return bestIdx; // -1
         }
 
         /// <summary>

@@ -1,553 +1,119 @@
 using UnityEngine;
-using Unity.MLAgents;
 
 namespace BoatAttack
 {
     /// <summary>
-    /// 2대의 방어 선박 사이에 동적으로 생성되는 Web (장막)
-    /// 선박 간 거리에 따라 크기가 자동으로 조정됨
+    /// 두 방어 선박 사이의 차단망.
+    /// 시각화: 단순 Cube 하나 (비용 최소).
+    /// 충돌: BoxCollider (isTrigger) — 적군 포획 + 아군 충돌 감지.
     /// </summary>
-    [RequireComponent(typeof(Rigidbody))]  // ML-Agents 빌드 호환성: 런타임 AddComponent 방지
+    [RequireComponent(typeof(Rigidbody))]
     [RequireComponent(typeof(BoxCollider))]
     public class DynamicWeb : MonoBehaviour
     {
         [Header("Target Ships")]
-        [Tooltip("방어 선박 1")]
         public Transform defenseShip1;
-
-        [Tooltip("방어 선박 2")]
         public Transform defenseShip2;
 
-        [Header("Web Anchor Points (Inspector에서 할당)")]
-        [Tooltip("Web 시작점 (선박1에 부착된 자식 오브젝트)")]
+        [Header("Web Anchor Points")]
         public Transform webAnchor1;
-
-        [Tooltip("Web 끝점 (선박2에 부착된 자식 오브젝트)")]
         public Transform webAnchor2;
 
         [Header("Web Settings")]
-        [Tooltip("Web 높이")]
         public float webHeight = 40f;
-
-        [Tooltip("Web 두께")]
         public float webThickness = 0.5f;
+        public Color webColor = new Color(0.95f, 0.95f, 0.92f, 0.6f);
 
-        [Tooltip("Web 색상")]
-        public Color webColor = new Color(0.95f, 0.95f, 0.92f, 0.9f); // 흰색 나일론
-
-        [Tooltip("충돌 판정용 두께 배율 (비주얼보다 두껍게)")]
+        [Tooltip("충돌 판정용 두께 배율")]
         [Range(1f, 20f)]
         public float colliderThicknessMultiplier = 10f;
 
-        [Header("Collision")]
         [Tooltip("Trigger 충돌 사용")]
         public bool isTrigger = true;
 
-        [Header("Visual")]
         [Tooltip("Web 시각화 활성화")]
         public bool showVisual = true;
 
         [Header("Collision Reward")]
-        [Tooltip("공격 보트를 막았을 때 방어선에게 주는 보상")]
         public float defenseReward = 10f;
 
-        // allyWebCollisionPenalty는 DefenseEnvController에서 관리
-
         [Header("Explosion Effect")]
-        [Tooltip("공격 보트 폭발 효과 Prefab (War FX)")]
         public GameObject explosionPrefab;
-
-        [Tooltip("폭발 효과 크기 배율")]
         [Range(5f, 50f)]
         public float explosionScale = 15f;
 
         [Header("Visual Material")]
-        [Tooltip("Web 시각화용 Material (비어있으면 기본 생성)")]
         public Material webMaterial;
 
         [Header("Managers")]
-        [Tooltip("환경 컨트롤러 (수동 할당 가능, 비어있으면 자동으로 찾음)")]
         public DefenseEnvController envController;
 
-        [Header("Net Visual Settings")]
-        [Tooltip("그물 세로줄 수 (선박 사이 분할)")]
-        [Range(4, 40)] public int netVerticalLines = 24;
-
-        [Tooltip("그물 가로줄 수 (깊이 방향)")]
-        [Range(3, 16)] public int netHorizontalLines = 10;
-
-        [Tooltip("메인 밧줄 두께 (테두리 밧줄)")]
-        [Range(0.1f, 3f)] public float mainRopeWidth = 0.35f;
-
-        [Tooltip("그물코 줄 두께")]
-        [Range(0.02f, 0.5f)] public float netLineWidth = 0.08f;
-
-        [Tooltip("그물 처짐 정도 (catenary)")]
-        [Range(0f, 15f)] public float netSag = 3f;
-
-        [Tooltip("수면 흔들림 강도")]
-        [Range(0f, 2f)] public float waveAmplitude = 0.3f;
-
-        [Tooltip("수면 흔들림 속도")]
-        [Range(0f, 3f)] public float waveSpeed = 0.8f;
-
-        [Tooltip("부표 크기")]
-        [Range(0.5f, 5f)] public float floatSize = 1.2f;
-
-        [Tooltip("부표 색상")]
-        public Color floatColor = new Color(1f, 0.45f, 0f, 1f); // 주황색 부표
-
-        [Tooltip("그물 줄 색상")]
-        public Color ropeColor = new Color(0.95f, 0.93f, 0.88f, 1f); // 흰색 나일론 줄
-
         [Header("Convoy Mode")]
-        [Tooltip("선박 간격이 이 거리(m) 미만이면 그물 collider/시각 비활성 (접힘 상태)")]
+        [Tooltip("선박 간격이 이 거리(m) 미만이면 그물 비활성 (접힘 상태)")]
         public float minWebActiveDist = 20f;
 
-        [Tooltip("어부 그물 스타일 시각화 사용")]
-        public bool useFishingNetVisual = true;
-
-        [Tooltip("부표 표시 여부")]
-        public bool showFloats = true;
-
-        [Header("Convoy Bar (쌍동선 연결 막대)")]
-        [Tooltip("Convoy 연결 막대 표시 여부")]
+        [Header("Convoy Bar")]
         public bool showConvoyBar = true;
-
-        [Tooltip("막대 두께 (m)")]
         [Range(0.1f, 20f)]
         public float convoyBarThickness = 1.5f;
-
-        [Tooltip("막대 색상 (금속)")]
-        public Color convoyBarColor = new Color(0.55f, 0.55f, 0.55f, 1f); // 회색 금속
-
-        [Tooltip("분리 후 침몰 시간 (초)")]
+        public Color convoyBarColor = new Color(0.55f, 0.55f, 0.55f, 1f);
         [Range(1f, 10f)]
         public float barSinkTime = 4f;
 
+        // ── 내부 상태 ──
         private BoxCollider _collider;
-        private MeshRenderer _renderer;
         private GameObject _visualObject;
-        private Color _lastWebColor;
-        private int _netUpdateCounter;  // 그물 메시 프레임 스킵용
-        private bool _wasWebOpen = true; // convoy 접힘 상태 변경 추적
+        private MeshRenderer _renderer;
+        private bool _wasWebOpen = true;
+        private bool _initialized;
 
-        // Convoy 연결 막대
-        private GameObject _convoyBarObject;
-        private bool _convoyBarActive = false;
-
-
-        // Stage10: 그물 고정 (선박 이탈 후 현재 위치에 고정)
-        private bool _isFrozen = false;
+        // Stage10: 정지 트랩 고정
+        private bool _isFrozen;
         private Vector3 _frozenPos1;
         private Vector3 _frozenPos2;
 
-        // 어부 그물용
-        private GameObject _netContainer;
-        private LineRenderer[] _verticalLines;
-        private LineRenderer[] _horizontalLines;
-        private LineRenderer[] _diagonalLines;
-        private LineRenderer _topRopeLine;     // 상단 메인 밧줄
-        private LineRenderer _bottomRopeLine;  // 하단 메인 밧줄
-        private GameObject[] _floatObjects;    // 부표들
-        private GameObject[] _knotObjects;     // 매듭 (교차점)
-        private Vector3[,] _cachedNodes;       // 노드 캐시
+        // Convoy 연결 막대
+        private GameObject _convoyBarObject;
+        private bool _convoyBarActive;
+
+        public bool IsFrozen => _isFrozen;
+
+        // ── 생명주기 ──
+
+        private void OnEnable()
+        {
+            _isFrozen = false;
+            if (!_initialized)
+            {
+                Initialize();
+                return;
+            }
+            EnsureVisualExists();
+        }
 
         private void Start()
         {
             Initialize();
         }
 
-        private void OnEnable()
-        {
-            // 에피소드 재시작 시 freeze 상태 초기화
-            _isFrozen = false;
-
-            // 아직 Initialize 안 됐으면 여기서 실행 (풀에서 꺼낸 클론 대응)
-            if (!_initialized)
-            {
-                Initialize();
-                return; // Initialize 내에서 CreateVisual 이미 호출됨
-            }
-
-            // SetActive(true) 시 비주얼이 없으면 재생성 (풀 재활성화 대응)
-            if (showVisual)
-            {
-                bool hasVisual = useFishingNetVisual
-                    ? (_netContainer != null)
-                    : (_visualObject != null);
-                if (!hasVisual)
-                    CreateVisual();
-            }
-        }
-
-        private bool _initialized = false;
-
-        /// <summary>
-        /// Instantiate로 복제된 클론의 내부 상태 초기화.
-        /// 원본의 _initialized=true, _netContainer=원본참조 등이 복사되므로
-        /// 클론에서 Initialize()가 정상 실행되도록 모든 내부 참조를 리셋.
-        /// </summary>
-        public void ResetCloneState()
-        {
-            _initialized = false;
-            _netContainer = null;
-            _visualObject = null;
-            _verticalLines = null;
-            _horizontalLines = null;
-            _diagonalLines = null;
-            _topRopeLine = null;
-            _bottomRopeLine = null;
-            _floatObjects = null;
-            _knotObjects = null;
-            _renderer = null;
-            _cachedNodes = null;
-            _collider = null;
-            _convoyBarObject = null;
-            _convoyBarActive = false;
-        }
-
         private void Initialize()
         {
             if (_initialized) return;
 
-            // BoxCollider 설정
-            _collider = gameObject.GetComponent<BoxCollider>();
-            if (_collider == null)
+            // Rigidbody: 물리 영향 없음, Trigger 작동용
+            var rb = GetComponent<Rigidbody>();
+            if (rb != null)
             {
-                _collider = gameObject.AddComponent<BoxCollider>();
+                rb.isKinematic = true;
+                rb.useGravity = false;
             }
+
+            // BoxCollider
+            _collider = GetComponent<BoxCollider>();
+            if (_collider == null) _collider = gameObject.AddComponent<BoxCollider>();
             _collider.isTrigger = isTrigger;
 
-            // Instantiate로 복제된 고아 비주얼 제거 (Start() 전 잔존물)
-            for (int i = transform.childCount - 1; i >= 0; i--)
-            {
-                var child = transform.GetChild(i);
-                if (child.name == "WebVisual" || child.name == "FishingNetVisual")
-                {
-                    child.gameObject.SetActive(false);
-                    Destroy(child.gameObject);
-                }
-            }
-            _netContainer = null;
-            _visualObject = null;
-
-            // 시각화 오브젝트 생성
-            if (showVisual)
-            {
-                CreateVisual();
-            }
-
-            // 초기 색상 저장
-            _lastWebColor = webColor;
-
-            // DefenseEnvController 찾기 및 캐싱 (멀티 환경 호환)
-            if (envController == null)
-            {
-                Transform envRoot = transform.parent != null ? transform.parent : transform;
-                envController = envRoot.GetComponentInChildren<DefenseEnvController>();
-            }
-
-            _initialized = true;
-        }
-
-        private void Update()
-        {
-            // 고정 상태가 아닐 때만 선박 null 체크
-            if (!_isFrozen && (defenseShip1 == null || defenseShip2 == null))
-                return;
-
-            UpdateWebTransform();
-
-            // Convoy 막대 위치 갱신
-            if (_convoyBarActive)
-                UpdateConvoyBar();
-
-            // 색상 변경 감지 및 업데이트
-            if (_lastWebColor != webColor)
-            {
-                SetColor(webColor);
-                _lastWebColor = webColor;
-            }
-        }
-
-        /// <summary>
-        /// 현재 그물 위치를 고정 (Stage10: 선박 이탈 후 그물을 제자리에 유지)
-        /// </summary>
-        public void FreezeAtCurrentPositions()
-        {
-            _frozenPos1 = (webAnchor1 != null) ? webAnchor1.position : (defenseShip1 != null ? defenseShip1.position : transform.position);
-            _frozenPos2 = (webAnchor2 != null) ? webAnchor2.position : (defenseShip2 != null ? defenseShip2.position : transform.position);
-            _isFrozen = true;
-        }
-
-        /// <summary>고정 해제 (에피소드 리셋 시 호출)</summary>
-        public void UnfreezeWeb()
-        {
-            _isFrozen = false;
-        }
-
-        private void UpdateWebTransform()
-        {
-            Vector3 pos1, pos2;
-            if (_isFrozen)
-            {
-                pos1 = _frozenPos1;
-                pos2 = _frozenPos2;
-            }
-            else
-            {
-                pos1 = (webAnchor1 != null) ? webAnchor1.position : defenseShip1.position;
-                pos2 = (webAnchor2 != null) ? webAnchor2.position : defenseShip2.position;
-            }
-
-            // Web 중심 위치
-            Vector3 centerPos = (pos1 + pos2) / 2f;
-            transform.position = centerPos;
-
-            // Web 회전
-            Vector3 direction = pos2 - pos1;
-            direction.y = 0f;
-            if (direction.magnitude > 0.01f)
-            {
-                Quaternion targetRotation = Quaternion.LookRotation(direction);
-                transform.rotation = targetRotation;
-            }
-
-            // Web 크기
-            float distance = Vector3.Distance(pos1, pos2);
-
-            if (_collider != null)
-            {
-                // 충돌 판정용: 두께를 넓혀 고속 적군 tunneling 방지
-                _collider.size = new Vector3(webThickness * colliderThicknessMultiplier, webHeight, distance);
-            }
-
-            // Convoy 접힘: 선박 간격 < minWebActiveDist이면 collider/시각 비활성
-            bool webOpen = distance >= minWebActiveDist;
-            if (webOpen != _wasWebOpen)
-            {
-                if (_collider != null) _collider.enabled = webOpen;
-                if (_netContainer != null) _netContainer.SetActive(webOpen);
-                if (_visualObject != null) _visualObject.SetActive(webOpen);
-                _wasWebOpen = webOpen;
-            }
-
-            // 어부 그물 시각화 업데이트 (3프레임마다 — 성능 최적화)
-            if (webOpen && useFishingNetVisual && _netContainer != null)
-            {
-                _netUpdateCounter++;
-                if (_netUpdateCounter % 3 == 0)
-                    UpdateFishingNetVisual(pos1, pos2, distance);
-            }
-            else if (webOpen && _visualObject != null)
-            {
-                // 기존 Cube 비주얼
-                _visualObject.transform.localScale = new Vector3(webThickness, webHeight, distance);
-            }
-        }
-
-        /// <summary>
-        /// 어부 그물 격자 업데이트: 수면 흔들림 + catenary 처짐 + 부표
-        /// </summary>
-        private void UpdateFishingNetVisual(Vector3 pos1, Vector3 pos2, float distance)
-        {
-            float baseY = (pos1.y + pos2.y) * 0.5f;
-            float topY = baseY + webHeight * 0.15f;    // 수면 바로 위 (부표 라인)
-            float bottomY = baseY - webHeight * 0.85f;  // 대부분 수면 아래
-
-            float time = Time.time * waveSpeed;
-
-            // 격자 노드 계산 [hIdx][vIdx]
-            if (_cachedNodes == null || _cachedNodes.GetLength(0) != netHorizontalLines || _cachedNodes.GetLength(1) != netVerticalLines)
-                _cachedNodes = new Vector3[netHorizontalLines, netVerticalLines];
-
-            for (int vi = 0; vi < netVerticalLines; vi++)
-            {
-                float t = (float)vi / (netVerticalLines - 1);
-                Vector3 basePos = Vector3.Lerp(pos1, pos2, t);
-
-                // catenary 처짐 (양 끝 고정, 중앙 최대)
-                float sagAmount = netSag * 4f * t * (1f - t);
-
-                // 수면 파도 오프셋 (위치마다 다른 위상)
-                float wavePhase = vi * 0.7f + time;
-                float waveY = Mathf.Sin(wavePhase) * waveAmplitude;
-                float waveZ = Mathf.Cos(wavePhase * 0.6f) * waveAmplitude * 0.3f;
-
-                for (int hi = 0; hi < netHorizontalLines; hi++)
-                {
-                    float hT = (float)hi / (netHorizontalLines - 1);
-                    float y = Mathf.Lerp(topY, bottomY, hT);
-
-                    // 아래로 갈수록 처짐 + 파도 영향 감소
-                    float sagForRow = sagAmount * (0.3f + 0.7f * hT);
-                    float waveFade = 1f - hT * 0.7f; // 수면 근처만 흔들림
-
-                    // 그물 방향에 수직인 방향으로 약간의 변위 (입체감)
-                    Vector3 perpDir = Vector3.Cross((pos2 - pos1).normalized, Vector3.up);
-                    float perpWave = Mathf.Sin(wavePhase * 1.3f + hi * 1.1f) * waveAmplitude * 0.2f * waveFade;
-
-                    _cachedNodes[hi, vi] = new Vector3(
-                        basePos.x + perpDir.x * perpWave,
-                        y - sagForRow + waveY * waveFade,
-                        basePos.z + perpDir.z * perpWave + waveZ * waveFade
-                    );
-                }
-            }
-
-            // 1. 상단 메인 밧줄 (부표 라인)
-            if (_topRopeLine != null)
-            {
-                _topRopeLine.positionCount = netVerticalLines;
-                for (int vi = 0; vi < netVerticalLines; vi++)
-                    _topRopeLine.SetPosition(vi, _cachedNodes[0, vi]);
-            }
-
-            // 2. 하단 메인 밧줄 (추 라인)
-            if (_bottomRopeLine != null)
-            {
-                _bottomRopeLine.positionCount = netVerticalLines;
-                for (int vi = 0; vi < netVerticalLines; vi++)
-                    _bottomRopeLine.SetPosition(vi, _cachedNodes[netHorizontalLines - 1, vi]);
-            }
-
-            // 3. 세로줄 (위→아래)
-            if (_verticalLines != null)
-            {
-                for (int vi = 0; vi < netVerticalLines && vi < _verticalLines.Length; vi++)
-                {
-                    if (_verticalLines[vi] == null) continue;
-                    _verticalLines[vi].positionCount = netHorizontalLines;
-                    for (int hi = 0; hi < netHorizontalLines; hi++)
-                        _verticalLines[vi].SetPosition(hi, _cachedNodes[hi, vi]);
-                }
-            }
-
-            // 4. 가로줄 (pos1→pos2)
-            if (_horizontalLines != null)
-            {
-                for (int hi = 0; hi < netHorizontalLines && hi < _horizontalLines.Length; hi++)
-                {
-                    if (_horizontalLines[hi] == null) continue;
-                    _horizontalLines[hi].positionCount = netVerticalLines;
-                    for (int vi = 0; vi < netVerticalLines; vi++)
-                        _horizontalLines[hi].SetPosition(vi, _cachedNodes[hi, vi]);
-                }
-            }
-
-            // 5. 대각선 (마름모 패턴)
-            if (_diagonalLines != null)
-            {
-                int di = 0;
-                for (int hi = 0; hi < netHorizontalLines - 1; hi++)
-                {
-                    for (int vi = 0; vi < netVerticalLines - 1; vi++)
-                    {
-                        if (di < _diagonalLines.Length && _diagonalLines[di] != null)
-                        {
-                            _diagonalLines[di].positionCount = 2;
-                            _diagonalLines[di].SetPosition(0, _cachedNodes[hi, vi]);
-                            _diagonalLines[di].SetPosition(1, _cachedNodes[hi + 1, vi + 1]);
-                        }
-                        di++;
-                        if (di < _diagonalLines.Length && _diagonalLines[di] != null)
-                        {
-                            _diagonalLines[di].positionCount = 2;
-                            _diagonalLines[di].SetPosition(0, _cachedNodes[hi, vi + 1]);
-                            _diagonalLines[di].SetPosition(1, _cachedNodes[hi + 1, vi]);
-                        }
-                        di++;
-                    }
-                }
-            }
-
-            // 6. 부표 위치 업데이트
-            if (_floatObjects != null && showFloats)
-            {
-                for (int vi = 0; vi < _floatObjects.Length && vi < netVerticalLines; vi++)
-                {
-                    if (_floatObjects[vi] != null)
-                    {
-                        Vector3 floatPos = _cachedNodes[0, vi];
-                        floatPos.y += floatSize * 0.3f;
-                        _floatObjects[vi].transform.position = floatPos;
-                    }
-                }
-            }
-
-            // 7. 매듭 위치 업데이트
-            if (_knotObjects != null)
-            {
-                int ki = 0;
-                for (int hi = 0; hi < netHorizontalLines; hi++)
-                {
-                    for (int vi = 0; vi < netVerticalLines; vi++)
-                    {
-                        if (ki < _knotObjects.Length && _knotObjects[ki] != null)
-                            _knotObjects[ki].transform.position = _cachedNodes[hi, vi];
-                        ki++;
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Web 시각화 생성
-        /// </summary>
-        /// <summary>
-        /// 런타임 비주얼 모드 전환 (그물 메시 ↔ 단순 Cube)
-        /// </summary>
-        /// <summary>
-        /// 비주얼 오브젝트가 파괴/누락되었으면 재생성. 풀 재사용 시 호출.
-        /// </summary>
-        public void EnsureVisualExists()
-        {
-            if (!_initialized || !showVisual) return;
-            bool hasVisual = useFishingNetVisual
-                ? (_netContainer != null)
-                : (_visualObject != null);
-            if (!hasVisual)
-            {
-                Debug.Log($"[DynamicWeb] EnsureVisualExists: 비주얼 누락 → 재생성 (fishingNet={useFishingNetVisual})");
-                CreateVisual();
-            }
-        }
-
-        public void SetFishingNetVisual(bool enabled)
-        {
-            if (useFishingNetVisual == enabled) return;
-            useFishingNetVisual = enabled;
-
-            // 아직 Initialize() 전이면 값만 바꾸고 리턴 (Start()에서 올바른 값으로 생성됨)
-            if (!_initialized) return;
-
-            // 기존 비주얼 제거 — 즉시 비활성화 후 Destroy (물리 콜백 중에도 안전)
-            if (_netContainer != null) { _netContainer.SetActive(false); Destroy(_netContainer); _netContainer = null; }
-            if (_visualObject != null) { _visualObject.SetActive(false); Destroy(_visualObject); _visualObject = null; }
-            _verticalLines = null;
-            _horizontalLines = null;
-            _diagonalLines = null;
-            _topRopeLine = null;
-            _bottomRopeLine = null;
-            _floatObjects = null;
-            _knotObjects = null;
-            _renderer = null;
-
-            // 새 비주얼 생성
-            if (showVisual)
-                CreateVisual();
-        }
-
-        private void CreateVisual()
-        {
-            if (useFishingNetVisual)
-            {
-                CreateFishingNetVisual();
-                return;
-            }
-
-            // Instantiate로 복제된 고아 WebVisual 제거
+            // 고아 비주얼 정리
             for (int i = transform.childCount - 1; i >= 0; i--)
             {
                 var child = transform.GetChild(i);
@@ -557,11 +123,61 @@ namespace BoatAttack
                     Destroy(child.gameObject);
                 }
             }
-            if (_visualObject != null)
+            _visualObject = null;
+
+            if (showVisual) CreateVisual();
+
+            _initialized = true;
+        }
+
+        private void Update()
+        {
+            if (!_isFrozen && (defenseShip1 == null || defenseShip2 == null)) return;
+            UpdateWebTransform();
+            UpdateConvoyBar();
+        }
+
+        // ── 위치/크기 갱신 ──
+
+        private void UpdateWebTransform()
+        {
+            Vector3 pos1 = _isFrozen ? _frozenPos1
+                : ((webAnchor1 != null) ? webAnchor1.position : defenseShip1.position);
+            Vector3 pos2 = _isFrozen ? _frozenPos2
+                : ((webAnchor2 != null) ? webAnchor2.position : defenseShip2.position);
+
+            Vector3 center = (pos1 + pos2) * 0.5f;
+            transform.position = center;
+
+            Vector3 dir = pos2 - pos1;
+            dir.y = 0f;
+            if (dir.magnitude > 0.01f)
+                transform.rotation = Quaternion.LookRotation(dir);
+
+            float distance = Vector3.Distance(pos1, pos2);
+
+            if (_collider != null)
+                _collider.size = new Vector3(webThickness * colliderThicknessMultiplier, webHeight, distance);
+
+            // Convoy 접힘: 일정 간격 미만이면 비활성
+            bool webOpen = distance >= minWebActiveDist;
+            if (webOpen != _wasWebOpen)
             {
-                _visualObject.SetActive(false);
-                Destroy(_visualObject);
+                if (_collider != null) _collider.enabled = webOpen;
+                if (_visualObject != null) _visualObject.SetActive(webOpen);
+                _wasWebOpen = webOpen;
             }
+
+            // 비주얼 크기 (Cube)
+            if (webOpen && _visualObject != null)
+                _visualObject.transform.localScale = new Vector3(webThickness, webHeight, distance);
+        }
+
+        // ── 비주얼 ──
+
+        private void CreateVisual()
+        {
+            if (_visualObject != null) { _visualObject.SetActive(false); Destroy(_visualObject); }
 
             _visualObject = GameObject.CreatePrimitive(PrimitiveType.Cube);
             _visualObject.name = "WebVisual";
@@ -569,490 +185,99 @@ namespace BoatAttack
             _visualObject.transform.localPosition = Vector3.zero;
             _visualObject.transform.localRotation = Quaternion.identity;
 
-            Destroy(_visualObject.GetComponent<BoxCollider>());
+            // 자체 콜라이더 제거 (부모 BoxCollider만 사용)
+            var col = _visualObject.GetComponent<BoxCollider>();
+            if (col != null) Destroy(col);
 
             _renderer = _visualObject.GetComponent<MeshRenderer>();
             if (_renderer != null)
             {
-                Material mat = CreateNetMaterial();
+                Material mat = webMaterial != null
+                    ? new Material(webMaterial)
+                    : CreateSimpleMaterial();
                 if (mat != null)
+                {
+                    mat.color = webColor;
                     _renderer.material = mat;
-            }
-        }
-
-        /// <summary>
-        /// 어부 그물 스타일 시각화 생성
-        /// </summary>
-        private void CreateFishingNetVisual()
-        {
-            // 기존 컨테이너 제거
-            if (_netContainer != null)
-            {
-                _netContainer.SetActive(false);
-                Destroy(_netContainer);
-            }
-            // Instantiate로 복제된 고아 FishingNetVisual도 제거
-            for (int i = transform.childCount - 1; i >= 0; i--)
-            {
-                var child = transform.GetChild(i);
-                if (child.name == "FishingNetVisual")
-                {
-                    child.gameObject.SetActive(false);
-                    Destroy(child.gameObject);
                 }
-            }
-
-            _netContainer = new GameObject("FishingNetVisual");
-            _netContainer.transform.SetParent(transform);
-            _netContainer.transform.localPosition = Vector3.zero;
-            _netContainer.transform.localRotation = Quaternion.identity;
-
-            Material ropeMat = CreateRopeMaterial();
-            Material netMat = CreateNetMaterial();
-
-            // 상단 메인 밧줄 (두꺼움 — 부표 연결 라인)
-            _topRopeLine = CreateLineRenderer("TopRope", ropeMat, mainRopeWidth);
-
-            // 하단 메인 밧줄 (추 라인)
-            _bottomRopeLine = CreateLineRenderer("BottomRope", ropeMat, mainRopeWidth * 0.8f);
-
-            // 세로줄 (위→아래, 처짐)
-            _verticalLines = new LineRenderer[netVerticalLines];
-            for (int i = 0; i < netVerticalLines; i++)
-            {
-                _verticalLines[i] = CreateLineRenderer($"VLine_{i}", netMat, netLineWidth);
-            }
-
-            // 가로줄 (수평 — 상하단 메인 제외한 중간줄)
-            int innerHLines = Mathf.Max(0, netHorizontalLines - 2);
-            _horizontalLines = new LineRenderer[netHorizontalLines];
-            for (int i = 0; i < netHorizontalLines; i++)
-            {
-                float w = (i == 0 || i == netHorizontalLines - 1) ? 0 : netLineWidth * 0.7f;
-                _horizontalLines[i] = CreateLineRenderer($"HLine_{i}", netMat, Mathf.Max(w, netLineWidth * 0.5f));
-            }
-
-            // 대각선 (마름모 패턴 — 그물코)
-            int diagCount = (netVerticalLines - 1) * (netHorizontalLines - 1) * 2;
-            _diagonalLines = new LineRenderer[diagCount];
-            for (int i = 0; i < diagCount; i++)
-            {
-                _diagonalLines[i] = CreateLineRenderer($"DLine_{i}", netMat, netLineWidth * 0.7f);
-            }
-
-            // 매듭 (교차점마다 작은 구체 — 나일론 매듭 표현)
-            CreateKnots(ropeMat);
-
-            // 부표 생성
-            if (showFloats)
-            {
-                CreateFloats();
+                _renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                _renderer.receiveShadows = false;
             }
         }
 
-        /// <summary>
-        /// 그물 교차점마다 매듭(작은 구체) 생성
-        /// </summary>
-        private void CreateKnots(Material knotMat)
+        public void EnsureVisualExists()
         {
-            int totalKnots = netHorizontalLines * netVerticalLines;
-            _knotObjects = new GameObject[totalKnots];
-
-            float knotSize = netLineWidth * 3f; // 줄 두께의 3배
-            if (knotMat == null) knotMat = CreateRopeMaterial();
-
-            int ki = 0;
-            for (int hi = 0; hi < netHorizontalLines; hi++)
-            {
-                for (int vi = 0; vi < netVerticalLines; vi++)
-                {
-                    var knot = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    knot.name = $"Knot_{hi}_{vi}";
-                    knot.transform.SetParent(_netContainer.transform);
-                    knot.transform.localScale = Vector3.one * knotSize;
-
-                    var col = knot.GetComponent<Collider>();
-                    if (col != null) Destroy(col);
-
-                    var rend = knot.GetComponent<MeshRenderer>();
-                    if (rend != null && knotMat != null)
-                        rend.material = knotMat;
-
-                    _knotObjects[ki] = knot;
-                    ki++;
-                }
-            }
+            if (!showVisual) return;
+            bool missing = _visualObject == null || !_visualObject.activeSelf;
+            if (missing) CreateVisual();
         }
 
-        /// <summary>
-        /// 상단 메인 밧줄을 따라 부표(플로트) 생성
-        /// </summary>
-        private void CreateFloats()
+        private Material CreateSimpleMaterial()
         {
-            // 매 2~3번째 세로줄마다 부표 배치
-            int floatInterval = Mathf.Max(1, netVerticalLines / 6);
-            int floatCount = 0;
-            for (int vi = 1; vi < netVerticalLines - 1; vi += floatInterval)
-                floatCount++;
-
-            _floatObjects = new GameObject[netVerticalLines];
-
-            Material floatMat = CreateFloatMaterial();
-
-            int idx = 0;
-            for (int vi = 1; vi < netVerticalLines - 1; vi += floatInterval)
-            {
-                var floatObj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                floatObj.name = $"Float_{idx}";
-                floatObj.transform.SetParent(_netContainer.transform);
-                floatObj.transform.localScale = Vector3.one * floatSize;
-
-                // 콜라이더 제거 (비주얼 전용)
-                var col = floatObj.GetComponent<Collider>();
-                if (col != null) Destroy(col);
-
-                var rend = floatObj.GetComponent<MeshRenderer>();
-                if (rend != null && floatMat != null)
-                    rend.material = floatMat;
-
-                _floatObjects[vi] = floatObj;
-                idx++;
-            }
+            Shader s = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            if (s == null) return null;
+            var mat = new Material(s);
+            // 반투명
+            mat.SetFloat("_Surface", 1f);      // Transparent
+            mat.SetFloat("_Blend", 0f);
+            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            mat.SetInt("_ZWrite", 0);
+            mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+            mat.renderQueue = 3000;
+            mat.color = webColor;
+            return mat;
         }
 
-        private LineRenderer CreateLineRenderer(string name, Material mat, float width)
-        {
-            GameObject obj = new GameObject(name);
-            obj.transform.SetParent(_netContainer.transform);
-            obj.transform.localPosition = Vector3.zero;
-            obj.transform.localRotation = Quaternion.identity;
-
-            LineRenderer lr = obj.AddComponent<LineRenderer>();
-            lr.useWorldSpace = true;
-            lr.startWidth = width;
-            lr.endWidth = width;
-            lr.numCapVertices = 3;
-            lr.numCornerVertices = 3;
-            lr.material = mat;
-            lr.startColor = ropeColor;
-            lr.endColor = ropeColor;
-            lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            lr.receiveShadows = false;
-            return lr;
-        }
-
-        /// <summary>
-        /// 메인 밧줄용 불투명 머티리얼 (나일론 밧줄)
-        /// </summary>
-        private Material CreateRopeMaterial()
-        {
-            if (webMaterial != null)
-            {
-                Material mat = new Material(webMaterial);
-                mat.color = ropeColor;
-                return mat;
-            }
-
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
-
-            if (shader != null)
-            {
-                Material mat = new Material(shader);
-                mat.color = ropeColor;
-                mat.SetFloat("_Smoothness", 0.25f); // 나일론 약간 광택
-                mat.SetFloat("_Metallic", 0f);
-                return mat;
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// 그물코용 머티리얼 (불투명 나일론 — 축구골대 느낌)
-        /// </summary>
-        private Material CreateNetMaterial()
-        {
-            if (webMaterial != null)
-            {
-                Material mat = new Material(webMaterial);
-                mat.color = ropeColor;
-                return mat;
-            }
-
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
-
-            if (shader != null)
-            {
-                Material mat = new Material(shader);
-                mat.color = ropeColor;
-                mat.SetFloat("_Smoothness", 0.2f);
-                mat.SetFloat("_Metallic", 0f);
-                return mat;
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// 부표용 불투명 머티리얼 (주황색 플라스틱)
-        /// </summary>
-        private Material CreateFloatMaterial()
-        {
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
-
-            if (shader != null)
-            {
-                Material mat = new Material(shader);
-                mat.color = floatColor;
-                mat.SetFloat("_Smoothness", 0.7f); // 플라스틱 광택
-                mat.SetFloat("_Metallic", 0f);
-                return mat;
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// Web 색상 변경
-        /// </summary>
+        /// <summary>색상 변경 (외부 호출용)</summary>
         public void SetColor(Color color)
         {
             webColor = color;
             if (_renderer != null && _renderer.material != null)
-            {
                 _renderer.material.color = color;
-            }
-
-            // 어부 그물 라인 색상 업데이트
-            SetNetLineColors(_verticalLines, ropeColor);
-            SetNetLineColors(_horizontalLines, ropeColor);
-            SetNetLineColors(_diagonalLines, new Color(ropeColor.r, ropeColor.g, ropeColor.b, 0.7f));
-            if (_topRopeLine != null) { _topRopeLine.startColor = ropeColor; _topRopeLine.endColor = ropeColor; }
-            if (_bottomRopeLine != null) { _bottomRopeLine.startColor = ropeColor; _bottomRopeLine.endColor = ropeColor; }
         }
 
-        private void SetNetLineColors(LineRenderer[] lines, Color color)
+        /// <summary>호환성 유지용 stub — 현재는 항상 단순 Cube 사용</summary>
+        public void SetFishingNetVisual(bool enabled) { }
+
+        /// <summary>
+        /// Instantiate 후 복사된 내부 상태 초기화.
+        /// Instantiate는 _initialized=true, _visualObject=원본참조 등을 그대로 복사하므로
+        /// 클론 오브젝트에서 반드시 호출해야 한다.
+        /// </summary>
+        public void ResetCloneState()
         {
-            if (lines == null) return;
-            foreach (var lr in lines)
-            {
-                if (lr == null) continue;
-                lr.startColor = color;
-                lr.endColor = color;
-                if (lr.material != null)
-                    lr.material.color = color;
-            }
+            _initialized = false;
+            _isFrozen = false;
+            _wasWebOpen = true;
+            _convoyBarActive = false;
+            _visualObject = null;
+            _renderer = null;
+            _collider = null;
+            _convoyBarObject = null;
         }
 
         private void OnValidate()
         {
-            if (Application.isPlaying && showVisual && _renderer != null && _renderer.material != null)
-            {
-                SetColor(webColor);
-            }
+            if (Application.isPlaying && _renderer != null && _renderer.material != null)
+                _renderer.material.color = webColor;
         }
 
-        /// <summary>
-        /// Trigger 충돌 감지
-        /// </summary>
-        private void OnTriggerEnter(Collider other)
+        // ── 고정 (정지 트랩) ──
+
+        public void FreezeAtCurrentPositions()
         {
-            if (other.CompareTag("attack_boat"))
-            {
-                HandleAttackBoatCollision(other.gameObject);
-            }
-            else if (IsOtherPairDefenseShip(other.gameObject))
-            {
-                HandleAllyWebCollision(other.gameObject);
-            }
+            _frozenPos1 = (webAnchor1 != null) ? webAnchor1.position
+                : (defenseShip1 != null ? defenseShip1.position : transform.position);
+            _frozenPos2 = (webAnchor2 != null) ? webAnchor2.position
+                : (defenseShip2 != null ? defenseShip2.position : transform.position);
+            _isFrozen = true;
         }
 
-        /// <summary>
-        /// Trigger 내부 머무름 (매 프레임 체크 — tunneling 보완)
-        /// </summary>
-        private void OnTriggerStay(Collider other)
-        {
-            if (other.CompareTag("attack_boat"))
-            {
-                HandleAttackBoatCollision(other.gameObject);
-            }
-        }
+        public void UnfreezeWeb() { _isFrozen = false; }
 
-        /// <summary>
-        /// 다른 페어의 아군 선박인지 확인 (자기 페어는 제외)
-        /// </summary>
-        private bool IsOtherPairDefenseShip(GameObject obj)
-        {
-            if (obj == null)
-                return false;
+        // ── Convoy Bar ──
 
-            // 자기 페어의 에이전트는 무시
-            if (defenseShip1 != null && obj.transform == defenseShip1)
-                return false;
-            if (defenseShip2 != null && obj.transform == defenseShip2)
-                return false;
-
-            // 다른 페어의 DefenseAgent만 감지
-            if (obj.GetComponent<DefenseAgent>() != null)
-                return true;
-
-            return false;
-        }
-
-        /// <summary>
-        /// 아군 선박 Web 충돌 처리 (자신의 Web 정보도 전달)
-        /// </summary>
-        private void HandleAllyWebCollision(GameObject allyShip)
-        {
-            if (allyShip == null)
-                return;
-
-            if (envController == null)
-            {
-                Transform envRoot = transform.parent != null ? transform.parent : transform;
-                envController = envRoot.GetComponentInChildren<DefenseEnvController>();
-            }
-
-            if (envController != null)
-            {
-                envController.OnAllyHitWeb(allyShip, this);
-            }
-        }
-
-        /// <summary>
-        /// 물리 충돌 감지
-        /// </summary>
-        private void OnCollisionEnter(Collision collision)
-        {
-            if (collision.gameObject.CompareTag("attack_boat"))
-            {
-                HandleAttackBoatCollision(collision.gameObject);
-            }
-            else if (IsOtherPairDefenseShip(collision.gameObject))
-            {
-                HandleAllyWebCollision(collision.gameObject);
-            }
-        }
-
-        /// <summary>
-        /// attack_boat과의 충돌 처리
-        /// </summary>
-        private void HandleAttackBoatCollision(GameObject attackBoat)
-        {
-            if (attackBoat == null)
-                return;
-
-            if (envController == null)
-            {
-                Transform envRoot = transform.parent != null ? transform.parent : transform;
-                envController = envRoot.GetComponentInChildren<DefenseEnvController>();
-                if (envController == null)
-                    return;
-            }
-
-            envController.OnEnemyHitWeb(attackBoat, this);
-        }
-
-        /// <summary>
-        /// 폭발 효과 생성
-        /// </summary>
-        private void CreateExplosion(Vector3 position)
-        {
-            if (explosionPrefab == null)
-                return;
-
-            Vector3 explosionPosition = position;
-            explosionPosition.y += 0.5f;
-
-            GameObject explosion = Instantiate(explosionPrefab, explosionPosition, Quaternion.identity);
-
-            if (explosion != null)
-            {
-                explosion.SetActive(true);
-                float scaleMultiplier = explosionScale;
-                explosion.transform.localScale = Vector3.one * scaleMultiplier;
-
-                ParticleSystem[] particleSystems = explosion.GetComponentsInChildren<ParticleSystem>();
-                foreach (var ps in particleSystems)
-                {
-                    var main = ps.main;
-
-                    if (main.startSize.mode == ParticleSystemCurveMode.Constant)
-                    {
-                        main.startSize = main.startSize.constant * scaleMultiplier;
-                    }
-                    else if (main.startSize.mode == ParticleSystemCurveMode.TwoConstants)
-                    {
-                        main.startSize = new ParticleSystem.MinMaxCurve(
-                            main.startSize.constantMin * scaleMultiplier,
-                            main.startSize.constantMax * scaleMultiplier
-                        );
-                    }
-
-                    if (main.startSpeed.mode == ParticleSystemCurveMode.Constant)
-                    {
-                        main.startSpeed = main.startSpeed.constant * scaleMultiplier;
-                    }
-                    else if (main.startSpeed.mode == ParticleSystemCurveMode.TwoConstants)
-                    {
-                        main.startSpeed = new ParticleSystem.MinMaxCurve(
-                            main.startSpeed.constantMin * scaleMultiplier,
-                            main.startSpeed.constantMax * scaleMultiplier
-                        );
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// 방어선에게 보상 부여
-        /// </summary>
-        private void RewardDefenseShips()
-        {
-            if (defenseShip1 != null)
-            {
-                var agent = defenseShip1.GetComponent<Unity.MLAgents.Agent>();
-                if (agent != null)
-                {
-                    agent.AddReward(defenseReward);
-                }
-            }
-
-            if (defenseShip2 != null)
-            {
-                var agent = defenseShip2.GetComponent<Unity.MLAgents.Agent>();
-                if (agent != null)
-                {
-                    agent.AddReward(defenseReward);
-                }
-            }
-        }
-
-        /// <summary>
-        /// attack_boat 리셋
-        /// </summary>
-        private void ResetAttackBoat(GameObject attackBoat)
-        {
-            if (attackBoat == null)
-                return;
-
-            if (envController == null)
-            {
-                Transform envRoot = transform.parent != null ? transform.parent : transform;
-                envController = envRoot.GetComponentInChildren<DefenseEnvController>();
-            }
-
-            if (envController != null)
-            {
-                envController.OnEnemyHitWeb(attackBoat, this);
-            }
-        }
-
-        // ===================== Convoy Bar (쌍동선 연결 막대) =====================
-
-        /// <summary>
-        /// Convoy 막대 생성 (두 선박 사이 금속 막대)
-        /// </summary>
         public void CreateConvoyBar()
         {
             if (!showConvoyBar) return;
@@ -1060,95 +285,65 @@ namespace BoatAttack
 
             _convoyBarObject = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             _convoyBarObject.name = "ConvoyBar";
-            // DynamicWeb의 자식으로 설정 → GetComponentInParent<DynamicWeb>()로 자동 식별
             _convoyBarObject.transform.SetParent(transform);
 
-            // 기본 CapsuleCollider 제거 → BoxCollider로 교체 (수평 Ray 판정 용이)
             var defaultCol = _convoyBarObject.GetComponent<Collider>();
             if (defaultCol != null) Destroy(defaultCol);
 
             var boxCol = _convoyBarObject.AddComponent<BoxCollider>();
             boxCol.isTrigger = true;
-            // Cylinder 기본 크기(직경1,높이2) 기준. Y=높이 방향(두 선박 잇는 축), X/Z=두께 방향
-            // X/Z를 크게 잡아 수평 Ray가 확실히 맞도록 (실제 크기는 localScale 곱해짐)
             boxCol.size = new Vector3(40f, 2f, 40f);
 
-            // 금속 재질
             var rend = _convoyBarObject.GetComponent<MeshRenderer>();
             if (rend != null)
             {
-                Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-                if (shader == null) shader = Shader.Find("Standard");
-                if (shader != null)
+                Shader s = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+                if (s != null)
                 {
-                    Material mat = new Material(shader);
+                    var mat = new Material(s);
                     mat.color = convoyBarColor;
-                    mat.SetFloat("_Smoothness", 0.75f); // 금속 광택
+                    mat.SetFloat("_Smoothness", 0.75f);
                     mat.SetFloat("_Metallic", 0.85f);
                     rend.material = mat;
                 }
             }
-
             _convoyBarActive = true;
         }
 
-        /// <summary>
-        /// Convoy 막대 위치 갱신 (매 프레임, CONVOY 상태에서 호출)
-        /// </summary>
         private void UpdateConvoyBar()
         {
             if (_convoyBarObject == null || !_convoyBarActive) return;
             if (defenseShip1 == null || defenseShip2 == null) return;
 
-            Vector3 pos1 = defenseShip1.position;
-            Vector3 pos2 = defenseShip2.position;
-            float dist = Vector3.Distance(pos1, pos2);
+            Vector3 p1 = defenseShip1.position;
+            Vector3 p2 = defenseShip2.position;
+            float dist = Vector3.Distance(p1, p2);
 
-            // 중심 위치
-            _convoyBarObject.transform.position = (pos1 + pos2) * 0.5f;
-
-            // Cylinder는 Y축이 길이 방향 → 두 선박을 잇는 방향으로 회전
-            Vector3 dir = (pos2 - pos1).normalized;
+            _convoyBarObject.transform.position = (p1 + p2) * 0.5f;
+            Vector3 dir = (p2 - p1).normalized;
             if (dir.sqrMagnitude > 0.001f)
-            {
                 _convoyBarObject.transform.rotation = Quaternion.FromToRotation(Vector3.up, dir);
-            }
-
-            // Cylinder: localScale.y = 길이/2, x/z = 두께
-            _convoyBarObject.transform.localScale = new Vector3(
-                convoyBarThickness, dist * 0.5f, convoyBarThickness);
+            _convoyBarObject.transform.localScale = new Vector3(convoyBarThickness, dist * 0.5f, convoyBarThickness);
         }
 
-        /// <summary>
-        /// Convoy 막대 분리 (Deploy 시 호출) — Rigidbody 추가 → 중력으로 침몰
-        /// </summary>
         public void DetachConvoyBar()
         {
             if (_convoyBarObject == null) return;
             _convoyBarActive = false;
-
-            // 부모 해제 (이미 null이지만 확인)
             _convoyBarObject.transform.SetParent(null);
 
-            // Rigidbody 추가 → 중력으로 물에 빠짐
-            Rigidbody barRB = _convoyBarObject.AddComponent<Rigidbody>();
+            var barRB = _convoyBarObject.AddComponent<Rigidbody>();
             barRB.mass = 50f;
-            barRB.drag = 0.5f;         // 수중 저항
+            barRB.drag = 0.5f;
             barRB.angularDrag = 0.3f;
             barRB.useGravity = true;
-
-            // 약간의 회전 + 아래쪽 힘 (자연스러운 낙하)
             barRB.AddTorque(Random.insideUnitSphere * 30f, ForceMode.Impulse);
             barRB.AddForce(Vector3.down * 20f, ForceMode.Impulse);
 
-            // 일정 시간 후 파괴
             Destroy(_convoyBarObject, barSinkTime);
             _convoyBarObject = null;
         }
 
-        /// <summary>
-        /// Convoy 막대 즉시 파괴 (리셋/비활성화 시)
-        /// </summary>
         public void DestroyConvoyBar()
         {
             if (_convoyBarObject != null)
@@ -1160,23 +355,86 @@ namespace BoatAttack
             _convoyBarActive = false;
         }
 
-        /// <summary>
-        /// Gizmo 시각화
-        /// </summary>
+        // ── 충돌 감지 ──
+
+        private void OnTriggerEnter(Collider other)
+        {
+            if (other.CompareTag("attack_boat"))
+                HandleAttackBoatCollision(other.gameObject);
+            else if (IsOtherPairDefenseShip(other.gameObject))
+                HandleAllyWebCollision(other.gameObject);
+        }
+
+        private void OnTriggerStay(Collider other)
+        {
+            if (other.CompareTag("attack_boat"))
+                HandleAttackBoatCollision(other.gameObject);
+        }
+
+        private void OnCollisionEnter(Collision collision)
+        {
+            if (collision.gameObject.CompareTag("attack_boat"))
+                HandleAttackBoatCollision(collision.gameObject);
+            else if (IsOtherPairDefenseShip(collision.gameObject))
+                HandleAllyWebCollision(collision.gameObject);
+        }
+
+        private bool IsOtherPairDefenseShip(GameObject obj)
+        {
+            if (obj == null) return false;
+            DefenseAgent agent = obj.GetComponentInParent<DefenseAgent>();
+            if (agent == null) return false;
+            if (defenseShip1 != null && agent.transform == defenseShip1) return false;
+            if (defenseShip2 != null && agent.transform == defenseShip2) return false;
+            return true;
+        }
+
+        private void HandleAllyWebCollision(GameObject allyShip)
+        {
+            if (allyShip == null) return;
+            DefenseAgent agent = allyShip.GetComponentInParent<DefenseAgent>();
+            if (agent != null) allyShip = agent.gameObject;
+
+            FindEnvController();
+            envController?.OnAllyHitWeb(allyShip, this);
+        }
+
+        private void HandleAttackBoatCollision(GameObject attackBoat)
+        {
+            if (attackBoat == null) return;
+            FindEnvController();
+            envController?.OnEnemyHitWeb(attackBoat, this);
+        }
+
+        private void FindEnvController()
+        {
+            if (envController != null) return;
+            Transform root = transform.parent != null ? transform.parent : transform;
+            envController = root.GetComponentInChildren<DefenseEnvController>();
+        }
+
+        // ── 폭발 효과 ──
+
+        private void CreateExplosion(Vector3 position)
+        {
+            if (explosionPrefab == null) return;
+            position.y += 0.5f;
+            var go = Instantiate(explosionPrefab, position, Quaternion.identity);
+            if (go == null) return;
+            go.SetActive(true);
+            go.transform.localScale = Vector3.one * explosionScale;
+            Destroy(go, 3f);
+        }
+
+        // ── Gizmo ──
+
         private void OnDrawGizmos()
         {
-            if (defenseShip1 == null || defenseShip2 == null)
-                return;
-
-            Vector3 pos1 = defenseShip1.position;
-            Vector3 pos2 = defenseShip2.position;
-            Vector3 centerPos = (pos1 + pos2) / 2f;
-
-            Gizmos.color = Color.cyan;
-            Gizmos.DrawLine(pos1, pos2);
-
+            if (defenseShip1 == null || defenseShip2 == null) return;
+            Gizmos.color = _isFrozen ? Color.red : Color.cyan;
+            Gizmos.DrawLine(defenseShip1.position, defenseShip2.position);
             Gizmos.color = Color.yellow;
-            Gizmos.DrawWireSphere(centerPos, 1f);
+            Gizmos.DrawWireSphere((defenseShip1.position + defenseShip2.position) * 0.5f, 1f);
         }
     }
 }
