@@ -3077,58 +3077,57 @@ namespace BoatAttack
 
             int poolCap = launchZoneManager.GetPoolCapacity();
 
-            // ── 1단계: 쌍별로 클러스터 내 후보 배정 생성 (agent, enemy, dist) ──
-            var candidates = new System.Collections.Generic.List<(DefenseAgent agent, GameObject enemy, float dist)>();
+            // ── 0단계: 정지 트랩 web Collider 수집 ──
+            // 기준: DynamicWeb.IsFrozen == true (FreezeAtCurrentPositions 실제 호출된 것만)
+            // IsNeutralized 조건은 convoy secondary가 convoy 중에도 항상 true라 부정확
+            var stopTrapColliders = new System.Collections.Generic.HashSet<Collider>();
+            for (int pi = 0; pi < poolCap; pi++)
+            {
+                var pair = launchZoneManager.GetPair(pi);
+                if (pair == null || pair.webObject == null) continue;
+                var dw = pair.webObject.GetComponent<DynamicWeb>();
+                if (dw != null && dw.IsFrozen)
+                {
+                    var col = pair.webObject.GetComponent<Collider>();
+                    if (col != null) stopTrapColliders.Add(col);
+                }
+            }
 
+            // ── 1단계: 전체 생존 적군 중 raycast 차단 안 된 것만 수집 ──
+            var uncoveredEnemies = new System.Collections.Generic.List<GameObject>();
+            if (_enemyPool != null)
+            {
+                foreach (var e in _enemyPool)
+                {
+                    if (e == null || !e.activeInHierarchy || IsEnemyNeutralized(e)) continue;
+                    if (!IsEnemyCoveredByStaticTrap(e, stopTrapColliders))
+                        uncoveredEnemies.Add(e);
+                }
+            }
+
+            if (uncoveredEnemies.Count == 0)
+            {
+                Debug.Log("[Stage10] FlankPhase: 차단 안 된 적군 없음 (전부 정지 트랩 커버)");
+                return;
+            }
+
+            // ── 2단계: 활성(비중화) 에이전트 수집 ──
+            var flankCandidates = new System.Collections.Generic.List<DefenseAgent>();
             for (int pi = 0; pi < poolCap; pi++)
             {
                 var pair = launchZoneManager.GetPair(pi);
                 if (pair == null || !pair.isActive) continue;
-
-                var pairAgents = new System.Collections.Generic.List<DefenseAgent>();
-                if (pair.agent1 != null && !pair.agent1.IsNeutralized) pairAgents.Add(pair.agent1);
-                if (pair.agent2 != null && !pair.agent2.IsNeutralized) pairAgents.Add(pair.agent2);
-                if (pairAgents.Count == 0) continue;
-
-                // 클러스터 내 생존 적군만 수집
-                var clusterSurvivors = new System.Collections.Generic.List<GameObject>();
-                if (pair.clusterEnemyIndices != null && _enemyPool != null)
-                {
-                    foreach (int ei in pair.clusterEnemyIndices)
-                    {
-                        if (ei < 0 || ei >= _enemyPool.Length) continue;
-                        var e = _enemyPool[ei];
-                        if (e != null && e.activeInHierarchy && !IsEnemyNeutralized(e))
-                            clusterSurvivors.Add(e);
-                    }
-                }
-                if (clusterSurvivors.Count == 0) continue;
-
-                // lateral 축으로 에이전트·적 정렬
-                Vector3 lateralAxis = Vector3.right;
-                if (motherShip != null)
-                {
-                    Vector3 approachDir = motherShip.transform.position - clusterSurvivors[0].transform.position;
-                    approachDir.y = 0f;
-                    if (approachDir.sqrMagnitude > 0.01f)
-                        lateralAxis = Vector3.Cross(approachDir.normalized, Vector3.up).normalized;
-                }
-                pairAgents.Sort((a, b) =>
-                    Vector3.Dot(a.transform.position, lateralAxis)
-                        .CompareTo(Vector3.Dot(b.transform.position, lateralAxis)));
-                clusterSurvivors.Sort((a, b) =>
-                    Vector3.Dot(a.transform.position, lateralAxis)
-                        .CompareTo(Vector3.Dot(b.transform.position, lateralAxis)));
-
-                for (int i = 0; i < pairAgents.Count && i < clusterSurvivors.Count; i++)
-                {
-                    float dist = Vector3.Distance(pairAgents[i].transform.position,
-                                                  clusterSurvivors[i].transform.position);
-                    candidates.Add((pairAgents[i], clusterSurvivors[i], dist));
-                }
+                if (pair.agent1 != null && !pair.agent1.IsNeutralized) flankCandidates.Add(pair.agent1);
+                if (pair.agent2 != null && !pair.agent2.IsNeutralized) flankCandidates.Add(pair.agent2);
             }
 
-            // ── 2단계: 거리 오름차순 정렬 후 greedy 확정 (중복 적군은 가까운 쪽만) ──
+            // ── 3단계: 전체 조합 (agent×enemy) 거리 계산 → 오름차순 greedy 확정 ──
+            var candidates = new System.Collections.Generic.List<(DefenseAgent agent, GameObject enemy, float dist)>();
+            foreach (var agent in flankCandidates)
+                foreach (var enemy in uncoveredEnemies)
+                    candidates.Add((agent, enemy,
+                        Vector3.Distance(agent.transform.position, enemy.transform.position)));
+
             candidates.Sort((a, b) => a.dist.CompareTo(b.dist));
 
             var assignedAgents  = new System.Collections.Generic.HashSet<DefenseAgent>();
@@ -3137,16 +3136,15 @@ namespace BoatAttack
             foreach (var (agent, enemy, dist) in candidates)
             {
                 if (assignedAgents.Contains(agent) || assignedEnemies.Contains(enemy)) continue;
-
                 agent.ActivateSingleNet();
                 agent.SetFlankPhase(true, enemy);
                 _flankAgents.Add(agent);
                 assignedAgents.Add(agent);
                 assignedEnemies.Add(enemy);
-                Debug.Log($"[Stage10] {agent.name} → {enemy.name} (dist={dist:F0}m)");
+                Debug.Log($"[Stage10] {agent.name} → {enemy.name} (dist={dist:F0}m, uncovered)");
             }
 
-            Debug.Log($"[Stage10] FlankPhase 시작: 배정됨={_flankAgents.Count}대");
+            Debug.Log($"[Stage10] FlankPhase 시작: uncovered={uncoveredEnemies.Count}대, 배정={_flankAgents.Count}대");
 
             // 카메라를 첫 번째 flank 에이전트로 전환
             if (_flankAgents.Count > 0)
@@ -3155,6 +3153,35 @@ namespace BoatAttack
                 _camTargetId = 0;
                 _followCamSnap = true;
             }
+        }
+
+        /// <summary>
+        /// 적군→모선 Raycast가 기존 정지 트랩 web collider에 막히는지 판별.
+        /// 막힘 → 이미 커버됨 → FlankPhase 불필요.
+        /// </summary>
+        private bool IsEnemyCoveredByStaticTrap(
+            GameObject enemy,
+            System.Collections.Generic.HashSet<Collider> stopTrapColliders)
+        {
+            if (stopTrapColliders == null || stopTrapColliders.Count == 0) return false;
+            if (motherShip == null) return false;
+
+            Vector3 origin = enemy.transform.position + Vector3.up * 2f; // 수면 위로 살짝
+            Vector3 target = motherShip.transform.position + Vector3.up * 2f;
+            Vector3 dir    = target - origin;
+            float   dist   = dir.magnitude;
+            if (dist < 0.1f) return false;
+
+            // trigger collider도 감지하도록 QueryTriggerInteraction.Collide 사용
+            var hits = Physics.RaycastAll(origin, dir / dist, dist,
+                                          Physics.AllLayers,
+                                          QueryTriggerInteraction.Collide);
+            foreach (var hit in hits)
+            {
+                if (stopTrapColliders.Contains(hit.collider))
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>
