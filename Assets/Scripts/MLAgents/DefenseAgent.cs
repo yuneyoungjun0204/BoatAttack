@@ -234,13 +234,13 @@ namespace BoatAttack
         private bool _episodeEnded = false;
         private bool _neutralized = false;
         private bool _straightMode = false;  // Stage9: 직진 이탈 모드
-        private bool _isFlankPhase = false;  // Stage10: 측면 추격 모드
-        private GameObject _flankTarget = null; // Stage10: 담당 적군
+
+        // Split mode: 적 근접 시 강제 분리 조향
+        private bool _splitMode = false;
+        private float _splitSteer = 0f;
+        private int _splitStepsRemaining = 0;
         private SingleNetCapture _singleNetCapture;  // Disarm 후 소형 포획 존
-        private bool _deployMode = false;   // Convoy-Deploy: 그물 전개 모드
-        private float _deploySteerOverride = -0.5f;
-        private float _flankAlignEndTime = -1f; // Stage10: 분리 후 방향 정렬 타이머
-        private bool _convoyMode = false;   // FixedJoint 쌍동선: 차동 추력 모드
+        private bool _singleNetMode = false;          // SingleNet 포획 모드 (LOS 방향 반전)
 
         // PD LOS 가이던스 (배치 후 일정 시간 동안 클러스터 방향으로 직진)
         [Header("=== PD LOS Guidance ===")]
@@ -257,7 +257,6 @@ namespace BoatAttack
         private float _guidanceEndTime = 0f;
         private Vector3 _guidanceTarget = Vector3.zero;
         private float _prevBearingError = 0f;
-        private float _prevFlankLateralDist = -1f;
 
         // LOS 가이던스 시각화
         private Vector3 _losFootPoint      = Vector3.zero;
@@ -281,8 +280,8 @@ namespace BoatAttack
         [Tooltip("RL 잔차 조향 스케일 (0=완전 LOS 고정, 1=RL이 ±1 전범위 수정 가능)")]
         [Range(0f, 1f)] public float residualSteerScale = 0.5f;
 
-        [Tooltip("RL 잔차 스로틀 스케일 (0=LOS 최대 스로틀 고정, 0.5=±0.5×max 조절)")]
-        [Range(0f, 0.5f)] public float residualThrottleScale = 0.25f;
+        [Tooltip("RL 잔차 스로틀 스케일 (0=LOS 최대 스로틀 고정, 1=RL이 스로틀 전범위 조절)")]
+        [Range(0f, 1f)] public float residualThrottleScale = 0.25f;
 
         [Header("=== Convoy (FixedJoint) ===")]
         private float _prevThrottle = 0f;
@@ -396,26 +395,10 @@ namespace BoatAttack
             }
 
             bool hasLookAhead  = _losLookAheadPoint != Vector3.zero;
-            bool isFlank = _isFlankPhase && _flankTarget != null;
-            bool isConvoyOrGuidance = !isFlank && (_guidancePhase || _convoyMode) && _guidanceTarget != Vector3.zero;
+            bool isConvoyOrGuidance = _guidancePhase && _guidanceTarget != Vector3.zero;
             float h = 2f;
 
-            if (hasLookAhead && isFlank && _flankTarget != null && motherShip != null)
-            {
-                // 포획 트랩: 적→모선 LOS 전체선 (회색)
-                SetLine(_losLine,     _flankTarget.transform.position + Vector3.up * h,
-                                      motherShip.transform.position   + Vector3.up * h);
-                // 에이전트 → foot (흰색 수선)
-                SetLine(_losFootLine, transform.position + Vector3.up * h,
-                                      _losFootPoint       + Vector3.up * h);
-                // foot → P (청록, look-ahead)
-                SetLine(_losAheadLine, _losFootPoint + Vector3.up * h, _losLookAheadPoint + Vector3.up * h);
-                // 에이전트 → P (노랑, 실제 조향 방향)
-                SetLine(_losSteerLine, transform.position + Vector3.up * h, _losLookAheadPoint + Vector3.up * h);
-                _losMarker.position = _losLookAheadPoint + Vector3.up * h;
-                SetLOSVisualizersActive(true);
-            }
-            else if (hasLookAhead && isConvoyOrGuidance && motherShip != null)
+            if (hasLookAhead && isConvoyOrGuidance && motherShip != null)
             {
                 // 정지트랩 설치: 클러스터→모선 기준선 (회색)
                 SetLine(_losLine, _guidanceTarget + Vector3.up * h,
@@ -508,6 +491,18 @@ namespace BoatAttack
         public bool IsNeutralized => _neutralized;
         public void SetNeutralized(bool value) => _neutralized = value;
 
+        public bool IsSplitting => _splitMode;
+
+        /// <summary>
+        /// 적 근접 분리 모드: durationSteps 동안 steerOverride 방향으로 전속력 조향
+        /// </summary>
+        public void SetSplitMode(bool active, float steerOverride = 0f, int durationSteps = 80)
+        {
+            _splitMode = active;
+            _splitSteer = steerOverride;
+            _splitStepsRemaining = active ? durationSteps : 0;
+        }
+
         /// <summary>
         /// Stage9: 직진 이탈 모드 설정
         /// true → FixedUpdate에서 ML 정책 무시, 현재 헤딩으로 전속력 직진
@@ -519,34 +514,20 @@ namespace BoatAttack
             _straightModeLogCount = 0;
         }
 
-        /// <summary>Stage10: 현재 Flank Phase 여부 (EnvController 체크용)</summary>
-        public bool IsFlankPhase => _isFlankPhase;
-
-        /// <summary>Stage10: 현재 담당 적군 (EnvController 체크용)</summary>
-        public GameObject FlankTarget => _flankTarget;
-
-        /// <summary>
-        /// Stage10: Flank Phase 활성화/비활성화.
-        /// EnvController의 TriggerFlankPhase()에서 호출.
-        /// </summary>
-        public void SetFlankPhase(bool active, GameObject target = null)
-        {
-            _isFlankPhase = active;
-            _flankTarget  = active ? target : null;
-        }
-
-        /// <summary>Disarm 이후 소형 포획 존 활성화</summary>
+        /// <summary>Disarm 이후 소형 포획 존 활성화 + LOS 방향 반전</summary>
         public void ActivateSingleNet()
         {
             if (_singleNetCapture == null) return;
             if (envController != null) _singleNetCapture.Init(envController);
             _singleNetCapture.Activate();
+            _singleNetMode = true;
         }
 
         /// <summary>에피소드 리셋 시 소형 포획 존 비활성화</summary>
         public void DeactivateSingleNet()
         {
             if (_singleNetCapture != null) _singleNetCapture.Deactivate();
+            _singleNetMode = false;
         }
 
         /// <summary>
@@ -616,41 +597,6 @@ namespace BoatAttack
         private int _straightModeLogCount = 0;
 
         /// <summary>
-        /// Convoy-Deploy: 그물 전개 모드 설정
-        /// true → ML 정책 무시, 지정 방향으로 조타하며 전속력 이동
-        /// </summary>
-        public bool IsDeployMode => _deployMode;
-
-        public void SetDeployMode(bool value, float steerOverride = -0.5f)
-        {
-            if (value) _deploySteerOverride = steerOverride; // 비활성화 시엔 override 보존 (정렬 단계가 재사용)
-            _deployMode = value;
-            if (value) { _guidancePhase = false; _guidanceEndTime = 0f; }
-        }
-
-        /// <summary>
-        /// Stage10 EXIT: deploy 방향을 duration초간 유지 후 RL 전환 (적과 방향 정렬)
-        /// _deploySteerOverride는 이미 DEPLOY에서 설정된 값 재사용
-        /// </summary>
-        public void BeginFlankAlign(float duration)
-        {
-            _deployMode = false;
-            _flankAlignEndTime = Time.time + duration;
-            _guidancePhase = false;
-            _guidanceEndTime = 0f;
-        }
-
-        /// <summary>
-        /// FixedJoint 쌍동선 모드: Agent1이 차동 추력으로 양쪽 엔진 제어
-        /// </summary>
-        public bool IsConvoyMode => _convoyMode;
-
-        public void SetConvoyMode(bool value)
-        {
-            _convoyMode = value;
-        }
-
-        /// <summary>
         /// 런타임 배치 시 에이전트 상태 리셋
         /// OnEpisodeBegin과 달리 ML-Agents 에피소드를 건드리지 않고 내부 플래그만 초기화
         /// </summary>
@@ -659,21 +605,18 @@ namespace BoatAttack
             _episodeEnded = false;
             _neutralized = false;
             _straightMode = false;
-            _deployMode = false;
-            _convoyMode = false;
+            _splitMode = false;
+            _splitSteer = 0f;
+            _splitStepsRemaining = 0;
             _guidancePhase = false;
             _guidanceEndTime = 0f;
-            _guidanceTarget = Vector3.zero;  // 클러스터 타겟 리셋 (이전 에피소드 잔류 방지)
+            _guidanceTarget = Vector3.zero;
             _prevBearingError = 0f;
             assignedTargetIndex = -1;
             _prevThrottle = 0f;
             _prevSteering = 0f;
             _throttleDelta = 0f;
             _steeringDelta = 0f;
-            _isFlankPhase = false;
-            _flankTarget  = null;
-            _flankAlignEndTime = -1f;
-            _prevFlankLateralDist = -1f;
             DeactivateSingleNet();
         }
 
@@ -692,12 +635,12 @@ namespace BoatAttack
         public override void OnEpisodeBegin()
         {
             _episodeEnded = false;
-            _deployMode = false;
-            _convoyMode = false;
+            _splitMode = false;
+            _splitSteer = 0f;
+            _splitStepsRemaining = 0;
             _guidancePhase = false;
             _guidanceEndTime = 0f;
             _guidanceTarget = Vector3.zero;
-            _flankAlignEndTime = -1f;
             assignedTargetIndex = -1; // Commander가 새로 배정
             // _neutralized는 여기서 리셋하지 않음
             // SetNeutralized(false)로만 해제 (DeployPairs/ResetScene에서 호출)
@@ -750,36 +693,7 @@ namespace BoatAttack
             Vector3 steerTarget = Vector3.zero;
             bool valid = false;
 
-            // FlankPhase (포획 트랩): 적→모선 LOS 선 위에서 모선 방향으로 look-ahead
-            // 수선의 발(foot) F를 구한 뒤 모선 방향으로 losLookAheadDist만큼 이동 → P
-            if (_isFlankPhase && _flankTarget != null && _flankTarget.activeInHierarchy
-                && motherShip != null)
-            {
-                Vector3 ePos = _flankTarget.transform.position; ePos.y = 0f;
-                Vector3 mPos = motherShip.transform.position;   mPos.y = 0f;
-                Vector3 aPos = transform.position;              aPos.y = 0f;
-
-                Vector3 losVec = mPos - ePos;
-                float losDist  = losVec.magnitude;
-                if (losDist > 0.1f)
-                {
-                    Vector3 losDir = losVec / losDist;           // 적→모선 단위벡터
-
-                    // 에이전트→적 벡터를 LOS에 투영 → foot point F
-                    float proj = Vector3.Dot(aPos - ePos, losDir);
-                    proj = Mathf.Clamp(proj, 0f, losDist);       // 선분 안에 clamped
-                    Vector3 foot = ePos + losDir * proj;
-
-                    // F에서 모선 방향으로 look-ahead
-                    float ahead = Mathf.Min(losLookAheadDist, losDist - proj);
-                    steerTarget = foot + losDir * ahead;
-
-                    _losFootPoint      = foot;
-                    _losLookAheadPoint = steerTarget;
-                    valid = true;
-                }
-            }
-            else if (_guidanceTarget != Vector3.zero)
+            if (_guidanceTarget != Vector3.zero)
             {
                 // 클러스터 배정(정지 트랩 설치):
                 // 기준선 = 클러스터 centroid → 모선 (에피소드 초기 고정, 적 이동 무관)
@@ -795,7 +709,8 @@ namespace BoatAttack
                     if (losDist > 0.1f)
                     {
                         Vector3 losDir = losVec / losDist;       // 클러스터→모선 단위벡터
-                        Vector3 toClusterDir = -losDir;          // 모선→클러스터 (진행 방향)
+                        // 정지트랩: 적 마중(-losDir), 포획트랩: 적과 같은 방향(+losDir)
+                    Vector3 toClusterDir = _singleNetMode ? losDir : -losDir;
 
                         // 에이전트를 기준선에 투영 → foot F
                         float proj = Vector3.Dot(aPos - cPos, losDir);
@@ -841,17 +756,34 @@ namespace BoatAttack
                 GameObject targetEnemy = GetAssignedEnemy();
                 if (targetEnemy != null && targetEnemy.activeInHierarchy)
                 {
-                    Vector3 toEnemy = targetEnemy.transform.position - transform.position;
-                    toEnemy.y = 0f;
-                    float dist = toEnemy.magnitude;
-                    if (dist > 0.1f)
+                    if (_singleNetMode)
                     {
-                        Vector3 losDir = toEnemy / dist;
-                        float ahead = Mathf.Min(losLookAheadDist, dist * 0.98f);
-                        steerTarget = transform.position + losDir * ahead;
-                        _losFootPoint = transform.position;
-                        _losLookAheadPoint = steerTarget;
-                        valid = true;
+                        // 포획 트랩: 적의 forward 방향으로 이동 (적과 같은 방향으로 달림)
+                        Vector3 enemyFwd = targetEnemy.transform.forward;
+                        enemyFwd.y = 0f;
+                        if (enemyFwd.sqrMagnitude > 0.01f)
+                        {
+                            steerTarget = transform.position + enemyFwd.normalized * losLookAheadDist;
+                            _losFootPoint = transform.position;
+                            _losLookAheadPoint = steerTarget;
+                            valid = true;
+                        }
+                    }
+                    else
+                    {
+                        // 정지 트랩: 적을 향해 전진
+                        Vector3 toEnemy = targetEnemy.transform.position - transform.position;
+                        toEnemy.y = 0f;
+                        float dist = toEnemy.magnitude;
+                        if (dist > 0.1f)
+                        {
+                            Vector3 losDir = toEnemy / dist;
+                            float ahead = Mathf.Min(losLookAheadDist, dist * 0.98f);
+                            steerTarget = transform.position + losDir * ahead;
+                            _losFootPoint = transform.position;
+                            _losLookAheadPoint = steerTarget;
+                            valid = true;
+                        }
                     }
                 }
             }
@@ -987,12 +919,11 @@ namespace BoatAttack
                 return;
             }
 
-            // phaseFlag: 0 = CONVOY/일반, 1 = Flank Phase (정지 트랩 투하 완료)
-            float phaseFlag = _isFlankPhase ? 1f : 0f;
-            sensor.AddObservation(phaseFlag);
+            // phaseFlag: 항상 0 (convoy/flank 시스템 제거)
+            sensor.AddObservation(0f);
             if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
                 lastObservations = new float[VECTOR_OBS_COUNT];
-            lastObservations[0] = phaseFlag;
+            lastObservations[0] = 0f;
 
             // 모선 거리 + 베어링 (에이전트 자신 기준)
             float motherDistNorm = 0f;
@@ -1038,34 +969,7 @@ namespace BoatAttack
                 // RL 이후: useLOSObservation 토글 따름
                 bool useLOS = useLOSObservation && !_guidancePhase && motherShip != null;
 
-                // Flank Phase — 배정된 _flankTarget 1개만 관측
-                if (_isFlankPhase && _flankTarget != null && _flankTarget.activeInHierarchy
-                    && (envController == null || !envController.IsEnemyNeutralized(_flankTarget)))
-                {
-                    _heuristicNearestEnemy = _flankTarget;
-                    float hdg = NormalizeHeadingDiff(transform.eulerAngles.y,
-                                    _flankTarget.transform.eulerAngles.y) * eHdgS;
-                    float obs0, obs1;
-                    if (useLOS)
-                    {
-                        // LOS 기반: 적→모선 선 위 look-ahead 지점과의 관계
-                        var (perp, along) = ComputeLOSObs(
-                            _flankTarget.transform.position, transform.position,
-                            motherShip.transform.position, losLookAheadDist, enemyNormK);
-                        obs0 = perp  * eDistS;
-                        obs1 = along * eBrgS;
-                    }
-                    else
-                    {
-                        // 개별 적군 raw: 거리 + 베어링
-                        Vector3 rel = _flankTarget.transform.position - transform.position;
-                        obs0 = NormalizePosition(rel.magnitude, enemyNormK) * eDistS;
-                        obs1 = ComputeSignedBearing(transform.forward, rel) * eBrgS;
-                    }
-                    enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, hdg });
-                    lastEnemyBufferObs.Add(obs0); lastEnemyBufferObs.Add(obs1); lastEnemyBufferObs.Add(hdg);
-                }
-                else if (enemyShips != null)
+                if (enemyShips != null)
                 {
                 // 일반 Phase — 활성 적군 전체 거리순 정렬, 하나하나 개별 관측
                 var enemyByDist = new List<(int idx, float dist)>();
@@ -1410,8 +1314,8 @@ namespace BoatAttack
             if (_engine == null || _engine.RB == null || _episodeEnded || _neutralized)
             {
                 Debug.LogWarning($"[{name}] OnAction BLOCKED: engine={_engine != null}, RB={_engine?.RB != null}, " +
-                    $"ended={_episodeEnded}, neutral={_neutralized}, convoy={_convoyMode}, " +
-                    $"kinematic={_engine?.RB?.isKinematic}, secondary={_engine?.isConvoySecondary}");
+                    $"ended={_episodeEnded}, neutral={_neutralized}, " +
+                    $"kinematic={_engine?.RB?.isKinematic}");
                 return;
             }
 
@@ -1443,54 +1347,10 @@ namespace BoatAttack
                     _engine.Accelerate(maxThrottle);
                     _engine.Turn(guidanceSteering);
 
-                    if (_convoyMode && partnerAgent != null)
-                    {
-                        partnerAgent._engine.Accelerate(maxThrottle);
-                        partnerAgent._engine.Turn(guidanceSteering);
-                    }
-
                     _prevThrottle = maxThrottle;
                     _prevSteering = guidanceSteering;
                     return;
                 }
-            }
-
-            // Stage10: Flank Phase — RL이 조종하되, 보상 신호만 측면 추격 기준으로 변경
-            if (_isFlankPhase && _flankTarget != null && _flankTarget.activeInHierarchy)
-            {
-                Vector3 toTarget = _flankTarget.transform.position - transform.position;
-
-                // 측면 거리 (transform.right 기준)
-                float lateralDist = Mathf.Abs(Vector3.Dot(toTarget, transform.right));
-
-                // 직선 거리 (접근 보상용)
-                float dist = toTarget.magnitude;
-
-                // 헤딩 차이 (동방향=0, 역방향=±1)
-                float hdgDiff = NormalizeHeadingDiff(transform.eulerAngles.y,
-                                                     _flankTarget.transform.eulerAngles.y);
-
-                if (envController?.rewardCalculator != null)
-                {
-                    var rc = envController.rewardCalculator;
-
-                    // 1. 헤딩 정렬 + 측면 근접 보상
-                    AddReward(rc.CalculateFlankStepReward(hdgDiff, lateralDist));
-
-                    // 2. 측면 접근 보상: 적의 옆으로 파고들수록 + (직선 돌진이 아닌 측면 진입 유도)
-                    if (_prevFlankLateralDist >= 0f && rc.flankApproachRewardCoeff > 0f)
-                    {
-                        float lateralDelta = _prevFlankLateralDist - lateralDist; // 양수 = 측면으로 접근
-                        AddReward(lateralDelta * rc.flankApproachRewardCoeff);
-                    }
-                }
-                _prevFlankLateralDist = lateralDist;
-
-                // RL 조종은 계속 실행 (return 없음 → 아래 throttle/steering 처리로 진행)
-            }
-            else
-            {
-                _prevFlankLateralDist = -1f; // 타겟 없을 때 리셋
             }
 
             // Stage9: 직진 이탈 모드 — ML 정책 무시, 현재 헤딩으로 전속력 직진
@@ -1503,62 +1363,23 @@ namespace BoatAttack
                 return;
             }
 
-            // Convoy-Deploy: 그물 전개 모드 — ML 정책 무시, 지정 방향으로 전속력 분리
-            if (_deployMode)
+            // Split 분리 모드: 적 근접 시 강제 좌/우 조향으로 그물 전개
+            if (_splitMode)
             {
-                _engine.Accelerate(maxThrottle);
-                _engine.Turn(_deploySteerOverride);
-                _prevThrottle = maxThrottle;
-                _prevSteering = _deploySteerOverride;
-                return;
-            }
-
-            // Stage10 플랭크 정렬 단계 — EXIT 직후 3초간 deploy 방향 유지 (적과 방향 정렬)
-            if (_flankAlignEndTime > 0f && Time.time < _flankAlignEndTime)
-            {
-                _engine.Accelerate(maxThrottle);
-                _engine.Turn(_deploySteerOverride);
-                _prevThrottle = maxThrottle;
-                _prevSteering = _deploySteerOverride;
-                return;
-            }
-
-            // 쌍동선 모드 — 정지트랩 설치 구간: LOS가 항상 기본 조향
-            // enableResidualPolicy=true → RL이 잔차(δ) 추가
-            // enableResidualPolicy=false → 순수 LOS 추종 (RL 무시)
-            if (_convoyMode)
-            {
-                // LOS 베이스라인 조향 (가이던스 타겟 or 적→모선 look-ahead)
-                float baseSteering = ComputeLOSBaselineSteering();
-
-                float convoyThrottle, convoySteering;
-
-                if (enableResidualPolicy)
-                {
-                    float tInput = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
-                    float sInput = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
-                    // 기본 추력: (1 - residualThrottleScale) * max → RL이 ±residualThrottleScale 범위로 전후 대칭 조절
-                    float baseThrottle = (1f - residualThrottleScale) * maxThrottle;
-                    convoyThrottle = Mathf.Clamp(baseThrottle + tInput * residualThrottleScale * maxThrottle, 0f, maxThrottle);
-                    convoySteering = Mathf.Clamp(baseSteering + sInput * residualSteerScale, -1f, 1f);
-                }
+                if (_splitStepsRemaining > 0)
+                    _splitStepsRemaining--;
                 else
+                    _splitMode = false;
+
+                if (_splitMode)
                 {
-                    // 순수 LOS: RL 액션 무시, LOS 조향만 사용
-                    convoyThrottle = maxThrottle;
-                    convoySteering = baseSteering;
+                    float splitSteering = Mathf.Clamp(_splitSteer * steeringSensitivity, -1f, 1f);
+                    _engine.Accelerate(maxThrottle);
+                    _engine.Turn(splitSteering);
+                    _prevThrottle = maxThrottle;
+                    _prevSteering = splitSteering;
+                    return;
                 }
-
-                _engine.Accelerate(convoyThrottle);
-                _engine.Turn(convoySteering);
-
-                _prevThrottle = convoyThrottle;
-                _prevSteering = convoySteering;
-
-                if (enableDebugLog || CompletedEpisodes < 2)
-                    Debug.Log($"[{name}] CONVOY: throttle={convoyThrottle:F2}, steer={convoySteering:F2}(base={baseSteering:F2}), " +
-                        $"vel={_engine.RB?.velocity.magnitude:F1}, secondary={_engine.isConvoySecondary}");
-                return;
             }
 
             float throttleInput = actions.ContinuousActions[0];
@@ -1602,13 +1423,6 @@ namespace BoatAttack
 
             _engine.Accelerate(throttle);
             _engine.Turn(steering);
-
-            // 가속 보상: throttle 높을수록 보상 (적극적 기동 유도)
-            if (envController != null && envController.rewardCalculator != null)
-            {
-                float throttleReward = envController.rewardCalculator.throttleRewardCoeff * throttle;
-                AddReward(throttleReward);
-            }
 
             // 디버그 로그
             if (enableDebugLog)
@@ -1690,17 +1504,6 @@ namespace BoatAttack
         /// </summary>
         private void ApplyLOSHeuristic(Unity.MLAgents.Actuators.ActionSegment<float> ca)
         {
-            // ── DEPLOY: OnActionReceived에서 어차피 덮어쓰지만 demo 기록값 일관성 유지 ──
-            if (_deployMode)
-            {
-                ca[0] = 1f;
-                float rawSteer = steeringSensitivity > 0f
-                    ? _deploySteerOverride / steeringSensitivity
-                    : _deploySteerOverride;
-                ca[1] = Mathf.Clamp(rawSteer, -1f, 1f);
-                return;
-            }
-
             // 타겟 적 (AutoAssign 배정 우선 → 캐시 → 직접 탐색)
             GameObject target = GetAssignedEnemy();
             if (target == null && _heuristicNearestEnemy != null && _heuristicNearestEnemy.activeInHierarchy)
@@ -1713,17 +1516,6 @@ namespace BoatAttack
             Vector3 myPos  = transform.position;
             Vector3 myFwd  = transform.forward; myFwd.y = 0f;
             Vector3 enemyPos = target.transform.position;
-
-            // ── CONVOY: 적 방향으로 직진 ──
-            if (_convoyMode)
-            {
-                Vector3 toEnemy = enemyPos - myPos; toEnemy.y = 0f;
-                float brg = ComputeSignedBearing(myFwd, toEnemy);
-                float convoyThrottle = Mathf.Clamp(1f + ComputeAllyAvoidanceThrottle(myPos, myFwd), -1f, 1f);
-                ca[0] = convoyThrottle;
-                ca[1] = Mathf.Clamp(-brg * losSteerGain, -1f, 1f);
-                return;
-            }
 
             // ── SEPARATED: LOS 수직 좌/우 위치로 이동 (그물 포위) ──
 

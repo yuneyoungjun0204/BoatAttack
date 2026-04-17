@@ -44,6 +44,8 @@ namespace BoatAttack
         [HideInInspector] public bool isDisarmed = false;  // 직진 이탈 중 (Stage9)
         [HideInInspector] public int disarmStep = -1;      // 직진 시작 스텝
         [HideInInspector] public int deployStep = -1; // 배치 시점 (FixedUpdate 스텝)
+        [HideInInspector] public bool isSplitting = false; // 분리(그물 전개) 중
+        [HideInInspector] public int splitStartStep = -1;  // 분리 시작 스텝
 
         // 좌/우 교차 체크용 (배치 시 기록)
         [HideInInspector] public bool agent1StartsOnLeft = true; // agent1이 lateralDir 기준 왼쪽인지
@@ -54,14 +56,6 @@ namespace BoatAttack
         [HideInInspector] public int lastRaycastHitStep = -1;
         [HideInInspector] public bool hasEverHitRaycast = false;
 
-        // Convoy-Deploy 시스템
-        [HideInInspector] public bool isDeploying = false;
-        [HideInInspector] public int deployStartStep = -1;
-        [HideInInspector] public UnityEngine.FixedJoint convoyJoint = null; // 레거시 (사용 안 함, null 체크 호환용)
-        [HideInInspector] public bool isConvoyLinked = false; // 쌍동선 Kinematic 연결 상태
-        [HideInInspector] public float _savedAngularDrag1 = 0f;
-        [HideInInspector] public float _savedAngularDrag2 = 0f;
-        [HideInInspector] public bool _savedIsKinematic2 = false; // Agent2의 원래 isKinematic
 
         // 양동 방향 필터용: 진수 시 스폰 각도 (모선 기준, -1=미설정)
         [HideInInspector] public float launchAngleDeg = -1f;
@@ -628,7 +622,7 @@ namespace BoatAttack
                 LaunchZone zone = launchZones[zoneIdx];
 
                 // 쌍 간 횡 간격 (convoySpawnSpacing + 여유)
-                float spawnSpacing = envController != null ? envController.convoySpawnSpacing : 10f;
+                float spawnSpacing = 10f;
                 float lateralSpacing = spawnSpacing + 40f;
 
                 // 중심 기준 횡 오프셋 계산 (0이 중앙)
@@ -716,7 +710,7 @@ namespace BoatAttack
                 // 50% 확률로 좌우 반전 → Agent1/2 배치 편향 제거
                 if (Random.value < 0.5f) webLateral = -webLateral;
 
-                float spawnWidth = envController != null ? envController.convoySpawnSpacing : 10f;
+                float spawnWidth = 10f;
 
                 Vector3 pos1 = pairCenter + webLateral * (-spawnWidth * 0.5f);
                 pos1.y = _templateAgent1Y;
@@ -752,20 +746,9 @@ namespace BoatAttack
                 pair.deployStep = currentStep;
                 pair.lastRaycastHitStep = currentStep;
                 pair.hasEverHitRaycast = false;
-                pair.isDeploying = false;
-                pair.deployStartStep = -1;
-                CleanupConvoyState(pair);
-
                 // 활성화
                 SetPairActive(pi, true);
                 _totalPairsDeployed++;
-
-                // FixedJoint 쌍동선 모드: 두 선박을 물리적으로 연결
-                if (envController != null && envController.enableConvoyDeploy
-                    && pair.agent1 != null && pair.agent2 != null)
-                {
-                    CreateConvoyJoint(pair);
-                }
 
                 // MA-POCA 등록
                 if (agentGroup != null)
@@ -1237,9 +1220,6 @@ namespace BoatAttack
             {
                 pair.isDisarmed = false;
                 pair.disarmStep = -1;
-                pair.isDeploying = false;
-                pair.deployStartStep = -1;
-                CleanupConvoyState(pair);
             }
         }
 
@@ -1485,7 +1465,7 @@ namespace BoatAttack
             float zoneDist = zone.distance;
 
             Vector3 pairCenter = motherPos + zoneDir * zoneDist;
-            float tempSpacing = envController != null ? envController.convoySpawnSpacing : 10f;
+            float tempSpacing = 10f;
 
             // 2. 기존 비활성 쌍 재사용 또는 프리팹에서 새로 생성
             int pairIdx;
@@ -1530,9 +1510,6 @@ namespace BoatAttack
             pair.deployStep = envController != null ? envController.CurrentStep : 0;
             pair.lastRaycastHitStep = pair.deployStep; // 배치 시점부터 타임아웃 카운트 시작
             pair.hasEverHitRaycast = false;
-            pair.isDeploying = false;
-            pair.deployStartStep = -1;
-            CleanupConvoyState(pair);
 
             // 3. 적군 참조 설정
             if (enemies != null)
@@ -1565,7 +1542,7 @@ namespace BoatAttack
             // 50% 확률로 좌우 반전 → Agent1/2 배치 편향 제거
             if (Random.value < 0.5f) lateralDir = -lateralDir;
 
-            float singleSpawnWidth = envController != null ? envController.convoySpawnSpacing : 10f;
+            float singleSpawnWidth = 10f;
 
             pos1 = pairCenter + lateralDir * (-singleSpawnWidth * 0.5f);
             pos1.y = _templateAgent1Y;
@@ -1589,13 +1566,6 @@ namespace BoatAttack
             // 4. 활성화
             SetPairActive(pairIdx, true);
             _totalPairsDeployed++;
-
-            // FixedJoint 쌍동선 모드
-            if (envController != null && envController.enableConvoyDeploy
-                && pair.agent1 != null && pair.agent2 != null)
-            {
-                CreateConvoyJoint(pair);
-            }
 
             // 5. MA-POCA 등록
             if (agentGroup != null)
@@ -1964,14 +1934,13 @@ namespace BoatAttack
             SetPairActive(pairIndex, false);
             pair.isDisarmed = false;
             pair.disarmStep = -1;
+            pair.isSplitting = false;
+            pair.splitStartStep = -1;
             pair.assignedZoneIndex = -1;
             pair.launchAngleDeg = -1f;
             pair.deployStep = -1;
             pair.lastRaycastHitStep = -1;
             pair.hasEverHitRaycast = false;
-            pair.isDeploying = false;
-            pair.deployStartStep = -1;
-            CleanupConvoyState(pair);
 
             if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
             if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
@@ -2000,14 +1969,13 @@ namespace BoatAttack
 
             // HIDDEN_POS로 이동 + isKinematic (재활용 가능 상태)
             SetPairActive(pairIndex, false);
+            pair.isSplitting = false;
+            pair.splitStartStep = -1;
             pair.assignedZoneIndex = -1;
             pair.launchAngleDeg = -1f;
             pair.deployStep = -1;
             pair.lastRaycastHitStep = -1;
             pair.hasEverHitRaycast = false;
-            pair.isDeploying = false;
-            pair.deployStartStep = -1;
-            CleanupConvoyState(pair);
 
             // neutralized 해제 (재배치 시 다시 사용 가능하도록)
             if (pair.agent1 != null) pair.agent1.SetNeutralized(false);
@@ -2772,160 +2740,5 @@ namespace BoatAttack
 
         #endregion
 
-        #region Convoy Joint
-
-        /// <summary>
-        /// 쌍동선 FixedJoint 생성: 두 선박을 물리적으로 연결 + Agent2 Neutralized + Agent1 ConvoyMode
-        /// </summary>
-        private void CreateConvoyJoint(DefensePair pair)
-        {
-            if (pair.agent1 == null || pair.agent2 == null) return;
-
-            Rigidbody rb1 = pair.agent1.GetComponent<Rigidbody>();
-            Rigidbody rb2 = pair.agent2.GetComponent<Rigidbody>();
-            if (rb1 == null || rb2 == null) return;
-
-            // 기존 convoy 정리
-            CleanupConvoyState(pair);
-
-            // Agent2를 Kinematic으로 설정 (자체 물리 없음, Agent1에 의해 위치 동기화)
-            pair._savedIsKinematic2 = rb2.isKinematic;
-            pair._savedAngularDrag1 = rb1.angularDrag;
-            pair._savedAngularDrag2 = rb2.angularDrag;
-            rb2.isKinematic = true;
-            rb2.velocity = Vector3.zero;
-            rb2.angularVelocity = Vector3.zero;
-
-            // Inspector에서 설정한 간격 사용 + Agent2 위치를 Agent1 오른쪽으로 강제 배치
-            float spacing = convoySpacing;
-            rb2.position = rb1.position + rb1.transform.right * spacing;
-            rb2.rotation = rb1.rotation;
-
-            // 엔진 플래그: Agent1=리더, Agent2=종속
-            Engine eng1 = pair.agent1._engine;
-            Engine eng2 = pair.agent2._engine;
-            if (eng1 != null)
-            {
-                eng1.isConvoyLinked = true;
-                eng1.isConvoySecondary = false;
-                eng1.convoyPartnerEngine = eng2;
-                eng1.convoySpacing = spacing;
-            }
-            if (eng2 != null)
-            {
-                eng2.isConvoyLinked = true;
-                eng2.isConvoySecondary = true;
-                eng2.convoyPartnerEngine = eng1;
-            }
-
-            // convoy 상태 마킹 (FixedJoint는 사용하지 않음)
-            pair.isConvoyLinked = true;
-
-            // Agent2: ML 비활성 (CONVOY에서는 Agent1만 제어)
-            pair.agent2.SetNeutralized(true);
-
-            // Agent1: convoy 모드 활성화
-            pair.agent1.SetConvoyMode(true);
-
-            // Convoy 연결 막대 생성
-            if (pair.webObject != null)
-            {
-                var dw = pair.webObject.GetComponent<DynamicWeb>();
-                if (dw != null) dw.CreateConvoyBar();
-            }
-
-            Debug.Log($"[LaunchZoneManager] ConvoyLink created (Kinematic): {pair.agent1.name} ↔ {pair.agent2.name}, " +
-                $"spacing={spacing:F1}m, rb2.kinematic={rb2.isKinematic}, " +
-                $"eng1.convoy={eng1?.isConvoyLinked}, eng2.secondary={eng2?.isConvoySecondary}, " +
-                $"a1.neutral={pair.agent1.IsNeutralized}, a2.neutral={pair.agent2.IsNeutralized}, " +
-                $"a1.convoy={pair.agent1.IsConvoyMode}");
-        }
-
-        /// <summary>
-        /// 쌍동선 Joint 파괴 (Deploy 시 호출)
-        /// </summary>
-        public void DestroyConvoyJoint(int pairIndex)
-        {
-            if (pairIndex < 0 || pairIndex >= _pairPool.Count) return;
-            var pair = _pairPool[pairIndex];
-            if (!pair.isConvoyLinked) return;
-
-            Rigidbody rb1 = pair.agent1 != null ? pair.agent1.GetComponent<Rigidbody>() : null;
-            Rigidbody rb2 = pair.agent2 != null ? pair.agent2.GetComponent<Rigidbody>() : null;
-
-            // angular drag 복원
-            if (rb1 != null) rb1.angularDrag = pair._savedAngularDrag1;
-            if (rb2 != null) rb2.angularDrag = pair._savedAngularDrag2;
-
-            // Agent2 kinematic 해제 + 속도/회전 완전 복사 (자연스러운 분리)
-            if (rb2 != null)
-            {
-                rb2.isKinematic = pair._savedIsKinematic2;
-                if (rb1 != null)
-                {
-                    rb2.velocity = rb1.velocity;
-                    rb2.angularVelocity = rb1.angularVelocity;
-                    rb2.rotation = rb1.rotation; // 정확히 같은 회전 상태
-                }
-            }
-
-            // Convoy 막대 분리 (중력으로 침몰)
-            if (pair.webObject != null)
-            {
-                var dw = pair.webObject.GetComponent<DynamicWeb>();
-                if (dw != null) dw.DetachConvoyBar();
-            }
-
-            // 양쪽 엔진 리셋 (동일 조건에서 분리 시작 → 대칭 기동)
-            if (pair.agent1 != null && pair.agent1._engine != null)
-                pair.agent1._engine.OnEpisodeReset();
-            if (pair.agent2 != null && pair.agent2._engine != null)
-                pair.agent2._engine.OnEpisodeReset();
-
-            // 마커 Joint + 엔진 플래그 정리
-            CleanupConvoyState(pair);
-        }
-
-        /// <summary>
-        /// 쌍동선 상태 정리: 마커 Joint 파괴 + 엔진 플래그 해제 + Agent2 kinematic 복원
-        /// </summary>
-        public void CleanupConvoyState(DefensePair pair)
-        {
-            // Convoy 막대 즉시 파괴 (리셋/비활성화 시)
-            if (pair.webObject != null)
-            {
-                var dw = pair.webObject.GetComponent<DynamicWeb>();
-                if (dw != null) dw.DestroyConvoyBar();
-            }
-
-            // 엔진 플래그 해제
-            Engine eng1 = pair.agent1 != null ? pair.agent1._engine : null;
-            Engine eng2 = pair.agent2 != null ? pair.agent2._engine : null;
-            if (eng1 != null)
-            {
-                eng1.isConvoyLinked = false;
-                eng1.isConvoySecondary = false;
-                eng1.convoyPartnerEngine = null;
-            }
-            if (eng2 != null)
-            {
-                eng2.isConvoyLinked = false;
-                eng2.isConvoySecondary = false;
-                eng2.convoyPartnerEngine = null;
-            }
-
-            // Agent2 kinematic 복원 (DestroyConvoyJoint에서 이미 처리한 경우 중복 방지)
-            if (pair.agent2 != null)
-            {
-                Rigidbody rb2 = pair.agent2.GetComponent<Rigidbody>();
-                if (rb2 != null && rb2.isKinematic)
-                    rb2.isKinematic = pair._savedIsKinematic2;
-            }
-
-            // convoy 상태 해제
-            pair.isConvoyLinked = false;
-        }
-
-        #endregion
     }
 }
