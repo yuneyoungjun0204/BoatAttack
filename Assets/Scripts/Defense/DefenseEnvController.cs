@@ -102,7 +102,7 @@ namespace BoatAttack
         [Tooltip("분리 시작 후 최대 허용 스텝. 타임아웃 시 강제 정지 (IST: 200)")]
         public int deployMaxSteps = 200;
         [Tooltip("파트너 선박과 이 거리 이상 멀어지면 해당 페어 비활성화 (m). 분리 전에만 적용")]
-        public float maxPairSeparation = 60f;
+        public float maxPairSeparation = 200f;
         [Tooltip("포획 후 그물+선박 유지 (다중 포획 허용). IST: true")]
         public bool keepWebAfterCapture = true;
 
@@ -130,7 +130,7 @@ namespace BoatAttack
         public float phantomSpeedMultMax = 1.2f;
 
         [Tooltip("아군 페어 소진 시 에피소드 종료 비활성화 (true=페어 소진해도 에피소드 유지)")]
-        public bool disableNoPairsEndEpisode = true;
+        public bool disableNoPairsEndEpisode = false;
 
         [Header("Agents")]
         [Tooltip("방어 에이전트 1")]
@@ -1027,51 +1027,40 @@ namespace BoatAttack
                         // Neutralized(정지 그물 유지) 쌍은 거리 체크 스킵
                         if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
-                        // 배치 후 유예기간 (50스텝) 동안 거리 체크 건너뛰기
+                        // 배치 후 유예기간 (50스텝) 건너뛰기
                         bool inGrace = pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50;
                         if (inGrace) continue;
 
-                        Vector3 p1 = pair.agent1.transform.position;
-                        Vector3 p2 = pair.agent2.transform.position;
-                        float allyDist = Vector3.Distance(p1, p2);
-
-                        // 유예 직후 첫 체크: 실제 위치 기반으로 고정 기준 + 좌/우 기록
-                        if (pair.prevLateralDir.sqrMagnitude < 0.5f)
+                        // 좌/우 교차 체크: isLeftAgent 기준으로 현재 위치 비교
+                        // perpRight = LOS(클러스터→모선) 수직 방향
+                        if (pair.agent1 != null && pair.agent2 != null &&
+                            !pair.agent1.IsNeutralized && !pair.agent2.IsNeutralized)
                         {
-                            Vector3 initDir = p2 - p1;
-                            initDir.y = 0f;
-                            if (initDir.sqrMagnitude > 0.01f)
+                            Vector3 p1 = pair.agent1.transform.position; p1.y = 0f;
+                            Vector3 p2 = pair.agent2.transform.position; p2.y = 0f;
+                            Vector3 perpRight = Vector3.right; // fallback
+                            if (pair.clusterCentroid != Vector3.zero && motherShip != null)
                             {
-                                pair.prevLateralDir = initDir.normalized;
-                                Vector3 center = (p1 + p2) * 0.5f;
-                                float d1 = Vector3.Dot(p1 - center, pair.prevLateralDir);
-                                pair.agent1StartsOnLeft = d1 < 0f;
+                                Vector3 los = motherShip.transform.position - pair.clusterCentroid;
+                                los.y = 0f;
+                                if (los.sqrMagnitude > 0.01f)
+                                {
+                                    los.Normalize();
+                                    perpRight = new Vector3(los.z, 0f, -los.x);
+                                }
                             }
-                        }
-
-                        bool shouldDisable = false;
-                        string disableReason = null;
-
-                        // 좌/우 교차 체크
-                        if (!shouldDisable && pair.prevLateralDir.sqrMagnitude > 0.5f)
-                        {
                             Vector3 center = (p1 + p2) * 0.5f;
-                            float dot1 = Vector3.Dot(p1 - center, pair.prevLateralDir);
-                            bool agent1NowOnLeft = dot1 < 0f;
-                            if (agent1NowOnLeft != pair.agent1StartsOnLeft)
+                            // isLeftAgent=true → perpRight 왼쪽(dot<0) 이어야 정상
+                            bool a1ShouldBeLeft = pair.agent1.isLeftAgent;
+                            bool a1IsLeft = Vector3.Dot(p1 - center, perpRight) < 0f;
+                            if (a1ShouldBeLeft != a1IsLeft)
                             {
-                                shouldDisable = true;
-                                disableReason = $"좌/우 교차 (startLeft={pair.agent1StartsOnLeft}, nowLeft={agent1NowOnLeft})";
+                                pair.agent1.AddReward(rewardCalculator.collisionPenalty);
+                                pair.agent2.AddReward(rewardCalculator.collisionPenalty);
+                                DisableOrDisarmPair(pi);
+                                NotifyCameraPairDisabled(pair);
+                                Debug.LogWarning($"[CrossCheck] Pair {pi} 좌우 교차 → 비활성화, step={_resetTimer}");
                             }
-                        }
-
-                        if (shouldDisable)
-                        {
-                            pair.agent1.AddReward(rewardCalculator.collisionPenalty);
-                            pair.agent2.AddReward(rewardCalculator.collisionPenalty);
-                            DisableOrDisarmPair(pi);
-                            NotifyCameraPairDisabled(pair);
-                            Debug.LogWarning($"[DefenseEnv] Pair {pi} 무력화: {disableReason}, step={_resetTimer}");
                         }
                     }
                     // 모든 쌍 무력화 시 에피소드 종료 (한 번이라도 배치된 적이 있을 때만)
@@ -1088,22 +1077,11 @@ namespace BoatAttack
                     Vector3 pos1 = defenseAgent1.transform.position;
                     Vector3 pos2 = defenseAgent2.transform.position;
 
-                    // 위치 교차 체크
-                    bool agent1CurrentlyOnLeft;
-                    if (useDynamicSpawn && motherShip != null)
+                    // 좌/우 교차 체크 (레거시 단일 쌍)
+                    bool a1CurrentlyOnLeft = pos1.x < pos2.x;
+                    if (a1CurrentlyOnLeft != _agent1StartsOnLeft)
                     {
-                        Vector3 center = motherShip.transform.position;
-                        float dot1 = Vector3.Dot(pos1 - center, _currentPerpendicularDir);
-                        float dot2 = Vector3.Dot(pos2 - center, _currentPerpendicularDir);
-                        agent1CurrentlyOnLeft = dot1 < dot2;
-                    }
-                    else
-                    {
-                        agent1CurrentlyOnLeft = pos1.x < pos2.x;
-                    }
-                    if (agent1CurrentlyOnLeft != _agent1StartsOnLeft)
-                    {
-                        RestartEpisode($"PositionSwapped(startLeft={_agent1StartsOnLeft},nowLeft={agent1CurrentlyOnLeft})", rewardCalculator.collisionPenalty);
+                        RestartEpisode($"PositionSwapped(startLeft={_agent1StartsOnLeft},nowLeft={a1CurrentlyOnLeft})", rewardCalculator.collisionPenalty);
                         return;
                     }
                 }
@@ -1290,16 +1268,23 @@ namespace BoatAttack
                     var a1State = rewardCalculator.GetAgentState(pair.agent1);
                     var a2State = rewardCalculator.GetAgentState(pair.agent2);
 
-                    // 대형 유지 + 적 접근 + 시간 페널티
-                    float pairReward = rewardCalculator.CalculateStepReward(
-                        pi, a1State, a2State, activeEnemyArray, pair.webObject);
+                    // 클러스터→모선 LOS 방향 계산 (대형 보상 수직 성분용)
+                    Vector3 pairLosDir = Vector3.zero;
+                    if (motherShip != null && pair.clusterCentroid != Vector3.zero)
+                    {
+                        Vector3 lv = motherShip.transform.position - pair.clusterCentroid;
+                        lv.y = 0f;
+                        if (lv.magnitude > 0.1f) pairLosDir = lv.normalized;
+                    }
 
+                    float pairReward = rewardCalculator.CalculateStepReward(
+                        pi, a1State, a2State, activeEnemyArray, pair.webObject, pairLosDir);
                     if (Mathf.Abs(pairReward) > 0.0001f)
                     {
                         pair.agent1.AddReward(pairReward);
                         pair.agent2.AddReward(pairReward);
                     }
-                    totalStepReward += pairReward;
+                    totalStepReward += pairReward * 2f;
 
                     // 개별 헤딩 정렬 보상
                     if (rewardCalculator.headingAlignmentReward > 0f && activeEnemyArray != null)
@@ -1690,9 +1675,7 @@ namespace BoatAttack
             float reward = rewardCalculator.captureReward;
 
             if (m_AgentGroup != null)
-            {
                 m_AgentGroup.AddGroupReward(reward);
-            }
             else
             {
                 if (capturer != null) capturer.AddReward(reward);
@@ -1703,6 +1686,10 @@ namespace BoatAttack
                 commanderAgent.AddReward(reward);
                 commanderAgent.OnEnemyCaptured();
             }
+
+            // SingleNet 포획자에게 개별 보너스
+            if (rewardCalculator.capturePairBonus > 0f && capturer != null)
+                capturer.AddReward(rewardCalculator.capturePairBonus);
 
             var capturedAttack = enemyBoat.GetComponent<AttackAgent>();
             if (capturedAttack != null) capturedAttack.OnCapturedBySelfPlay();
@@ -1744,20 +1731,27 @@ namespace BoatAttack
             float distRatio = enemySpawnDistance > 0f
                 ? Mathf.Clamp01(captureDistance / enemySpawnDistance)
                 : 0f;
-            // 순차 포획 보너스: n번째 포획 = 기본보상 × (1 + (n-1) × 계수)
             float reward = rewardCalculator.captureReward;
 
-            // 보상 부여: 그룹 보상(전액) + 포획한 쌍에 개별 보너스
+            // 그룹 보상: 팀 전체
             if (m_AgentGroup != null)
-            {
-                // 그룹 보상: 전체 팀에 reward 전액
                 m_AgentGroup.AddGroupReward(reward);
-
-            }
             else
             {
                 if (defenseAgent1 != null) defenseAgent1.AddReward(reward);
                 if (defenseAgent2 != null) defenseAgent2.AddReward(reward);
+            }
+
+            // 포획한 쌍에 개별 보너스 (MA-POCA 개인 채널 강화)
+            if (rewardCalculator.capturePairBonus > 0f && capturingWeb != null && launchZoneManager != null)
+            {
+                int capPairIdx = launchZoneManager.GetPairIndexByWeb(capturingWeb.gameObject);
+                if (capPairIdx >= 0)
+                {
+                    DefensePair capPair = launchZoneManager.GetPair(capPairIdx);
+                    if (capPair?.agent1 != null) capPair.agent1.AddReward(rewardCalculator.capturePairBonus);
+                    if (capPair?.agent2 != null) capPair.agent2.AddReward(rewardCalculator.capturePairBonus);
+                }
             }
 
             // Commander에도 포획 보상 라우팅
@@ -1941,7 +1935,11 @@ namespace BoatAttack
                 }
             }
 
-            Debug.LogWarning($"[DefenseEnv] AllyHitWeb → Pair {hitPairIdx} 벌점 부여 (비활성화 없음), step={_resetTimer}");
+            // 걸린 아군 쌍 비활성화
+            DisableOrDisarmPair(hitPairIdx);
+            NotifyCameraPairDisabled(hitPair);
+            Debug.LogWarning($"[DefenseEnv] AllyHitWeb → Pair {hitPairIdx} 비활성화 (penalty={penalty}), step={_resetTimer}");
+            CheckEpisodeEndCondition();
         }
 
         /// <summary>
@@ -2452,6 +2450,45 @@ namespace BoatAttack
                 {
                     launchZoneManager.SetPairTarget(i, bestIdx + 1);
                     assigned.Add(bestIdx);
+                }
+            }
+
+            // ── SingleNet 전용 배정: isDisarmed 쌍 → 중립화 안 된 적 중 최근접 1대1 ──
+            for (int i = 0; i < poolCount; i++)
+            {
+                DefensePair pair = launchZoneManager.GetPair(i);
+                if (pair == null || !pair.isActive || !pair.isDisarmed || pair.agent1 == null) continue;
+                if (!pair.agent1.IsSingleNetMode) continue; // SingleNet 모드인 쌍만
+
+                // 이미 유효한 배정이 있으면 유지
+                int existing = pair.agent1.assignedTargetIndex;
+                if (existing > 0)
+                {
+                    int eIdx = existing - 1;
+                    if (eIdx < enemyShips.Length && enemyShips[eIdx] != null
+                        && enemyShips[eIdx].activeInHierarchy && !IsEnemyNeutralized(enemyShips[eIdx]))
+                        continue;
+                }
+
+                Vector3 webCenter = (pair.agent1.transform.position +
+                    (pair.agent2 != null ? pair.agent2.transform.position : pair.agent1.transform.position)) * 0.5f;
+
+                float bestDist = float.MaxValue;
+                int bestSingleIdx = -1;
+                for (int e = 0; e < enemyShips.Length; e++)
+                {
+                    if (assigned.Contains(e)) continue;
+                    if (enemyShips[e] == null || !enemyShips[e].activeInHierarchy) continue;
+                    if (IsEnemyNeutralized(enemyShips[e])) continue; // 정지 트랩 걸린 적 제외
+
+                    float d = Vector3.Distance(webCenter, enemyShips[e].transform.position);
+                    if (d < bestDist) { bestDist = d; bestSingleIdx = e; }
+                }
+
+                if (bestSingleIdx >= 0)
+                {
+                    launchZoneManager.SetPairTarget(i, bestSingleIdx + 1);
+                    assigned.Add(bestSingleIdx);
                 }
             }
         }
@@ -3005,10 +3042,11 @@ namespace BoatAttack
                 return;
             }
 
-            // 아군 쌍이 전부 비활성화 → 실패 종료 (남은 적 수 비례 페널티)
+            // 아군 쌍이 전부 비활성화 → 실패 종료 (고정 -5 + 남은 적 수 비례 페널티)
             if (!disableNoPairsEndEpisode && activePairs == 0 && activeEnemies > 0)
             {
-                float totalPenalty = activeEnemies * rewardCalculator.remainingEnemyPenalty;
+                float totalPenalty = rewardCalculator.noPairsLeftPenalty
+                                   + activeEnemies * rewardCalculator.remainingEnemyPenalty;
                 Debug.LogWarning($"[DefenseEnv] ✖ NO PAIRS LEFT ✖ step={_resetTimer}, " +
                     $"activeEnemies={activeEnemies}, totalPenalty={totalPenalty:F2}");
                 RestartEpisode("NoPairsLeft", totalPenalty);

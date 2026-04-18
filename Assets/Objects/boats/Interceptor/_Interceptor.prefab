@@ -674,7 +674,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 1
+    VectorObservationSize: 4
     NumStackedVectorObservations: 1
     m_ActionSpec:
       m_NumContinuousActions: 2
@@ -739,7 +739,7 @@ MonoBehaviour:
   inputSmoothing: 0.2
   enemyNormK: 2000
   useLOSObservation: 1
-  losLookAheadDist: 300
+  losLookAheadDist: 150
   bearingNormK: 10
   enemyDistScale: 1
   enemyBearingScale: 1
@@ -762,7 +762,7 @@ MonoBehaviour:
   phantomsInitialized: 0
   useArrowKeys: 0
   enableLOSHeuristic: 0
-  losOffset: 80
+  losOffset: 120
   losSteerGain: 8
   losDerivGain: 1
   allyAvoidanceDist: 300
@@ -779,13 +779,15 @@ MonoBehaviour:
   collectObsCallCount: 0
   lastEnemyBufferObs: []
   lastAllyBufferObs: []
+  losSpreadDistance: 30
+  isLeftAgent: 1
   guidanceDuration: 5
   guidanceKp: 10
   guidanceKd: 0.5
   showLOSVisualization: 1
   enableResidualPolicy: 1
-  residualSteerScale: 1
-  residualThrottleScale: 0.25
+  residualSteerScale: 0.85
+  residualThrottleScale: 0.65
 --- !u!114 &7411346295538081491
 MonoBehaviour:
   m_ObjectHideFlags: 0

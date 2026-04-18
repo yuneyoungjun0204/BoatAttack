@@ -243,6 +243,12 @@ namespace BoatAttack
         private bool _singleNetMode = false;          // SingleNet 포획 모드 (LOS 방향 반전)
 
         // PD LOS 가이던스 (배치 후 일정 시간 동안 클러스터 방향으로 직진)
+        [Header("=== Formation Spread (LOS offset, 0=RL 대형학습) ===")]
+        [Tooltip("LOS 기준선에서 좌/우로 벌리는 거리 (m). isLeftAgent에 따라 좌/우 바이어스. 권장: 50m")]
+        [Range(0f, 200f)] public float losSpreadDistance = 50f;
+        [Tooltip("true=왼쪽 선박(agent1), false=오른쪽 선박(agent2). LaunchZoneManager에서 자동 설정")]
+        public bool isLeftAgent = true;
+
         [Header("=== PD LOS Guidance ===")]
         [Tooltip("배치 후 PD 가이던스 유지 시간 (초). 0이면 즉시 RL 전환")]
         public float guidanceDuration = 15f;
@@ -515,6 +521,8 @@ namespace BoatAttack
         }
 
         /// <summary>Disarm 이후 소형 포획 존 활성화 + LOS 방향 반전</summary>
+        public bool IsSingleNetMode => _singleNetMode;
+
         public void ActivateSingleNet()
         {
             if (_singleNetCapture == null) return;
@@ -722,6 +730,17 @@ namespace BoatAttack
                         float ahead = Mathf.Min(losLookAheadDist, toClusterDist * 0.98f);
                         steerTarget = foot + toClusterDir * ahead;
 
+                        // 좌/우 벌림 offset (ONE-attack 방식: 두 선박이 LOS 기준선 좌우로 분산)
+                        if (losSpreadDistance > 0f && !_singleNetMode)
+                        {
+                            // perpRight = up × losDir (LOS 기준 오른쪽)
+                            // isLeftAgent=true → side=-1 → steerTarget -= perpRight → 왼쪽
+                            // isLeftAgent=false → side=+1 → steerTarget += perpRight → 오른쪽
+                            Vector3 perpRight = new Vector3(losDir.z, 0f, -losDir.x);
+                            float side = isLeftAgent ? -1f : 1f;
+                            steerTarget += perpRight * side * losSpreadDistance;
+                        }
+
                         _losFootPoint      = foot;
                         _losLookAheadPoint = steerTarget;
                         valid = true;
@@ -771,18 +790,53 @@ namespace BoatAttack
                     }
                     else
                     {
-                        // 정지 트랩: 적을 향해 전진
-                        Vector3 toEnemy = targetEnemy.transform.position - transform.position;
-                        toEnemy.y = 0f;
-                        float dist = toEnemy.magnitude;
-                        if (dist > 0.1f)
+                        // 정지 트랩: 적 위치를 클러스터 centroid로 삼아 LOS 기준선(적→모선) 추종
+                        Vector3 cPos = targetEnemy.transform.position; cPos.y = 0f;
+                        Vector3 aPos = transform.position;             aPos.y = 0f;
+
+                        if (motherShip != null)
                         {
-                            Vector3 losDir = toEnemy / dist;
-                            float ahead = Mathf.Min(losLookAheadDist, dist * 0.98f);
-                            steerTarget = transform.position + losDir * ahead;
-                            _losFootPoint = transform.position;
-                            _losLookAheadPoint = steerTarget;
-                            valid = true;
+                            Vector3 mPos = motherShip.transform.position; mPos.y = 0f;
+                            Vector3 losVec = mPos - cPos;
+                            float losDist = losVec.magnitude;
+                            if (losDist > 0.1f)
+                            {
+                                Vector3 losDir = losVec / losDist;
+                                Vector3 toClusterDir = -losDir; // 적 마중 방향
+
+                                float proj = Mathf.Clamp(Vector3.Dot(aPos - cPos, losDir), 0f, losDist);
+                                Vector3 foot = cPos + losDir * proj;
+
+                                float toClusterDist = Vector3.Distance(foot, cPos);
+                                float ahead = Mathf.Min(losLookAheadDist, toClusterDist * 0.98f);
+                                steerTarget = foot + toClusterDir * ahead;
+
+                                // 좌/우 spread offset (클러스터 경로와 동일 부호)
+                                if (losSpreadDistance > 0f)
+                                {
+                                    Vector3 perpRight = new Vector3(losDir.z, 0f, -losDir.x);
+                                    float side = isLeftAgent ? -1f : 1f;
+                                    steerTarget += perpRight * side * losSpreadDistance;
+                                }
+
+                                _losFootPoint      = foot;
+                                _losLookAheadPoint = steerTarget;
+                                valid = true;
+                            }
+                        }
+
+                        // fallback: 모선 없으면 적 위치로 직접
+                        if (!valid)
+                        {
+                            Vector3 toEnemy = cPos - aPos;
+                            float dist = toEnemy.magnitude;
+                            if (dist > 0.1f)
+                            {
+                                steerTarget = aPos + (toEnemy / dist) * Mathf.Min(losLookAheadDist, dist * 0.98f);
+                                _losFootPoint = aPos;
+                                _losLookAheadPoint = steerTarget;
+                                valid = true;
+                            }
                         }
                     }
                 }
@@ -905,43 +959,55 @@ namespace BoatAttack
         {
             collectObsCallCount++;
 
-            const int VECTOR_OBS_COUNT = 3; // phaseFlag + motherDistNorm + motherBearing
-            if (lastObservations == null)
+            // VectorSensor 4개:
+            //  [0] isLeftAgent (0/1) — RL 대형 대칭 파괴용
+            //  [1] motherDistNorm   — 모선 거리
+            //  [2] partner dist     — 파트너 거리 정규화
+            //  [3] partner hdg      — 파트너 헤딩차
+            const int VECTOR_OBS_COUNT = 4;
+            if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
                 lastObservations = new float[VECTOR_OBS_COUNT];
             int oi = 0;
 
             if (_engine == null || _engine.RB == null)
             {
-                sensor.AddObservation(0f); // phaseFlag
-                sensor.AddObservation(0f); // motherDistNorm
-                sensor.AddObservation(0f); // motherBearing
+                for (int z = 0; z < VECTOR_OBS_COUNT; z++) sensor.AddObservation(0f);
                 lastObservationsCount = 0;
                 return;
             }
 
-            // phaseFlag: 항상 0 (convoy/flank 시스템 제거)
-            sensor.AddObservation(0f);
-            if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
-                lastObservations = new float[VECTOR_OBS_COUNT];
-            lastObservations[0] = 0f;
+            // [0] isLeftAgent: 좌측 선박=1, 우측=0 (RL 대형 대칭 파괴)
+            float isLeftObs = isLeftAgent ? 1f : 0f;
+            sensor.AddObservation(isLeftObs);
+            lastObservations[0] = isLeftObs;
 
-            // 모선 거리 + 베어링 (에이전트 자신 기준)
+            // [1] 모선 거리
             float motherDistNorm = 0f;
-            float motherBearing  = 0f;
             if (motherShip != null)
             {
                 Vector3 toMother = motherShip.transform.position - transform.position;
                 toMother.y = 0f;
-                float mDist = toMother.magnitude;
-                // k/(dist+k): 모선에 가까울수록 1, 멀수록 0 (k=enemyNormK 재활용)
-                motherDistNorm = enemyNormK / (mDist + enemyNormK);
-                // 부호 있는 베어링: 0=정면, ±1=후방
-                motherBearing = ComputeSignedBearing(transform.forward, toMother);
+                motherDistNorm = enemyNormK / (toMother.magnitude + enemyNormK);
             }
             sensor.AddObservation(motherDistNorm);
-            sensor.AddObservation(motherBearing);
             lastObservations[1] = motherDistNorm;
-            lastObservations[2] = motherBearing;
+
+            // [2][3] 파트너 관측 (dist, hdgDiff)
+            {
+                float myAngle = transform.eulerAngles.y;
+                float pDist = 0f, pHdg = 0f;
+                if (partnerAgent != null)
+                {
+                    Vector3 rel = partnerAgent.transform.position - transform.position;
+                    rel.y       = 0f;
+                    pDist = NormalizePosition(rel.magnitude, allyPairNormK);
+                    pHdg  = NormalizeHeadingDiff(myAngle, partnerAgent.transform.eulerAngles.y);
+                }
+                sensor.AddObservation(pDist);
+                sensor.AddObservation(pHdg);
+                lastObservations[2] = pDist;
+                lastObservations[3] = pHdg;
+            }
 
             oi = VECTOR_OBS_COUNT;
 

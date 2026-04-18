@@ -91,8 +91,19 @@ namespace BoatAttack
                     Destroy(effect, 3f);
                 }
             }
-            // 아군 웹 충돌은 DynamicWeb.OnTriggerEnter에서 처리 (IsOtherPairDefenseShip 필터링 포함)
-            // WebCollisionDetector에서는 적군 포획만 담당
+            // 아군 선박이 타 쌍의 그물에 걸린 경우 → 걸린 아군 쌍 비활성화
+            var hitAgent = other.GetComponent<DefenseAgent>();
+            if (hitAgent == null)
+                hitAgent = other.GetComponentInParent<DefenseAgent>();
+            if (hitAgent != null && envController != null)
+            {
+                // 자기 쌍 그물에 자기가 걸리는 경우는 무시
+                bool isSamePair = parentDynamicWeb != null
+                    && (parentDynamicWeb.defenseShip1 == hitAgent.transform
+                     || parentDynamicWeb.defenseShip2 == hitAgent.transform);
+                if (!isSamePair)
+                    envController.OnAllyHitWeb(hitAgent.gameObject, parentDynamicWeb);
+            }
         }
 
         /// <summary>

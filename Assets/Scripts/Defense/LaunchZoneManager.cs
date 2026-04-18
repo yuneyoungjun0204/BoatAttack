@@ -105,16 +105,16 @@ namespace BoatAttack
         public LaunchZone[] launchZones;
 
         [Header("Ally Pool")]
-        [Tooltip("최대 아군 쌍 수 (모선 탑재 최대 6척 = 3쌍)")]
-        [Range(1, 3)]
+        [Tooltip("최대 아군 쌍 수 (풀 상한)")]
+        [Range(1, 10)]
         public int maxPairCount = 3;
 
         [Tooltip("에피소드 시작 시 자동 배치 쌍 수")]
-        [Range(0, 3)]
-        public int activePairCount = 1;
+        [Range(0, 10)]
+        public int activePairCount = 3;
 
         [Tooltip("초기 출동 쌍 수 (나머지는 예비로 대기, 0=activePairCount 전부 출동)")]
-        [Range(0, 3)]
+        [Range(0, 10)]
         public int initialDeployCount = 0;
 
         [Tooltip("에피소드 당 최대 배치 쌍 수 (0=무제한). 초기+추가 배치 합산")]
@@ -710,7 +710,7 @@ namespace BoatAttack
                 // 50% 확률로 좌우 반전 → Agent1/2 배치 편향 제거
                 if (Random.value < 0.5f) webLateral = -webLateral;
 
-                float spawnWidth = 10f;
+                float spawnWidth = 125f;
 
                 Vector3 pos1 = pairCenter + webLateral * (-spawnWidth * 0.5f);
                 pos1.y = _templateAgent1Y;
@@ -755,6 +755,29 @@ namespace BoatAttack
                 {
                     agentGroup.RegisterAgent(pair.agent1);
                     agentGroup.RegisterAgent(pair.agent2);
+                }
+
+                // 좌/우 역할 설정: 실제 스폰 위치 기준 (webLateral 반전 50%이므로 pos1이 왼쪽/오른쪽 어느 쪽이든 대응)
+                // losDir = 클러스터→모선 방향, 그 오른쪽(cross) 기준으로 판정
+                {
+                    Vector3 losDir = Vector3.zero;
+                    if (pair.clusterCentroid != Vector3.zero && motherShip != null)
+                    {
+                        losDir = motherShip.transform.position - pair.clusterCentroid;
+                        losDir.y = 0f;
+                        losDir.Normalize();
+                    }
+                    else
+                    {
+                        losDir = spawnForward; // fallback
+                    }
+                    // perpRight = cross(losDir, up)
+                    Vector3 perpRight = new Vector3(losDir.z, 0f, -losDir.x);
+                    // pos1이 LOS 기준선 오른쪽이면 agent1=오른쪽 선박(isLeft=false)
+                    Vector3 toPos1 = pos1 - pairCenter; toPos1.y = 0f;
+                    bool agent1IsRight = Vector3.Dot(toPos1, perpRight) > 0f;
+                    if (pair.agent1 != null) pair.agent1.isLeftAgent = !agent1IsRight;
+                    if (pair.agent2 != null) pair.agent2.isLeftAgent =  agent1IsRight;
                 }
 
                 // PD LOS 가이던스 시작 — 클러스터 배정 쌍만, 한 클러스터 = 하나의 쌍
@@ -1391,6 +1414,18 @@ namespace BoatAttack
             if (_pairPool == null || index < 0 || index >= _pairPool.Count)
                 return null;
             return _pairPool[index];
+        }
+
+        /// <summary>웹 오브젝트로 쌍 인덱스 조회 (-1=없음)</summary>
+        public int GetPairIndexByWeb(GameObject webObj)
+        {
+            if (_pairPool == null || webObj == null) return -1;
+            for (int i = 0; i < _pairPool.Count; i++)
+            {
+                if (_pairPool[i] != null && _pairPool[i].webObject == webObj)
+                    return i;
+            }
+            return -1;
         }
 
         /// <summary>
@@ -2137,7 +2172,7 @@ namespace BoatAttack
 
             // === Fallback: 후미 자동 생성 ===
             float rearAngleDeg = GetMotherShipRearAngleDeg();
-            int count = Mathf.Clamp(maxPairCount, 1, 3);
+            int count = Mathf.Clamp(maxPairCount, 1, 10);
             launchZones = new LaunchZone[count];
 
             if (count == 1)

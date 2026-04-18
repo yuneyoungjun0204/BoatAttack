@@ -3,46 +3,49 @@ using UnityEngine;
 namespace BoatAttack
 {
     /// <summary>
-    /// 보상 계산기 (Only-oneattack 방식)
-    /// 매 스텝: 대형 유지 + 적 접근 + 시간 페널티
+    /// 보상 계산기
+    /// 매 스텝: LOS 수직 대형 + Web→적 접근 + 시간 페널티
     /// 이벤트: 포획/모선충돌/아군충돌 (EnvController에서 직접 참조)
     /// </summary>
     public class DefenseRewardCalculator : MonoBehaviour
     {
         [Header("=== 매 스텝 보상 ===")]
-        [Tooltip("대형 유지 보상 (아군 간격이 적정 범위 내일 때)")]
-        public float formationReward = 0.001f;
+        [Tooltip("LOS 수직 방향 대형 보상 (두 선박이 LOS 기준 수직으로 벌어질수록). 권장: 0.002")]
+        public float formationReward = 0.002f;
 
-        [Tooltip("아군 간 최적 거리 (m)")]
-        public float optimalDistance = 50f;
+        [Tooltip("LOS 수직 방향 최적 간격 (m). 두 선박이 이 간격이 될 때 최대 보상. 권장: 100m")]
+        public float optimalDistance = 100f;
 
-        [Tooltip("거리 허용 범위 (±m) - 최적 거리 기준")]
-        public float distanceTolerance = 25f;
+        [Tooltip("거리 허용 범위 (±m). 권장: 40m → 60~140m 범위에서 보상")]
+        public float distanceTolerance = 40f;
 
-        [Tooltip("적 접근 보상 (Web-적 거리 1m 감소당)")]
+        [Tooltip("Web→적 거리 1m 감소당 보상. 권장: 0.001")]
         public float approachRewardPerMeter = 0.001f;
 
-        [Tooltip("헤딩 정렬 보상 (에이전트가 적을 향할수록)")]
-        public float headingAlignmentReward = 0.0005f;
+        [Tooltip("헤딩 정렬 보상 (에이전트가 적을 향할수록). 권장: 0.0003")]
+        public float headingAlignmentReward = 0.0003f;
 
-        [Tooltip("시간 페널티 (매 스텝)")]
+        [Tooltip("시간 페널티 (매 스텝). 권장: -0.0001")]
         public float timePenalty = -0.0001f;
 
         [Header("=== 이벤트 보상 ===")]
-        [Tooltip("포획 성공 (적이 Web에 충돌)")]
+        [Tooltip("포획 성공 보상. ONE-attack: 1.0")]
         public float captureReward = 1.0f;
 
-        [Tooltip("모선 충돌 페널티 (적이 모선에 충돌)")]
+        [Tooltip("포획한 쌍에 추가 개별 보너스 (MA-POCA 개인 채널 강화)")]
+        public float capturePairBonus = 0.3f;
+
+        [Tooltip("모선 충돌 페널티. ONE-attack: -1.0")]
         public float motherShipHitPenalty = -1.0f;
 
-        [Tooltip("충돌 페널티 (아군끼리/거리초과 등)")]
+        [Tooltip("충돌 페널티 (아군끼리/거리초과 등). ONE-attack: -0.5")]
         public float collisionPenalty = -0.5f;
 
         [Header("=== 아군 거리 제한 ===")]
-        [Tooltip("아군 간 최대 허용 거리 (m). 초과 시 에피소드 종료")]
+        [Tooltip("아군 간 최대 허용 거리 (m). ONE-attack: 120m")]
         public float maxAllyDistance = 120f;
 
-        [Tooltip("아군 간 최소 허용 거리 (m). 미만 시 에피소드 종료")]
+        [Tooltip("아군 간 최소 허용 거리 (m). ONE-attack: 4m")]
         public float minAllyDistance = 4f;
 
         [Header("=== 에피소드 종료 보상 ===")]
@@ -55,7 +58,10 @@ namespace BoatAttack
         [Tooltip("에피소드 종료 시 남은 적군 1대당 페널티")]
         public float remainingEnemyPenalty = -0.5f;
 
-        // 쌍별 이전 스텝의 Web-적 거리 (접근 보상 계산용)
+        [Tooltip("아군 선박 전부 비활성화 시 고정 페널티")]
+        public float noPairsLeftPenalty = -5f;
+
+        // 쌍별 이전 스텝의 Web→적 최근접 거리 (접근 보상 계산용)
         private readonly System.Collections.Generic.Dictionary<int, float> _prevWebToEnemyDist
             = new System.Collections.Generic.Dictionary<int, float>();
 
@@ -85,21 +91,37 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 쌍별 매 스텝 보상: 대형 유지 + 적 접근 + 시간 페널티
+        /// 매 스텝 쌍 보상: LOS 수직 대형 + Web→적 접근 + 시간 페널티
+        /// losDir: 클러스터→모선 단위벡터 (Vector3.zero이면 총 거리 기반 fallback)
         /// </summary>
         public float CalculateStepReward(int pairIdx,
             AgentState agent1, AgentState agent2,
-            GameObject[] enemyShips, GameObject webObject)
+            GameObject[] enemyShips, GameObject webObject,
+            Vector3 losDir = default)
         {
             float reward = 0f;
 
-            // 1. 대형 유지: 아군 간격이 optimalDistance ± distanceTolerance 내면 보상
-            float allyDist = Vector3.Distance(agent1.position, agent2.position);
-            float error = Mathf.Abs(allyDist - optimalDistance);
+            // 1. 대형 보상: LOS 수직 방향 간격이 optimalDistance ± distanceTolerance 내면 보상
+            float formationDist;
+            if (losDir != Vector3.zero)
+            {
+                // LOS 수직 방향(perpRight)으로 투영한 거리
+                Vector3 perpRight = new Vector3(losDir.z, 0f, -losDir.x);
+                Vector3 diff = agent2.position - agent1.position;
+                diff.y = 0f;
+                formationDist = Mathf.Abs(Vector3.Dot(diff, perpRight));
+            }
+            else
+            {
+                // fallback: 클러스터 미배정 시 총 거리
+                formationDist = Vector3.Distance(agent1.position, agent2.position);
+            }
+
+            float error = Mathf.Abs(formationDist - optimalDistance);
             if (error <= distanceTolerance)
                 reward += formationReward * (1f - error / distanceTolerance);
 
-            // 2. 적 접근: Web 중심과 가장 가까운 적 거리가 줄었으면 보상
+            // 2. Web→적 접근: Web 중심과 가장 가까운 적 거리가 줄었으면 보상
             if (webObject != null && enemyShips != null && approachRewardPerMeter > 0f)
             {
                 Vector3 webPos = webObject.transform.position;

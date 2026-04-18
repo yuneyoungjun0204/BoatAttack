@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ls -la \"c:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\Assets\\\\Scripts\"\" | findstr /E \"RL Connect Environment \")"
+      "Bash(ls -la \"c:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\Assets\\\\Scripts\"\" | findstr /E \"RL Connect Environment \")",
+      "Bash(curl -s \"http://localhost:6006/data/logdir\")"
     ]
   }
 }
