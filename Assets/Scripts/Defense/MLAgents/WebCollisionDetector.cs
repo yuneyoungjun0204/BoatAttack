@@ -106,6 +106,13 @@ namespace BoatAttack
             }
         }
 
+        private void OnTriggerStay(Collider other)
+        {
+            if (!other.CompareTag(enemyTag)) return;
+            if (envController != null)
+                envController.OnEnemyInWebZone(other.gameObject, parentDynamicWeb);
+        }
+
         /// <summary>
         /// 에피소드 리셋 시 호출
         /// </summary>

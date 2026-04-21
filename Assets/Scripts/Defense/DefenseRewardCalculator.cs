@@ -28,6 +28,27 @@ namespace BoatAttack
         [Tooltip("시간 페널티 (매 스텝). 권장: -0.0001")]
         public float timePenalty = -0.0001f;
 
+        [Header("=== 선회 대형 보상 ===")]
+        [Tooltip("그물이 optimalDistance보다 줄어드는 속도에 비례한 페널티 (선회 외곽 선박 가속 유도). 권장: 0.0003")]
+        public float webShrinkPenalty = 0.0003f;
+
+        [Tooltip("그물이 optimalDistance보다 짧을 때 개별 속도 비례 보상 — 외곽 선박이 더 빠를수록 유리. 권장: 0.0002")]
+        public float webSpeedBonus = 0.0002f;
+
+        [Tooltip("적군이 웹 존 안에 머무는 동안 매 스텝 보상. 권장: 0.005")]
+        public float webBlockReward = 0.005f;
+
+        [Header("=== Raycast 차단 보상 ===")]
+        [Tooltip("적→모선 Ray가 Web에 닿을 때 해당 쌍에 매 스텝 보상. 권장: 0.002")]
+        public float raycastInterceptReward = 0.002f;
+
+        [Header("=== Raycast 타임아웃 ===")]
+        [Tooltip("이 스텝 수 동안 Ray를 한 번도 차단 못하면 페널티 + 비활성화. 권장: 300")]
+        public int raycastTimeoutSteps = 300;
+
+        [Tooltip("타임아웃 비활성화 시 페널티")]
+        public float raycastTimeoutPenalty = -0.5f;
+
         [Header("=== 이벤트 보상 ===")]
         [Tooltip("포획 성공 보상. ONE-attack: 1.0")]
         public float captureReward = 1.0f;
@@ -63,6 +84,10 @@ namespace BoatAttack
 
         // 쌍별 이전 스텝의 Web→적 최근접 거리 (접근 보상 계산용)
         private readonly System.Collections.Generic.Dictionary<int, float> _prevWebToEnemyDist
+            = new System.Collections.Generic.Dictionary<int, float>();
+
+        // 쌍별 이전 스텝 그물 길이 (선회 대형 보상용)
+        private readonly System.Collections.Generic.Dictionary<int, float> _prevWebLength
             = new System.Collections.Generic.Dictionary<int, float>();
 
         /// <summary>에이전트 상태</summary>
@@ -117,9 +142,11 @@ namespace BoatAttack
                 formationDist = Vector3.Distance(agent1.position, agent2.position);
             }
 
-            float error = Mathf.Abs(formationDist - optimalDistance);
-            if (error <= distanceTolerance)
-                reward += formationReward * (1f - error / distanceTolerance);
+            // Gaussian 형태: optimalDistance에서 최대, 멀어질수록 지수 감쇠
+            // sigma = distanceTolerance → error=0 시 1.0, error=tolerance 시 ~0.37
+            float error = formationDist - optimalDistance;
+            float sigma = distanceTolerance;
+            reward += formationReward * Mathf.Exp(-0.5f * (error * error) / (sigma * sigma));
 
             // 2. Web→적 접근: Web 중심과 가장 가까운 적 거리가 줄었으면 보상
             if (webObject != null && enemyShips != null && approachRewardPerMeter > 0f)
@@ -138,6 +165,21 @@ namespace BoatAttack
 
             // 3. 시간 페널티
             reward += timePenalty;
+
+            // 4. 그물 길이 변화 페널티: 수축(deltaLen<0) + 팽창(deltaLen>0) 모두 페널티
+            //    선회 시 외곽 선박 가속 유도, 과도한 벌어짐도 억제
+            if (webShrinkPenalty > 0f)
+            {
+                float currLen = Vector3.Distance(agent1.position, agent2.position);
+                if (_prevWebLength.TryGetValue(pairIdx, out float prevLen))
+                {
+                    float deltaLen = currLen - prevLen;
+                    // 수축 페널티 (deltaLen < 0): webShrinkPenalty * |deltaLen|
+                    // 팽창 페널티 (deltaLen > 0): webShrinkPenalty * |deltaLen| (동일 계수)
+                    reward -= webShrinkPenalty * Mathf.Abs(deltaLen);
+                }
+                _prevWebLength[pairIdx] = currLen;
+            }
 
             return reward;
         }
@@ -191,6 +233,7 @@ namespace BoatAttack
         public void Reset()
         {
             _prevWebToEnemyDist.Clear();
+            _prevWebLength.Clear();
         }
     }
 }

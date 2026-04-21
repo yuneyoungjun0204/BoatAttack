@@ -384,8 +384,9 @@ namespace BoatAttack
             if (obj == null) return false;
             DefenseAgent agent = obj.GetComponentInParent<DefenseAgent>();
             if (agent == null) return false;
-            if (defenseShip1 != null && agent.transform == defenseShip1) return false;
-            if (defenseShip2 != null && agent.transform == defenseShip2) return false;
+            // Transform 비교 대신 DefenseAgent 레퍼런스 비교 (자식 콜라이더/앵커 참조 시 오판 방지)
+            if (defenseShip1 != null && defenseShip1.GetComponentInParent<DefenseAgent>() == agent) return false;
+            if (defenseShip2 != null && defenseShip2.GetComponentInParent<DefenseAgent>() == agent) return false;
             return true;
         }
 

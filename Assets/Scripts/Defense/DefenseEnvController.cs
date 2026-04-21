@@ -106,13 +106,6 @@ namespace BoatAttack
         [Tooltip("포획 후 그물+선박 유지 (다중 포획 허용). IST: true")]
         public bool keepWebAfterCapture = true;
 
-        [Header("=== Target Assignment ===")]
-        [Tooltip("타겟 배정 고정: 유효한 기존 배정을 유지 (false=매번 재배정)")]
-        public bool lockTargetAssignment = true;
-
-        [Tooltip("자동 타겟 배정 활성화 (스테이지 무관, 5스텝마다 실행)")]
-        public bool enableAutoAssign = true;
-
         [Tooltip("양동(Diversionary) 방향 필터: 진수 각도와 적 접근 각도의 최대 허용 차이 (°). 0=필터 없음")]
         [Range(0f, 180f)]
         public float assignAngleTolerance = 60f;
@@ -258,8 +251,9 @@ namespace BoatAttack
         public EnvironmentController environmentController;
 
         [Header("Observation Scale (전 에이전트 공통)")]
+        [Range(1f, 5000f)] public float enemyNormK = 500f;
         [Range(1f, 10f)] public float enemyDistScale = 1f;
-        [Range(1f, 10f)] public float enemyBearingScale = 1f;  // 2번 관측: CTE 스케일
+        [Range(1f, 10f)] public float enemyBearingScale = 1f;
         [Range(1f, 10f)] public float enemyHeadingScale = 1f;
         [Range(1f, 10f)] public float allyDistScale = 1f;
         [Range(1f, 10f)] public float allyBearingScale = 1f;
@@ -330,6 +324,8 @@ namespace BoatAttack
 
         // Raycast 차단 시각화 (적→모선)
         private LineRenderer[] _enemyRayLines;
+        // 이전 스텝 Raycast 결과: true = 해당 적이 어떤 Web에 차단됨
+        private bool[] _enemyRayBlocked;
 
         [Header("Multi-Environment")]
         [Tooltip("환경 루트 Transform (Island Level 등). 비어있으면 부모 또는 자기 자신 사용")]
@@ -1024,47 +1020,41 @@ namespace BoatAttack
                         if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                         if (pair.agent1 == null || pair.agent2 == null) continue;
 
-                        // Neutralized(정지 그물 유지) 쌍은 거리 체크 스킵
+                        // Neutralized(정지 그물 유지) 쌍은 스킵
                         if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
-                        // 배치 후 유예기간 (50스텝) 건너뛰기
-                        bool inGrace = pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50;
-                        if (inGrace) continue;
-
-                        // 좌/우 교차 체크: isLeftAgent 기준으로 현재 위치 비교
-                        // perpRight = LOS(클러스터→모선) 수직 방향
-                        if (pair.agent1 != null && pair.agent2 != null &&
-                            !pair.agent1.IsNeutralized && !pair.agent2.IsNeutralized)
+                        // prtBrg 부호 역전 감지: agent1 시점으로 시간축 추적
+                        // 첫 유효 체크에서 초기 부호를 lazy 기록, 이후 변화 시 비활성화
+                        if (!pair.agent1.IsNeutralized && !pair.agent2.IsNeutralized)
                         {
-                            Vector3 p1 = pair.agent1.transform.position; p1.y = 0f;
-                            Vector3 p2 = pair.agent2.transform.position; p2.y = 0f;
-                            Vector3 perpRight = Vector3.right; // fallback
-                            if (pair.clusterCentroid != Vector3.zero && motherShip != null)
+                            Vector3 toPartner = pair.agent2.transform.position - pair.agent1.transform.position;
+                            toPartner.y = 0f;
+                            if (toPartner.sqrMagnitude > 1f)
                             {
-                                Vector3 los = motherShip.transform.position - pair.clusterCentroid;
-                                los.y = 0f;
-                                if (los.sqrMagnitude > 0.01f)
+                                Vector3 a1Fwd = pair.agent1.transform.forward; a1Fwd.y = 0f;
+                                float cross = Vector3.Cross(a1Fwd.normalized, toPartner.normalized).y;
+                                if (Mathf.Abs(cross) > 0.1f)
                                 {
-                                    los.Normalize();
-                                    perpRight = new Vector3(los.z, 0f, -los.x);
+                                    if (pair.initialPartnerBearingSign == 0f)
+                                    {
+                                        // 첫 유효 측정: 기준 부호 기록
+                                        pair.initialPartnerBearingSign = Mathf.Sign(cross);
+                                    }
+                                    else if (Mathf.Sign(cross) != pair.initialPartnerBearingSign)
+                                    {
+                                        pair.agent1.AddReward(rewardCalculator.collisionPenalty);
+                                        pair.agent2.AddReward(rewardCalculator.collisionPenalty);
+                                        DisableOrDisarmPair(pi);
+                                        NotifyCameraPairDisabled(pair);
+                                        continue;
+                                    }
                                 }
-                            }
-                            Vector3 center = (p1 + p2) * 0.5f;
-                            // isLeftAgent=true → perpRight 왼쪽(dot<0) 이어야 정상
-                            bool a1ShouldBeLeft = pair.agent1.isLeftAgent;
-                            bool a1IsLeft = Vector3.Dot(p1 - center, perpRight) < 0f;
-                            if (a1ShouldBeLeft != a1IsLeft)
-                            {
-                                pair.agent1.AddReward(rewardCalculator.collisionPenalty);
-                                pair.agent2.AddReward(rewardCalculator.collisionPenalty);
-                                DisableOrDisarmPair(pi);
-                                NotifyCameraPairDisabled(pair);
-                                Debug.LogWarning($"[CrossCheck] Pair {pi} 좌우 교차 → 비활성화, step={_resetTimer}");
                             }
                         }
                     }
                     // 모든 쌍 무력화 시 에피소드 종료 (한 번이라도 배치된 적이 있을 때만)
                     if (!disableNoPairsEndEpisode
+                        && currentStage != TrainingStage.Stage9_DisarmReform
                         && launchZoneManager.GetOperationalPairCount() == 0 && launchZoneManager.GetDeployedPairCount() > 0)
                     {
                         CheckEpisodeEndCondition();
@@ -1207,6 +1197,7 @@ namespace BoatAttack
                 }
 
                 if (!disableNoPairsEndEpisode
+                    && currentStage != TrainingStage.Stage9_DisarmReform
                     && launchZoneManager.GetOperationalPairCount() == 0 && launchZoneManager.GetDeployedPairCount() > 0)
                 {
                     CheckEpisodeEndCondition();
@@ -1218,14 +1209,6 @@ namespace BoatAttack
             if (launchZoneManager != null && motherShip != null && _resetTimer % 10 == 0)
             {
                 DeactivatePairsWithNoValidTarget();
-            }
-
-            // 1:1 매칭 재배정 + 예비 출동 (lockTargetAssignment=false → 매 스텝 동적 재배정)
-            int _assignInterval = lockTargetAssignment ? 5 : 1;
-            if (enableAutoAssign && _resetTimer % _assignInterval == 0)
-            {
-                AutoAssignOneToOneTargets();
-                DeployReservesForUnassignedEnemies();
             }
 
             // Stage8/9: 어떤 아군보다 모선에 가까운 적이 있으면 예비 쌍 출동 (100스텝마다)
@@ -1240,6 +1223,10 @@ namespace BoatAttack
             {
                 ProcessDisarmedPairs();
             }
+
+            // 타겟 사망 시에만 재배정 (100스텝마다 체크)
+            if (_resetTimer % 100 == 0)
+                RefreshDeadTargets();
 
             // 보상 계산 주기 확인
             if (_resetTimer % rewardCalculationInterval != 0)
@@ -1295,6 +1282,26 @@ namespace BoatAttack
                         if (h2 != 0f) pair.agent2.AddReward(h2);
                         totalStepReward += h1 + h2;
                     }
+
+                    // 선회 대형 개별 속도 보상: 그물이 optimalDistance보다 짧을 때
+                    // 빠른 선박(=외곽 선박)에게 더 많은 보상 → 차동 속도 학습 유도
+                    if (rewardCalculator.webSpeedBonus > 0f)
+                    {
+                        float currWebLen = Vector3.Distance(
+                            pair.agent1.transform.position, pair.agent2.transform.position);
+                        float shortage = Mathf.Max(0f,
+                            1f - currWebLen / Mathf.Max(rewardCalculator.optimalDistance, 1f));
+                        if (shortage > 0f)
+                        {
+                            float spd1 = a1State.speed;
+                            float spd2 = a2State.speed;
+                            float bonus1 = rewardCalculator.webSpeedBonus * shortage * spd1;
+                            float bonus2 = rewardCalculator.webSpeedBonus * shortage * spd2;
+                            if (bonus1 > 0f) pair.agent1.AddReward(bonus1);
+                            if (bonus2 > 0f) pair.agent2.AddReward(bonus2);
+                            totalStepReward += bonus1 + bonus2;
+                        }
+                    }
                 }
             }
             else if (defenseAgent1 != null && defenseAgent2 != null)
@@ -1320,6 +1327,101 @@ namespace BoatAttack
                 {
                     if (_enemyRayLines[ei] != null)
                         _enemyRayLines[ei].enabled = false;
+                }
+            }
+
+            // ── Raycast 차단 보상: 각 활성 적 → 모선 Ray가 Web에 닿으면 해당 쌍 보상 ──
+            if (motherShip != null && _enemyPool != null && rewardCalculator.raycastInterceptReward > 0f)
+            {
+                // 스텝 시작 시 차단 상태 초기화
+                if (_enemyRayBlocked != null && _enemyRayBlocked.Length == _enemyPool.Length)
+                    System.Array.Clear(_enemyRayBlocked, 0, _enemyRayBlocked.Length);
+
+                Vector3 motherPos = motherShip.transform.position;
+                for (int ei = 0; ei < _enemyPool.Length; ei++)
+                {
+                    if (_enemyPool[ei] == null || !_enemyPool[ei].activeSelf) { HideRayLine(ei); continue; }
+                    if (IsEnemyNeutralized(_enemyPool[ei]))                   { HideRayLine(ei); continue; }
+
+                    Vector3 enemyPos    = _enemyPool[ei].transform.position;
+                    Vector3 toMother    = motherPos - enemyPos; toMother.y = 0f;
+                    float   distToMother = toMother.magnitude;
+                    if (distToMother < 1f) continue;
+
+                    Vector3 rayDir = toMother.normalized;
+
+                    // 시각화
+                    ShowRayLine(ei, enemyPos, enemyPos + rayDir * distToMother);
+
+                    // Raycast (Trigger 콜라이더 포함)
+                    RaycastHit[] hits = Physics.RaycastAll(
+                        enemyPos + Vector3.up * 2f, rayDir, distToMother,
+                        Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide);
+
+                    bool hitWeb = false;
+                    foreach (var hit in hits)
+                    {
+                        var dw = hit.collider.GetComponent<DynamicWeb>()
+                              ?? hit.collider.GetComponentInParent<DynamicWeb>();
+                        if (dw == null) continue;
+
+                        hitWeb = true;
+                        if (_enemyRayBlocked != null && ei < _enemyRayBlocked.Length)
+                            _enemyRayBlocked[ei] = true;
+
+                        // 해당 Web의 쌍 찾기 → lastRaycastHitStep 갱신 + 보상
+                        if (launchZoneManager != null)
+                        {
+                            int poolCap = launchZoneManager.GetPoolCapacity();
+                            for (int pi2 = 0; pi2 < poolCap; pi2++)
+                            {
+                                DefensePair p = launchZoneManager.GetPair(pi2);
+                                if (p == null || !p.isActive || p.webObject == null) continue;
+                                var pDw = p.webObject.GetComponent<DynamicWeb>();
+                                if (pDw != dw) continue;
+
+                                p.lastRaycastHitStep = _resetTimer;
+                                p.hasEverHitRaycast  = true;
+
+                                float r = rewardCalculator.raycastInterceptReward;
+                                if (p.agent1 != null) p.agent1.AddReward(r);
+                                if (p.agent2 != null) p.agent2.AddReward(r);
+                                totalStepReward += r;
+                                break;
+                            }
+                        }
+                        break; // 적 하나당 Web 하나만
+                    }
+
+                    SetRayLineColor(ei, hitWeb);
+                }
+            }
+
+            // ── Raycast 타임아웃: 일정 스텝 동안 Ray 차단 못하면 페널티 + 비활성화 ──
+            if (launchZoneManager != null && rewardCalculator.raycastTimeoutSteps > 0)
+            {
+                int poolCap = launchZoneManager.GetPoolCapacity();
+                for (int pi = 0; pi < poolCap; pi++)
+                {
+                    DefensePair pair = launchZoneManager.GetPair(pi);
+                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
+                    if (pair.lastRaycastHitStep < 0) continue;
+                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
+                    if (pair.agent1 != null && pair.agent1.IsNeutralized
+                     && pair.agent2 != null && pair.agent2.IsNeutralized) continue;
+
+                    int stepsSinceHit    = _resetTimer - pair.lastRaycastHitStep;
+                    int effectiveTimeout = pair.hasEverHitRaycast
+                        ? rewardCalculator.raycastTimeoutSteps / 2
+                        : rewardCalculator.raycastTimeoutSteps;
+
+                    if (stepsSinceHit > effectiveTimeout)
+                    {
+                        if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.raycastTimeoutPenalty);
+                        if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.raycastTimeoutPenalty);
+                        Debug.LogWarning($"[RaycastTimeout] Pair {pi} 비활성화: {stepsSinceHit}스텝 미차단 (limit={effectiveTimeout}, everHit={pair.hasEverHitRaycast})");
+                        DisableOrDisarmPair(pi);
+                    }
                 }
             }
 
@@ -1704,6 +1806,38 @@ namespace BoatAttack
         /// 2. 적군 무력화
         /// 3. 포획한 아군 쌍 풀 반환 (Web은 0.5초 후 비활성화)
         /// </summary>
+        /// <summary>
+        /// 적군이 웹 존 안에 머무는 동안 매 FixedUpdate 호출 (OnTriggerStay)
+        /// 매 스텝 소액 보상 + lastRaycastHitStep 갱신
+        /// </summary>
+        public void OnEnemyInWebZone(GameObject enemyBoat, DynamicWeb web)
+        {
+            if (_episodeEnding || enemyBoat == null || web == null) return;
+            if (launchZoneManager == null) return;
+
+            int poolCap = launchZoneManager.GetPoolCapacity();
+            for (int pi = 0; pi < poolCap; pi++)
+            {
+                DefensePair pair = launchZoneManager.GetPair(pi);
+                if (pair == null || !pair.isActive || pair.webObject == null) continue;
+
+                DynamicWeb pairWeb = pair.webObject.GetComponent<DynamicWeb>();
+                if (pairWeb != web) continue;
+
+                // 이 쌍이 웹 존 안에 적을 감지 중
+                pair.hasEverHitRaycast = true;
+                pair.lastRaycastHitStep = _resetTimer;
+
+                if (rewardCalculator.webBlockReward > 0f)
+                {
+                    float reward = rewardCalculator.webBlockReward;
+                    if (pair.agent1 != null) pair.agent1.AddReward(reward);
+                    if (pair.agent2 != null) pair.agent2.AddReward(reward);
+                }
+                break;
+            }
+        }
+
         public void OnEnemyHitWeb(GameObject enemyBoat, DynamicWeb capturingWeb = null)
         {
             if (_episodeEnding) return;
@@ -1839,6 +1973,16 @@ namespace BoatAttack
                 if (keepWebAfterCapture)
                 {
                     // 그물 유지 모드: 적만 제거, 쌍/Web 비활성화 없음 → 다중 포획 허용
+                    // 포획한 쌍의 타겟을 클러스터 내 다음 생존 적으로 즉시 재배정
+                    if (pair != null && currentStage != TrainingStage.Stage8_TacticalFullObs
+                        && currentStage != TrainingStage.Stage9_DisarmReform)
+                    {
+                        var taken = new System.Collections.Generic.HashSet<int>();
+                        int nextEi = FindLiveEnemyInCluster(pair, taken);
+                        if (pair.agent1 != null) pair.agent1.assignedTargetIndex = nextEi >= 0 ? nextEi + 1 : -1;
+                        if (pair.agent2 != null) pair.agent2.assignedTargetIndex = nextEi >= 0 ? nextEi + 1 : -1;
+                        Debug.Log($"[DefenseEnv] 포획 후 재배정 → Pair {pairIdx}, nextTarget={nextEi}, step={_resetTimer}");
+                    }
                     Debug.Log($"[DefenseEnv] 포획 성공 (그물 유지) → Pair {pairIdx}, 누적={_capturedEnemyCount}, step={_resetTimer}");
                 }
                 else
@@ -2251,6 +2395,35 @@ namespace BoatAttack
             if (pair.agent2 != null) followCamera.OnShipNeutralized(pair.agent2.gameObject);
         }
 
+        private void HideRayLine(int ei)
+        {
+            if (_enemyRayLines == null || ei >= _enemyRayLines.Length || _enemyRayLines[ei] == null) return;
+            _enemyRayLines[ei].enabled = false;
+        }
+
+        private void ShowRayLine(int ei, Vector3 from, Vector3 to)
+        {
+            if (_enemyRayLines == null || ei >= _enemyRayLines.Length || _enemyRayLines[ei] == null) return;
+            _enemyRayLines[ei].enabled = true;
+            _enemyRayLines[ei].SetPosition(0, from + Vector3.up * 2f);
+            _enemyRayLines[ei].SetPosition(1, to   + Vector3.up * 2f);
+        }
+
+        private void SetRayLineColor(int ei, bool hit)
+        {
+            if (_enemyRayLines == null || ei >= _enemyRayLines.Length || _enemyRayLines[ei] == null) return;
+            if (hit)
+            {
+                _enemyRayLines[ei].startColor = new Color(0f, 1f, 0f, 0.7f);
+                _enemyRayLines[ei].endColor   = new Color(0f, 1f, 0f, 0.2f);
+            }
+            else
+            {
+                _enemyRayLines[ei].startColor = new Color(1f, 0f, 0f, 0.5f);
+                _enemyRayLines[ei].endColor   = new Color(1f, 0f, 0f, 0.1f);
+            }
+        }
+
         /// <summary>
         /// 아군이 모든 적보다 모선에서 멀 때 (적이 아군을 지나침) 비활성화
         /// </summary>
@@ -2262,7 +2435,7 @@ namespace BoatAttack
             for (int i = 0; i < poolCount; i++)
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || pair.isDisarmed) continue;
+                if (pair == null || !pair.isActive || pair.isDisarmed || pair.isStandby) continue;
                 if (pair.agent1 == null) continue;
                 Vector3 pairCenter = pair.agent2 != null
                     ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f
@@ -2313,238 +2486,6 @@ namespace BoatAttack
             }
         }
 
-        /// <summary>
-        /// Stage3 1:1 자동 매칭: 각 활성 아군 쌍에 가장 가까운 미배정 적 배정
-        /// 조건: 아군이 적보다 모선에 더 가까울 때만 배정 (차단 가능 위치)
-        /// 미배정 시 assignedTargetIndex = -1 (Fallback: 가장 가까운 적 추적)
-        /// </summary>
-        private void AutoAssignOneToOneTargets()
-        {
-            if (launchZoneManager == null || enemyShips == null) return;
-
-            Vector3 motherPos = motherShip != null ? motherShip.transform.position : Vector3.zero;
-            int poolCount = launchZoneManager.GetCurrentPoolCount();
-            var assigned = new System.Collections.Generic.HashSet<int>();
-
-            // lockTargetAssignment: 기존 배정이 유효하면 유지, 무효한 것만 재배정
-            if (lockTargetAssignment)
-            {
-                for (int i = 0; i < poolCount; i++)
-                {
-                    DefensePair pair = launchZoneManager.GetPair(i);
-                    if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
-
-                    int existingIdx = pair.agent1.assignedTargetIndex;
-                    if (existingIdx > 0)
-                    {
-                        int eIdx = existingIdx - 1;
-                        // 중복 체크: assigned에 이미 있으면 다른 쌍이 이 적을 먼저 점유 → 이 쌍은 초기화
-                        if (!assigned.Contains(eIdx) &&
-                            eIdx < enemyShips.Length && enemyShips[eIdx] != null
-                            && enemyShips[eIdx].activeInHierarchy && !IsEnemyNeutralized(enemyShips[eIdx]))
-                        {
-                            assigned.Add(eIdx); // 이미 배정된 적은 다른 쌍에 배정 안 함
-                            continue;
-                        }
-                    }
-                    // 무효하거나 중복된 배정 → 초기화
-                    if (pair.agent1) pair.agent1.assignedTargetIndex = -1;
-                    if (pair.agent2) pair.agent2.assignedTargetIndex = -1;
-                }
-            }
-            else
-            {
-                for (int i = 0; i < poolCount; i++)
-                {
-                    DefensePair pair = launchZoneManager.GetPair(i);
-                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
-                    if (pair.agent1) pair.agent1.assignedTargetIndex = -1;
-                    if (pair.agent2) pair.agent2.assignedTargetIndex = -1;
-                }
-            }
-
-            // Greedy 매칭: 거리 + 차단각 + 적 진행방향 스코어
-            const float ANGLE_WEIGHT = 9.0f;
-            const float HEADING_WEIGHT = 2.5f;
-
-            for (int i = 0; i < poolCount; i++)
-            {
-                DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
-                if (pair.agent1.assignedTargetIndex > 0) continue; // 이미 유효한 배정
-
-                Vector3 pos1 = pair.agent1.transform.position;
-                Vector3 pos2 = pair.agent2 != null ? pair.agent2.transform.position : pos1;
-                Vector3 webCenter = (pos1 + pos2) * 0.5f;
-
-                Vector3 webLine = pos2 - pos1;
-                Vector3 webNormal = new Vector3(webLine.z, 0f, -webLine.x).normalized;
-                if (Vector3.Dot(webNormal, webCenter - motherPos) < 0f)
-                    webNormal = -webNormal;
-
-                float allyDistToMother = Vector3.Distance(webCenter, motherPos);
-
-                float bestScore = float.MaxValue;
-                int bestIdx = -1;
-
-                // 클러스터 제약: 배정된 클러스터가 있으면 그 클러스터 내 적만 후보로
-                // 클러스터 내 활성 적이 없으면 전체 적으로 폴백
-                bool useCluster = pair.clusterEnemyIndices != null && pair.clusterEnemyIndices.Count > 0;
-                if (useCluster)
-                {
-                    bool hasActiveInCluster = false;
-                    foreach (int ci in pair.clusterEnemyIndices)
-                    {
-                        if (ci < enemyShips.Length && enemyShips[ci] != null
-                            && enemyShips[ci].activeInHierarchy && !IsEnemyNeutralized(enemyShips[ci]))
-                        { hasActiveInCluster = true; break; }
-                    }
-                    if (!hasActiveInCluster) useCluster = false;
-                }
-
-                // 후보 인덱스 목록: 클러스터 제약 또는 전체
-                System.Collections.Generic.IEnumerable<int> candidates = useCluster
-                    ? (System.Collections.Generic.IEnumerable<int>)pair.clusterEnemyIndices
-                    : System.Linq.Enumerable.Range(0, enemyShips.Length);
-
-                foreach (int e in candidates)
-                {
-                    if (e < 0 || e >= enemyShips.Length) continue;
-                    if (assigned.Contains(e)) continue;
-                    if (enemyShips[e] == null || !enemyShips[e].activeInHierarchy) continue;
-                    if (IsEnemyNeutralized(enemyShips[e])) continue;
-
-                    // 양동 방향 필터 (클러스터 사용 시 생략 — 클러스터가 이미 방향 제약)
-                    if (!useCluster && assignAngleTolerance > 0f && pair.launchAngleDeg >= 0f)
-                    {
-                        Vector3 enemyToMother = motherPos - enemyShips[e].transform.position; enemyToMother.y = 0f;
-                        if (enemyToMother.sqrMagnitude > 0.01f)
-                        {
-                            float enemyApproachAngle = Mathf.Atan2(enemyToMother.x, enemyToMother.z) * Mathf.Rad2Deg;
-                            if (Mathf.Abs(Mathf.DeltaAngle(pair.launchAngleDeg, enemyApproachAngle)) > assignAngleTolerance)
-                                continue;
-                        }
-                    }
-
-                    float enemyDistToMother = Vector3.Distance(enemyShips[e].transform.position, motherPos);
-                    if (allyDistToMother >= enemyDistToMother) continue;
-
-                    Vector3 toEnemy = enemyShips[e].transform.position - webCenter; toEnemy.y = 0f;
-                    float interceptAngle = toEnemy.sqrMagnitude > 0.01f
-                        ? Vector3.Angle(webNormal, toEnemy.normalized) : 180f;
-                    if (interceptAngle > 90f) continue;
-
-                    Vector3 enemyFwd = enemyShips[e].transform.forward; enemyFwd.y = 0f;
-                    Vector3 enemyToWeb = webCenter - enemyShips[e].transform.position; enemyToWeb.y = 0f;
-                    float headingAngle = 90f;
-                    if (enemyFwd.sqrMagnitude > 0.01f && enemyToWeb.sqrMagnitude > 0.01f)
-                        headingAngle = Vector3.Angle(enemyFwd.normalized, enemyToWeb.normalized);
-                    if (headingAngle > 110f) continue;
-
-                    float dist = Vector3.Distance(webCenter, enemyShips[e].transform.position);
-                    float score = dist + interceptAngle * ANGLE_WEIGHT + headingAngle * HEADING_WEIGHT;
-                    if (score < bestScore) { bestScore = score; bestIdx = e; }
-                }
-
-                if (bestIdx >= 0)
-                {
-                    launchZoneManager.SetPairTarget(i, bestIdx + 1);
-                    assigned.Add(bestIdx);
-                }
-            }
-
-            // ── SingleNet 전용 배정: isDisarmed 쌍 → 중립화 안 된 적 중 최근접 1대1 ──
-            for (int i = 0; i < poolCount; i++)
-            {
-                DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || !pair.isDisarmed || pair.agent1 == null) continue;
-                if (!pair.agent1.IsSingleNetMode) continue; // SingleNet 모드인 쌍만
-
-                // 이미 유효한 배정이 있으면 유지
-                int existing = pair.agent1.assignedTargetIndex;
-                if (existing > 0)
-                {
-                    int eIdx = existing - 1;
-                    if (eIdx < enemyShips.Length && enemyShips[eIdx] != null
-                        && enemyShips[eIdx].activeInHierarchy && !IsEnemyNeutralized(enemyShips[eIdx]))
-                        continue;
-                }
-
-                Vector3 webCenter = (pair.agent1.transform.position +
-                    (pair.agent2 != null ? pair.agent2.transform.position : pair.agent1.transform.position)) * 0.5f;
-
-                float bestDist = float.MaxValue;
-                int bestSingleIdx = -1;
-                for (int e = 0; e < enemyShips.Length; e++)
-                {
-                    if (assigned.Contains(e)) continue;
-                    if (enemyShips[e] == null || !enemyShips[e].activeInHierarchy) continue;
-                    if (IsEnemyNeutralized(enemyShips[e])) continue; // 정지 트랩 걸린 적 제외
-
-                    float d = Vector3.Distance(webCenter, enemyShips[e].transform.position);
-                    if (d < bestDist) { bestDist = d; bestSingleIdx = e; }
-                }
-
-                if (bestSingleIdx >= 0)
-                {
-                    launchZoneManager.SetPairTarget(i, bestSingleIdx + 1);
-                    assigned.Add(bestSingleIdx);
-                }
-            }
-        }
-
-        /// <summary>
-        /// 미배정 적군이 있고 예비 쌍이 남아있으면 추가 출동
-        /// AutoAssignOneToOneTargets() 이후 호출하여 배정 안 된 적에 대응
-        /// </summary>
-        private void DeployReservesForUnassignedEnemies()
-        {
-            if (launchZoneManager == null || !launchZoneManager.HasReservePairs()) return;
-            if (enemyShips == null || motherShip == null) return;
-
-            Vector3 motherPos = motherShip.transform.position;
-
-            // 1. 현재 배정된 적군 인덱스 수집
-            var assignedEnemies = new System.Collections.Generic.HashSet<int>();
-            int poolCount = launchZoneManager.GetCurrentPoolCount();
-            for (int i = 0; i < poolCount; i++)
-            {
-                DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || pair.isDisarmed || pair.agent1 == null) continue;
-                int targetIdx = pair.agent1.assignedTargetIndex;
-                if (targetIdx > 0) assignedEnemies.Add(targetIdx - 1); // 1-indexed → 0-indexed
-            }
-
-            // 2. 미배정 활성 적군 찾기 → 예비 쌍 출동
-            for (int e = 0; e < enemyShips.Length; e++)
-            {
-                if (!launchZoneManager.HasReservePairs()) break;
-                if (assignedEnemies.Contains(e)) continue;
-                if (enemyShips[e] == null || !enemyShips[e].activeInHierarchy) continue;
-
-                // 적군 방향 계산 (모선 기준)
-                Vector3 enemyDir = enemyShips[e].transform.position - motherPos;
-                float enemyAngleDeg = Mathf.Atan2(enemyDir.x, enemyDir.z) * Mathf.Rad2Deg;
-
-                // 해당 방향 진수구역에 예비 쌍 1개 출동 (에피소드 제한 체크)
-                bool deployed = TryDeployPair(motherPos, enemyAngleDeg, m_AgentGroup);
-
-                if (deployed)
-                {
-                    // 출동된 쌍에 해당 적군 배정
-                    int newPairIdx = FindLastDeployedPairIndex();
-                    if (newPairIdx >= 0)
-                    {
-                        launchZoneManager.SetPairTarget(newPairIdx, e + 1); // 1-indexed
-                        Debug.Log($"[DefenseEnv] 예비 출동: pair={newPairIdx} → enemy[{e}]={enemyShips[e].name}, " +
-                            $"angle={enemyAngleDeg:F0}°, reserve={launchZoneManager.GetReserveCount()}");
-                    }
-                }
-            }
-
-            // 후발대 Web에도 경량 모드 적용
-            if (lightweightMode) ApplyLightweightMode();
-        }
 
         /// <summary>
         /// Stage8: 해당 방향에 차단 가능한 아군이 없는 적 → 예비 쌍 출동 (배정 없이)
@@ -2652,7 +2593,7 @@ namespace BoatAttack
                         fwd.y = 0f;
                         float cross = fwd.x * lateral.z - fwd.z * lateral.x;
 
-                        // cross > 0 → agent2가 오른쪽: agent1 오른쪽(+), agent2 왼쪽(-)
+                        // Unity 좌계: cross>=0 → agent2가 왼쪽 → 각자 반대로 꺾어 벌어짐
                         float s = splitSteerStrength;
                         float steer1 = cross >= 0f ?  s : -s;
                         float steer2 = cross >= 0f ? -s :  s;
@@ -2789,22 +2730,138 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// 수선의 발 기반 타겟 배정:
+        /// Web에 차단되지 않은 적 중 Web 중심 → 적 Ray 수직거리가 가장 작은 적을 배정.
+        /// </summary>
+        /// <summary>
+        /// 배정된 적이 사망(비활성/무력화)했을 때만 클러스터 내 다음 생존 적으로 재배정.
+        /// 살아있으면 절대 변경하지 않음.
+        /// </summary>
+        private void RefreshDeadTargets()
+        {
+            if (launchZoneManager == null || enemyShips == null) return;
+            // Stage8/9: 자율 판단 설계 — 타겟 강제 배정 금지
+            if (currentStage == TrainingStage.Stage8_TacticalFullObs
+             || currentStage == TrainingStage.Stage9_DisarmReform) return;
+            int poolCap = launchZoneManager.GetPoolCapacity();
+            var takenEnemies = new System.Collections.Generic.HashSet<int>();
+
+            // 살아있는 배정 선점
+            for (int pi = 0; pi < poolCap; pi++)
+            {
+                DefensePair pair = launchZoneManager.GetPair(pi);
+                if (pair == null || !pair.isActive || pair.isDisarmed || pair.isStandby) continue;
+                if (pair.agent1 == null) continue;
+                int cur = pair.agent1.assignedTargetIndex;
+                if (cur <= 0) continue;
+                int ei = cur - 1;
+                if (ei < enemyShips.Length && enemyShips[ei] != null
+                    && enemyShips[ei].activeInHierarchy && !IsEnemyNeutralized(enemyShips[ei]))
+                {
+                    takenEnemies.Add(ei); // 살아있음 → 유지
+                }
+                else
+                {
+                    // 사망 → 초기화, 클러스터에서 재배정
+                    pair.agent1.assignedTargetIndex = -1;
+                    if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
+                }
+            }
+
+            // 미배정 페어만 클러스터 내 생존 적으로 재배정
+            for (int pi = 0; pi < poolCap; pi++)
+            {
+                DefensePair pair = launchZoneManager.GetPair(pi);
+                if (pair == null || !pair.isActive || pair.isDisarmed || pair.isStandby) continue;
+                if (pair.agent1 == null || pair.agent1.assignedTargetIndex > 0) continue;
+
+                int newEi = FindLiveEnemyInCluster(pair, takenEnemies);
+                if (newEi >= 0)
+                {
+                    pair.agent1.assignedTargetIndex = newEi + 1;
+                    if (pair.agent2 != null) pair.agent2.assignedTargetIndex = newEi + 1;
+                    takenEnemies.Add(newEi);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 클러스터 내 생존 적 중 미배정 인덱스 반환 (-1 = 없음)
+        /// </summary>
+        private int FindLiveEnemyInCluster(DefensePair pair, System.Collections.Generic.HashSet<int> taken)
+        {
+            if (enemyShips == null) return -1;
+            // 클러스터 내 적 우선
+            if (pair.clusterEnemyIndices != null)
+            {
+                foreach (int ei in pair.clusterEnemyIndices)
+                {
+                    if (taken.Contains(ei)) continue;
+                    if (ei >= enemyShips.Length || enemyShips[ei] == null) continue;
+                    if (!enemyShips[ei].activeInHierarchy || IsEnemyNeutralized(enemyShips[ei])) continue;
+                    return ei;
+                }
+            }
+            // fallback: 전체 생존 적 중 가장 가까운 적
+            float minDist = float.MaxValue;
+            int best = -1;
+            Vector3 center = pair.agent1.transform.position;
+            for (int ei = 0; ei < enemyShips.Length; ei++)
+            {
+                if (taken.Contains(ei)) continue;
+                if (enemyShips[ei] == null || !enemyShips[ei].activeInHierarchy) continue;
+                if (IsEnemyNeutralized(enemyShips[ei])) continue;
+                float d = Vector3.Distance(center, enemyShips[ei].transform.position);
+                if (d < minDist) { minDist = d; best = ei; }
+            }
+            return best;
+        }
+
+        /// <summary>
         /// 쌍 비활성화 (정지). Stage9에서는 추가로 트랩 그물 생성.
         /// </summary>
         private void DisableOrDisarmPair(int pairIdx, bool forceDisable = false)
         {
-            if (!forceDisable)
-            {
-            }
-
-            // Stage9: 트랩 그물 생성 (DisablePair가 web을 비활성화하기 전에)
-            if (currentStage == TrainingStage.Stage9_DisarmReform)
+            // Stage9 + 강제비활 아닐 때: 트랩 생성 후 DisarmPair (isActive 유지 → NoPairsLeft 방지)
+            if (!forceDisable && currentStage == TrainingStage.Stage9_DisarmReform)
             {
                 var pair = launchZoneManager.GetPair(pairIdx);
-                CreateTrapFromWeb(pair);
+                if (pair != null && pair.isActive && !pair.isDisarmed)
+                {
+                    CreateTrapFromWeb(pair);
+                    launchZoneManager.DisarmPair(pairIdx, m_AgentGroup, _resetTimer);
+                }
+                return;
             }
 
             launchZoneManager.DisablePair(pairIdx, m_AgentGroup);
+
+            // 예비 페어 있으면 즉시 활성화 (같은 클러스터 커버)
+            TryActivateStandbyPair(pairIdx);
+        }
+
+        private void TryActivateStandbyPair(int lostPairIdx)
+        {
+            if (launchZoneManager == null) return;
+            // Stage9는 예비 활성화 안 함 (트랩 모드)
+            if (currentStage == TrainingStage.Stage9_DisarmReform) return;
+
+            int standbyIdx = launchZoneManager.GetFirstStandbyPairIndex();
+            if (standbyIdx < 0) return;
+
+            // 잃어버린 페어의 클러스터 정보 가져오기
+            EnemyCluster? cluster = null;
+            var lostPair = launchZoneManager.GetPair(lostPairIdx);
+            if (lostPair != null && launchZoneManager.CurrentClusters != null
+                && lostPair.assignedClusterIdx >= 0
+                && lostPair.assignedClusterIdx < launchZoneManager.CurrentClusters.Count)
+            {
+                cluster = launchZoneManager.CurrentClusters[lostPair.assignedClusterIdx];
+            }
+
+            bool ok = launchZoneManager.ActivateStandbyPair(standbyIdx, cluster, m_AgentGroup);
+            if (ok) _allyPairsCreatedThisEpisode++;
+            Debug.LogWarning($"[DefenseEnv] 예비 페어 {standbyIdx} 활성화 → cluster={cluster?.centerAngleDeg:F0}°, ok={ok}");
         }
 
         /// <summary>
@@ -3043,7 +3100,10 @@ namespace BoatAttack
             }
 
             // 아군 쌍이 전부 비활성화 → 실패 종료 (고정 -5 + 남은 적 수 비례 페널티)
-            if (!disableNoPairsEndEpisode && activePairs == 0 && activeEnemies > 0)
+            // Stage9: 트랩 포획 모드 — NoPairsLeft 완전 비활성화 (MaxStep/AllClear로만 종료)
+            bool skipNoPairs = disableNoPairsEndEpisode
+                               || currentStage == TrainingStage.Stage9_DisarmReform;
+            if (!skipNoPairs && activePairs == 0 && activeEnemies > 0)
             {
                 float totalPenalty = rewardCalculator.noPairsLeftPenalty
                                    + activeEnemies * rewardCalculator.remainingEnemyPenalty;
@@ -3052,6 +3112,31 @@ namespace BoatAttack
                 RestartEpisode("NoPairsLeft", totalPenalty);
                 return;
             }
+        }
+
+        /// <summary>
+        /// 아군 선박이 모선과 충돌: 페널티 + 쌍 비활성화
+        /// </summary>
+        public void OnAllyHitMotherShip(DefenseAgent collidedAgent)
+        {
+            if (_episodeEnding || collidedAgent == null) return;
+            if (_resetTimer <= 10) return;
+            if (launchZoneManager == null) return;
+
+            int pairIdx = launchZoneManager.FindPairIndex(collidedAgent);
+            if (pairIdx < 0) return;
+
+            DefensePair pair = launchZoneManager.GetPair(pairIdx);
+            if (pair == null) return;
+            if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50) return; // 배치 유예기간
+
+            float penalty = rewardCalculator.collisionPenalty;
+            if (pair.agent1 != null) pair.agent1.AddReward(penalty);
+            if (pair.agent2 != null) pair.agent2.AddReward(penalty);
+
+            Debug.LogWarning($"[DefenseEnv] AllyHitMotherShip → Pair {pairIdx} 비활성화 (penalty={penalty:F2}), step={_resetTimer}");
+            DisableOrDisarmPair(pairIdx);
+            CheckEpisodeEndCondition();
         }
 
         /// <summary>
@@ -3189,8 +3274,9 @@ namespace BoatAttack
             _poolDollyCarts = new Cinemachine.CinemachineDollyCart[poolSize];
             _poolNoiseSeed = new float[poolSize];
 
-            // Raycast 시각화용 LineRenderer 배열
-            _enemyRayLines = new LineRenderer[poolSize];
+            // Raycast 시각화용 LineRenderer 배열 + 차단 상태 배열
+            _enemyRayLines   = new LineRenderer[poolSize];
+            _enemyRayBlocked = new bool[poolSize];
 
             // 씬에서 템플릿 찾기 (3단계 fallback)
             // 1순위: 환경 루트 하위 태그 검색
@@ -3498,14 +3584,14 @@ namespace BoatAttack
                     }
                     else
                     {
-                        // activePairCount>0: 진수구역 기반 다수 쌍 자동 배치 (ML 학습용)
+                        // activePairCount>0: 1.5초 간격으로 1대씩 순차 배치
                         float[] divAngles = (formationSpawner != null)
                             ? formationSpawner.GetLastDiversionaryAngles()
                             : null;
 
-                        launchZoneManager.DeployPairs(
+                        StartCoroutine(DeployPairsSequentially(
                             _currentFormation, _currentEnemyApproachAngle,
-                            divAngles, pairCount, motherPos, m_AgentGroup);
+                            divAngles, pairCount, motherPos, m_AgentGroup));
 
                         // 경량 모드 적용 (배치 후 모든 Web에 적용)
                         ApplyLightweightMode();
@@ -3534,15 +3620,6 @@ namespace BoatAttack
                             }
                         }
 
-                        // Stage3/Stage6/Stage8/Stage9 (기동 학습): 1:1 자동 매칭 + 미배정 적에 예비 출동
-                        if (currentStage == TrainingStage.Stage3_Tactical || currentStage == TrainingStage.Stage6_PhantomFormation
-                            || currentStage == TrainingStage.Stage8_TacticalFullObs || currentStage == TrainingStage.Stage9_DisarmReform)
-                        {
-                            AutoAssignOneToOneTargets();
-                            // Stage8/9: 리셋 시 즉시 전체 출동하지 않음 — 80스텝마다 Stage8DeployForUncoveredEnemies()로 점진 출동
-                            if (currentStage != TrainingStage.Stage8_TacticalFullObs && currentStage != TrainingStage.Stage9_DisarmReform)
-                                DeployReservesForUnassignedEnemies();
-                        }
                         // Stage7: 타겟 배정 없음 — 에이전트가 스스로 판단
 
                         // Stage8/9: 스폰 위치/수 결정에만 배정 사용 → 즉시 해제
@@ -4500,6 +4577,30 @@ namespace BoatAttack
         public bool CanDeployMorePairs()
         {
             return _allyPairsCreatedThisEpisode < maxAllyPairsPerEpisode;
+        }
+
+        /// <summary>
+        /// 페어를 모두 동시에 배치하는 코루틴 (딜레이 없음)
+        /// </summary>
+        private System.Collections.IEnumerator DeployPairsSequentially(
+            FormationType formation, float approachAngle, float[] divAngles,
+            int totalCount, Vector3 motherPos, SimpleMultiAgentGroup group)
+        {
+            launchZoneManager.PrepareSequentialDeploy(
+                formation, approachAngle, divAngles, totalCount, motherPos, group);
+
+            // 활성 페어 + 예비 페어 모두 즉시 배치
+            int totalCount2 = launchZoneManager.maxPairCount;
+            int actualCount = launchZoneManager.SequentialPairCount; // 활성 클러스터 수
+            Debug.LogWarning($"[DeploySeq] active={actualCount}, total(+standby)={totalCount2}, maxPair={launchZoneManager.maxPairCount}");
+            for (int n = 0; n < totalCount2; n++)
+            {
+                if (_episodeEnding) yield break;
+                bool ok = launchZoneManager.DeployNextSequentialPair();
+                Debug.LogWarning($"[DeploySeq] n={n}/{totalCount2} → result={ok}, active={launchZoneManager.GetActivePairCount()}");
+            }
+            ApplyLightweightMode();
+            yield break;
         }
 
         /// <summary>

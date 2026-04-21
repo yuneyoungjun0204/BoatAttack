@@ -8,20 +8,35 @@ using System.Collections.Generic;
 namespace BoatAttack
 {
     /// <summary>
-    /// 모함 진수구역 정의
-    /// 모선 기준 방위각과 거리로 아군 쌍의 출격 위치를 결정
+    /// 인스펙터에서 직접 지정하는 진수구역 설정
+    /// </summary>
+    [System.Serializable]
+    public class SpawnZoneConfig
+    {
+        [Tooltip("스폰 기준점 오브젝트 (위치만 사용)")]
+        public Transform position;
+    }
+
+    /// <summary>
+    /// 내부 진수구역 데이터 (GenerateLaunchZones에서 생성)
     /// </summary>
     [System.Serializable]
     public class LaunchZone
     {
-        [Tooltip("모선 기준 방위각 (0=North/+Z, 90=East/+X, 180=South/-Z, 270=West/-X)")]
+        [Tooltip("모선 기준 방위각 (클러스터 매칭용)")]
         public float angleDeg = 0f;
 
         [Tooltip("모선으로부터 진수구역 거리 (m)")]
-        public float distance = 100f;
+        public float distance = 200f;
 
         [Tooltip("에피소드마다 방위각 jitter (±도, 과적합 방지)")]
         public float angleJitter = 10f;
+
+        [Tooltip("인스펙터 지정 절대 스폰 위치 (SpawnZoneConfig 사용 시)")]
+        public Vector3 worldPos;
+
+        [Tooltip("true면 worldPos 사용, false면 모선 기준 계산")]
+        public bool hasWorldPos = false;
     }
 
     /// <summary>
@@ -42,15 +57,21 @@ namespace BoatAttack
         [HideInInspector] public int assignedZoneIndex = -1;
         [HideInInspector] public bool isActive = false;
         [HideInInspector] public bool isDisarmed = false;  // 직진 이탈 중 (Stage9)
+        [HideInInspector] public bool isStandby = false;   // 예비 대기 중 (배치됨, Neutralized)
         [HideInInspector] public int disarmStep = -1;      // 직진 시작 스텝
         [HideInInspector] public int deployStep = -1; // 배치 시점 (FixedUpdate 스텝)
         [HideInInspector] public bool isSplitting = false; // 분리(그물 전개) 중
         [HideInInspector] public int splitStartStep = -1;  // 분리 시작 스텝
 
         // 좌/우 교차 체크용 (배치 시 기록)
-        [HideInInspector] public bool agent1StartsOnLeft = true; // agent1이 lateralDir 기준 왼쪽인지
-        [HideInInspector] public Vector3 deployLateralDir = Vector3.right; // 배치 시 횡방향 (좌/우 판별 축)
-        [HideInInspector] public Vector3 prevLateralDir = Vector3.right; // 이전 스텝의 (p2-p1) 정규화 방향
+        [HideInInspector] public bool agent1StartsOnLeft = true;
+        [HideInInspector] public Vector3 deployLateralDir = Vector3.right;
+        [HideInInspector] public Vector3 prevLateralDir = Vector3.right;
+        /// <summary>배치 시 (pos2-pos1).normalized — 이후 웹 방향 역전 감지에 사용</summary>
+        [HideInInspector] public Vector3 initialWebDir = Vector3.right;
+
+        // 파트너 베어링 부호 역전 감지 (0=미초기화)
+        [HideInInspector] public float initialPartnerBearingSign = 0f;
 
         // 레이캐스트 타임아웃 체크용
         [HideInInspector] public int lastRaycastHitStep = -1;
@@ -84,8 +105,11 @@ namespace BoatAttack
     /// </summary>
     public class LaunchZoneManager : MonoBehaviour
     {
-        [Header("Launch Zones (씬 오브젝트 기반)")]
-        [Tooltip("진수구역 위치를 정의하는 씬 Transform 배열 (최대 3개). 비어있으면 후미 자동 생성 fallback 사용.")]
+        [Header("Launch Zones (인스펙터 직접 지정)")]
+        [Tooltip("진수구역 설정 배열. 각 구역마다 위치 오브젝트와 선박 헤딩 각도를 지정. 비어있으면 후미 자동 생성 fallback.")]
+        public SpawnZoneConfig[] spawnZones;
+
+        [Tooltip("(레거시) 진수구역 위치 Transform 배열. spawnZones가 비어있을 때만 사용됨.")]
         public Transform[] zoneTransforms;
 
         [Tooltip("모선 후미 진수거리 (m) — zoneTransforms 미설정 시 fallback으로 사용")]
@@ -201,6 +225,25 @@ namespace BoatAttack
 
         // 원통 비주얼
         private GameObject[] _zoneCylinders;
+
+        // ── Sequential deploy state ──────────────────────────────────────────
+        private struct SeqSpawnInfo
+        {
+            public Vector3 pairCenter, zoneDir;
+            public int     zoneIdx;
+            public float   spawnAngleDeg;
+        }
+        private List<SeqSpawnInfo>    _seqSpawnInfos = new List<SeqSpawnInfo>();
+        private List<EnemyCluster>    _seqClusters;
+        private HashSet<int>          _seqAssignedClusterIdx = new HashSet<int>();
+        private HashSet<int>          _seqAssignedEnemyIdx   = new HashSet<int>();
+        private int                   _seqDeployNext;
+        private int                   _seqActiveCount = 0;  // 클러스터 수 (활성 페어 수), 나머지는 예비
+        private SimpleMultiAgentGroup _seqAgentGroup;
+        private GameObject[]          _seqEnemies;
+
+        /// <summary>PrepareSequentialDeploy 후 배치 가능한 총 쌍 수</summary>
+        public int SequentialPairCount => _seqSpawnInfos?.Count ?? 0;
 
         /// <summary>
         /// 풀 초기화 (DefenseEnvController.Start()에서 호출)
@@ -565,11 +608,14 @@ namespace BoatAttack
             // 클러스터를 먼저 계산 → pairCount = 클러스터 수 (1:1 배정)
             GameObject[] enemiesEarly = envController != null ? envController.enemyShips : null;
             var earlyClusters = ClusterEnemiesByAngle(motherPos, enemiesEarly, clusterBinWidthDeg);
-            earlyClusters = LimitClusters(earlyClusters, maxPairCount, enemiesEarly);
             CurrentClusters = earlyClusters;
 
             if (earlyClusters.Count > 0)
-                pairCount = earlyClusters.Count; // 클러스터 수만큼만 출동
+            {
+                var limited = LimitClusters(earlyClusters, maxPairCount, enemiesEarly);
+                CurrentClusters = limited;
+                pairCount = limited.Count;
+            }
 
             pairCount = Mathf.Clamp(pairCount, 1, maxPairCount);
             _deployedPairCount = pairCount;
@@ -621,9 +667,9 @@ namespace BoatAttack
                 List<int> pairIndices = kvp.Value;
                 LaunchZone zone = launchZones[zoneIdx];
 
-                // 쌍 간 횡 간격 (convoySpawnSpacing + 여유)
-                float spawnSpacing = 10f;
-                float lateralSpacing = spawnSpacing + 40f;
+                // 쌍 간 횡 간격 (선박 2대 폭 125m + 여유)
+                float spawnSpacing = 125f;
+                float lateralSpacing = spawnSpacing + 50f;
 
                 // 중심 기준 횡 오프셋 계산 (0이 중앙)
                 float totalWidth = (pairIndices.Count - 1) * lateralSpacing;
@@ -635,38 +681,44 @@ namespace BoatAttack
                     if (pi < 0) break;
                     _pairPool[pi].isActive = true; // 즉시 예약 — 같은 쌍 중복 반환 방지
 
-                    // 스폰 위치는 항상 모선 후미 방향 고정 — 적군 방향 무관
                     int pairLogicalIdx = pairIndices[j];
-                    float spawnAngleDeg = GetMotherShipRearAngleDeg();
-                    float spawnAngleRad = spawnAngleDeg * Mathf.Deg2Rad;
-                    Vector3 zoneDir = new Vector3(Mathf.Sin(spawnAngleRad), 0f, Mathf.Cos(spawnAngleRad));
-                    float zoneDist = zone.distance; // 구역 고유 거리 사용
-                    Vector3 lateralDir = new Vector3(zoneDir.z, 0f, -zoneDir.x);
 
-                    // 직렬화 문제로 0이 되는 경우 기본값 강제 적용
+                    // 인스펙터 지정 위치 사용 (SpawnZoneConfig/zoneTransforms), 없으면 모선 후미 fallback
+                    Vector3 basePos;
+                    Vector3 headingDir;
+                    if (zone.hasWorldPos)
+                    {
+                        basePos    = zone.worldPos;
+                        float hr   = zone.angleDeg * Mathf.Deg2Rad;
+                        headingDir = new Vector3(Mathf.Sin(hr), 0f, Mathf.Cos(hr));
+                    }
+                    else
+                    {
+                        float rearDeg = GetMotherShipRearAngleDeg();
+                        float rearRad = rearDeg * Mathf.Deg2Rad;
+                        headingDir = new Vector3(Mathf.Sin(rearRad), 0f, Mathf.Cos(rearRad));
+                        basePos    = motherPos + headingDir * zone.distance;
+                    }
+
+                    Vector3 lateralDir = new Vector3(headingDir.z, 0f, -headingDir.x);
                     float effectiveStagger = pairDepthStagger > 0.1f ? pairDepthStagger : 20f;
                     float effectiveLateral = lateralSpacing > 0.1f ? lateralSpacing : 20f;
 
                     float lateralOffset = startOffset + j * effectiveLateral;
-                    // 같은 구역 내 쌍별 전후 stagger (중앙 기준 균등 분산)
-                    // 3쌍: -stagger, 0, +stagger / 2쌍: -stagger*0.5, +stagger*0.5
-                    float totalDepth = (pairIndices.Count - 1) * effectiveStagger;
-                    float depthOffset = j * effectiveStagger - totalDepth * 0.5f;
-                    Vector3 pairCenter = motherPos + zoneDir * (zoneDist + depthOffset) + lateralDir * lateralOffset;
+                    float totalDepth    = (pairIndices.Count - 1) * effectiveStagger;
+                    float depthOffset   = j * effectiveStagger - totalDepth * 0.5f;
+                    Vector3 pairCenter  = basePos + headingDir * depthOffset + lateralDir * lateralOffset;
 
-                    Debug.LogWarning($"[DeployPairs] j={j} pairCenter={pairCenter} lat={lateralOffset:F1} depth={depthOffset:F1}");
-                    spawnInfos.Add((pi, pairCenter, zoneDir, zoneIdx, spawnAngleDeg));
+                    Debug.LogWarning($"[DeployPairs] j={j} pairCenter={pairCenter} zoneAngle={zone.angleDeg:F1}° lat={lateralOffset:F1} depth={depthOffset:F1}");
+                    spawnInfos.Add((pi, pairCenter, headingDir, zoneIdx, zone.angleDeg));
                 }
             }
 
             // 3-2. 2단계: 모든 pairCenter 확정 → 클러스터 배정 + 배치
-            // Angular Binning → 최대 maxPairCount개로 병합
             var enemyClusters = ClusterEnemiesByAngle(motherPos, enemies, clusterBinWidthDeg);
-            enemyClusters = LimitClusters(enemyClusters, maxPairCount, enemies);
             CurrentClusters = enemyClusters; // 외부 접근용 캐시
 
             var assignedClusterIndices = new HashSet<int>(); // 쌍별 클러스터 중복 방지
-            var assignedEnemyIndices   = new HashSet<int>(); // 적군 중복 배정 방지
 
             for (int i = 0; i < spawnInfos.Count; i++)
             {
@@ -682,65 +734,40 @@ namespace BoatAttack
                     pair.agent2.enemyShips = enemies;
                 }
 
-                // 클러스터 배정: 쌍 방향에 가장 가까운 미배정 클러스터 선택
-                float pairDirAngle = Mathf.Atan2(zoneDir.x, zoneDir.z) * Mathf.Rad2Deg;
-                if (pairDirAngle < 0f) pairDirAngle += 360f;
+                // 클러스터 배정: pairCenter에서 가장 가까운 미배정 클러스터 선택
                 int clusterIdx = enemyClusters.Count > 0
-                    ? FindBestClusterForPair(pairDirAngle, enemyClusters, assignedClusterIndices)
+                    ? FindBestClusterForPair(pairCenter, enemyClusters, assignedClusterIndices)
                     : -1;
                 if (clusterIdx >= 0) assignedClusterIndices.Add(clusterIdx);
 
-                // 클러스터 내 가장 가까운 미배정 적군 선택
-                int bestEnemyIdx = clusterIdx >= 0
-                    ? FindClosestUnassignedInCluster(pairCenter, enemyClusters[clusterIdx], enemies, assignedEnemyIndices)
-                    : -1;
-                if (bestEnemyIdx >= 0) assignedEnemyIndices.Add(bestEnemyIdx);
-
-                // 클러스터 정보를 쌍에 저장 (AutoAssign 및 시각화에 사용)
+                // 클러스터 정보를 쌍에 저장 (시각화에 사용)
                 pair.assignedClusterIdx   = clusterIdx;
                 pair.clusterCentroid      = clusterIdx >= 0 ? enemyClusters[clusterIdx].centroidWorld : Vector3.zero;
                 pair.clusterEnemyIndices  = clusterIdx >= 0 ? new List<int>(enemyClusters[clusterIdx].enemyIndices) : null;
 
-                // 항상 모선 후미 방향(후방 직선각도)으로 스폰
-                Quaternion rot = GetRearFacingRotation();
+                // 스폰 방향 = 모선 후미 방향 (모선에서 멀어지는 방향)
+                float rearDeg = GetMotherShipRearAngleDeg();
+                Quaternion rot = Quaternion.Euler(0f, rearDeg, 0f);
+                Vector3 perpRight = new Vector3(zoneDir.z, 0f, -zoneDir.x);
 
-                // 2대 좌우 배치: 스폰 방향(rot)에 수직으로 배치 → 그물이 펴짐
-                Vector3 spawnForward = rot * Vector3.forward;
-                Vector3 webLateral = new Vector3(-spawnForward.z, 0f, spawnForward.x);
-                // 50% 확률로 좌우 반전 → Agent1/2 배치 편향 제거
-                if (Random.value < 0.5f) webLateral = -webLateral;
+                float spawnWidth = 30f;
 
-                float spawnWidth = 125f;
-
-                Vector3 pos1 = pairCenter + webLateral * (-spawnWidth * 0.5f);
+                // agent1 = 왼쪽(-perpRight), agent2 = 오른쪽(+perpRight)
+                Vector3 pos1 = pairCenter + (-perpRight) * (spawnWidth * 0.5f);
                 pos1.y = _templateAgent1Y;
-                Vector3 pos2 = pairCenter + webLateral * (spawnWidth * 0.5f);
+                Vector3 pos2 = pairCenter + perpRight * (spawnWidth * 0.5f);
                 pos2.y = _templateAgent2Y;
 
                 // 에이전트 위치/회전 설정 (ResetForDeployment 내부에서 assignedTargetIndex=-1 됨)
                 ResetAgent(pair.agent1, pos1, rot);
                 ResetAgent(pair.agent2, pos2, rot);
 
-                // ResetAgent 이후에 배정 — ResetForDeployment가 -1로 초기화한 뒤 덮어씀
-                // 양동 방향 필터: launchAngleDeg 설정된 쌍은 방향 불일치 적군 배정 취소
-                if (bestEnemyIdx >= 0 && pair.launchAngleDeg >= 0f && envController != null && envController.assignAngleTolerance > 0f)
-                {
-                    Vector3 eToM = motherPos - enemies[bestEnemyIdx].transform.position; eToM.y = 0f;
-                    if (eToM.sqrMagnitude > 0.01f)
-                    {
-                        float eAngle = Mathf.Atan2(eToM.x, eToM.z) * Mathf.Rad2Deg;
-                        if (Mathf.Abs(Mathf.DeltaAngle(pair.launchAngleDeg, eAngle)) > envController.assignAngleTolerance)
-                            bestEnemyIdx = -1;
-                    }
-                }
-                if (bestEnemyIdx >= 0)
-                    SetPairTarget(pi, bestEnemyIdx + 1); // 중복 방지 로직 포함
-
-                // 좌/우 교차 체크용 초기값 기록
-                pair.deployLateralDir = webLateral;
-                pair.prevLateralDir = Vector3.zero; // 유예 후 실제 위치로 기록됨
-                float dot1 = Vector3.Dot(pos1 - pairCenter, webLateral);
-                pair.agent1StartsOnLeft = dot1 < 0f;
+                pair.deployLateralDir = perpRight;
+                pair.prevLateralDir = Vector3.zero;
+                pair.agent1StartsOnLeft = true;
+                Vector3 initWeb = pos2 - pos1; initWeb.y = 0f;
+                pair.initialWebDir = initWeb.sqrMagnitude > 0.01f ? initWeb.normalized : perpRight;
+                pair.initialPartnerBearingSign = 0f; // DefenseEnvController에서 첫 체크 시 lazy 초기화
 
                 int currentStep = envController != null ? envController.CurrentStep : 0;
                 pair.deployStep = currentStep;
@@ -757,39 +784,232 @@ namespace BoatAttack
                     agentGroup.RegisterAgent(pair.agent2);
                 }
 
-                // 좌/우 역할 설정: 실제 스폰 위치 기준 (webLateral 반전 50%이므로 pos1이 왼쪽/오른쪽 어느 쪽이든 대응)
-                // losDir = 클러스터→모선 방향, 그 오른쪽(cross) 기준으로 판정
-                {
-                    Vector3 losDir = Vector3.zero;
-                    if (pair.clusterCentroid != Vector3.zero && motherShip != null)
-                    {
-                        losDir = motherShip.transform.position - pair.clusterCentroid;
-                        losDir.y = 0f;
-                        losDir.Normalize();
-                    }
-                    else
-                    {
-                        losDir = spawnForward; // fallback
-                    }
-                    // perpRight = cross(losDir, up)
-                    Vector3 perpRight = new Vector3(losDir.z, 0f, -losDir.x);
-                    // pos1이 LOS 기준선 오른쪽이면 agent1=오른쪽 선박(isLeft=false)
-                    Vector3 toPos1 = pos1 - pairCenter; toPos1.y = 0f;
-                    bool agent1IsRight = Vector3.Dot(toPos1, perpRight) > 0f;
-                    if (pair.agent1 != null) pair.agent1.isLeftAgent = !agent1IsRight;
-                    if (pair.agent2 != null) pair.agent2.isLeftAgent =  agent1IsRight;
-                }
+                // agent1 = 왼쪽, agent2 = 오른쪽 (하드코딩 — 물리 위치와 항상 일치)
+                if (pair.agent1 != null) pair.agent1.isLeftAgent = true;
+                if (pair.agent2 != null) pair.agent2.isLeftAgent = false;
 
-                // PD LOS 가이던스 시작 — 클러스터 배정 쌍만, 한 클러스터 = 하나의 쌍
-                if (pair.clusterCentroid != Vector3.zero)
+                // 클러스터 타겟 배정 (ResetForDeployment가 -1로 초기화하므로 ResetAgent 후에 설정)
+                if (clusterIdx >= 0)
                 {
-                    if (pair.agent1 != null) pair.agent1.StartGuidance(pair.clusterCentroid);
-                    if (pair.agent2 != null) pair.agent2.StartGuidance(pair.clusterCentroid);
+                    int repIdx    = enemyClusters[clusterIdx].representativeIdx;
+                    int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
+                    if (pair.agent1 != null) pair.agent1.assignedTargetIndex = initTarget;
+                    if (pair.agent2 != null) pair.agent2.assignedTargetIndex = initTarget;
                 }
             }
 
             _lastDeploymentInfo = $"{formationType}, pairs={pairCount}, zones={zoneAssignments.Count}";
             // Debug.Log($"[LaunchZoneManager] DeployPairs: {_lastDeploymentInfo}");
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Sequential deploy — 1.5초 간격으로 한 쌍씩 배치
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 1단계: 리셋 + 클러스터 계산 + 스폰 위치 사전 계산.
+        /// 실제 쌍 배치는 DeployNextSequentialPair()로 하나씩 처리.
+        /// </summary>
+        public void PrepareSequentialDeploy(
+            FormationType formationType, float approachAngleDeg,
+            float[] diversionaryAngles, int requestedCount,
+            Vector3 motherPos, SimpleMultiAgentGroup agentGroup)
+        {
+            if (!_initialized || _pairPool == null) return;
+
+            GenerateLaunchZones();
+
+            // 클러스터 계산
+            _seqEnemies = envController != null ? envController.enemyShips : null;
+            var clusters = ClusterEnemiesByAngle(motherPos, _seqEnemies, clusterBinWidthDeg);
+            clusters = LimitClusters(clusters, maxPairCount, _seqEnemies);
+            CurrentClusters = clusters;
+            _seqClusters = clusters;
+
+            int pairCount = clusters.Count > 0 ? clusters.Count : requestedCount;
+            pairCount = Mathf.Clamp(pairCount, 1, maxPairCount);
+            _seqActiveCount = pairCount;       // 클러스터 수 = 활성 페어 수
+            _deployedPairCount = pairCount;
+
+            // 스폰 위치는 항상 maxPairCount개 계산 (예비 페어 포함)
+            int totalSpawnCount = maxPairCount;
+
+            StopAllCoroutines();
+            ResetZoneCooldowns();
+
+            // 모든 쌍 비활성화
+            for (int i = 0; i < _pairPool.Count; i++)
+            {
+                if (_pairPool[i].isActive && agentGroup != null)
+                {
+                    if (_pairPool[i].agent1 != null) agentGroup.UnregisterAgent(_pairPool[i].agent1);
+                    if (_pairPool[i].agent2 != null) agentGroup.UnregisterAgent(_pairPool[i].agent2);
+                }
+                SetPairActive(i, false);
+            }
+
+            // 구역 배정 및 스폰 위치 사전 계산 (pair index 예약 없음)
+            Dictionary<int, float> zoneDirAngles;
+            Dictionary<int, float> pairDirAngles;
+            var zoneAssignments = AssignPairsToZones(
+                formationType, approachAngleDeg, diversionaryAngles,
+                totalSpawnCount, out zoneDirAngles, out pairDirAngles);
+
+            _seqSpawnInfos = new List<SeqSpawnInfo>();
+            foreach (var kvp in zoneAssignments)
+            {
+                int zoneIdx       = kvp.Key;
+                var pairIndices   = kvp.Value;
+                LaunchZone zone   = launchZones[zoneIdx];
+
+                float lateralSpacing = 175f;
+                float totalWidth     = (pairIndices.Count - 1) * lateralSpacing;
+                float startOffset    = -totalWidth * 0.5f;
+
+                for (int j = 0; j < pairIndices.Count; j++)
+                {
+                    Vector3 basePos;
+                    Vector3 seqHDir;
+                    if (zone.hasWorldPos)
+                    {
+                        basePos  = zone.worldPos;
+                        float hr = zone.angleDeg * Mathf.Deg2Rad;
+                        seqHDir  = new Vector3(Mathf.Sin(hr), 0f, Mathf.Cos(hr));
+                    }
+                    else
+                    {
+                        float rearDeg = GetMotherShipRearAngleDeg();
+                        float rearRad = rearDeg * Mathf.Deg2Rad;
+                        seqHDir  = new Vector3(Mathf.Sin(rearRad), 0f, Mathf.Cos(rearRad));
+                        basePos  = motherPos + seqHDir * zone.distance;
+                    }
+
+                    Vector3 seqLateral    = new Vector3(seqHDir.z, 0f, -seqHDir.x);
+                    float effectiveStagger = pairDepthStagger > 0.1f ? pairDepthStagger : 20f;
+                    float effectiveLateral = lateralSpacing > 0.1f ? lateralSpacing : 20f;
+                    float lateralOffset    = startOffset + j * effectiveLateral;
+                    float totalDepth       = (pairIndices.Count - 1) * effectiveStagger;
+                    float depthOffset      = j * effectiveStagger - totalDepth * 0.5f;
+                    Vector3 pairCenter     = basePos + seqHDir * depthOffset + seqLateral * lateralOffset;
+
+                    _seqSpawnInfos.Add(new SeqSpawnInfo
+                    {
+                        pairCenter    = pairCenter,
+                        zoneDir       = seqHDir,
+                        zoneIdx       = zoneIdx,
+                        spawnAngleDeg = zone.angleDeg
+                    });
+                }
+            }
+
+            _seqAssignedClusterIdx = new HashSet<int>();
+            _seqAssignedEnemyIdx   = new HashSet<int>();
+            _seqDeployNext         = 0;
+            _seqAgentGroup         = agentGroup;
+
+            Debug.LogWarning($"[PrepareSequentialDeploy] clusters={clusters.Count}, totalPairs={_seqSpawnInfos.Count}");
+        }
+
+        /// <summary>
+        /// 2단계: 준비된 스폰 위치 목록에서 다음 쌍 하나를 배치.
+        /// </summary>
+        /// <returns>배치 성공 여부 (더 이상 배치할 쌍이 없으면 false)</returns>
+        public bool DeployNextSequentialPair()
+        {
+            if (_seqSpawnInfos == null || _seqDeployNext >= _seqSpawnInfos.Count) return false;
+
+            var info = _seqSpawnInfos[_seqDeployNext++];
+            bool asStandby = (_seqDeployNext - 1) >= _seqActiveCount;
+
+            int pi = GetOrCreateInactivePair();
+            if (pi < 0) return false;
+
+            DefensePair pair = _pairPool[pi];
+            pair.isActive         = true; // 즉시 예약
+            pair.assignedZoneIndex = info.zoneIdx;
+            pair.launchAngleDeg   = info.spawnAngleDeg;
+
+            if (_seqEnemies != null)
+            {
+                if (pair.agent1 != null) pair.agent1.enemyShips = _seqEnemies;
+                if (pair.agent2 != null) pair.agent2.enemyShips = _seqEnemies;
+            }
+
+            // 클러스터 배정: pairCenter에서 가장 가까운 미배정 클러스터
+            int clusterIdx = (_seqClusters != null && _seqClusters.Count > 0)
+                ? FindBestClusterForPair(info.pairCenter, _seqClusters, _seqAssignedClusterIdx)
+                : -1;
+            if (clusterIdx >= 0) _seqAssignedClusterIdx.Add(clusterIdx);
+
+            pair.assignedClusterIdx  = clusterIdx;
+            pair.clusterCentroid     = clusterIdx >= 0 ? _seqClusters[clusterIdx].centroidWorld : Vector3.zero;
+            pair.clusterEnemyIndices = clusterIdx >= 0 ? new List<int>(_seqClusters[clusterIdx].enemyIndices) : null;
+
+            // 클러스터 representative를 초기 타겟으로 배정 (배정 고정 — 적 사망 전까지 유지)
+            int repIdx = clusterIdx >= 0 ? _seqClusters[clusterIdx].representativeIdx : -1;
+            int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
+            if (pair.agent1 is not null) pair.agent1.assignedTargetIndex = initTarget;
+            if (pair.agent2 is not null) pair.agent2.assignedTargetIndex = initTarget;
+
+            // 스폰 방향 = 모선 후미 방향
+            float seqRearDeg = GetMotherShipRearAngleDeg();
+            Quaternion rot = Quaternion.Euler(0f, seqRearDeg, 0f);
+            Vector3 perpRightSeq = new Vector3(info.zoneDir.z, 0f, -info.zoneDir.x);
+
+            const float spawnWidth = 30f;
+            // agent1 = 왼쪽(-perpRight), agent2 = 오른쪽(+perpRight)
+            Vector3 pos1 = info.pairCenter + (-perpRightSeq) * (spawnWidth * 0.5f);
+            pos1.y = _templateAgent1Y;
+            Vector3 pos2 = info.pairCenter + perpRightSeq * (spawnWidth * 0.5f);
+            pos2.y = _templateAgent2Y;
+
+            ResetAgent(pair.agent1, pos1, rot);
+            ResetAgent(pair.agent2, pos2, rot);
+
+            pair.deployLateralDir = perpRightSeq;
+            pair.prevLateralDir   = Vector3.zero;
+            pair.agent1StartsOnLeft = true;
+            Vector3 initWeb2 = pos2 - pos1; initWeb2.y = 0f;
+            pair.initialWebDir = initWeb2.sqrMagnitude > 0.01f ? initWeb2.normalized : perpRightSeq;
+            pair.initialPartnerBearingSign = 0f; // DefenseEnvController에서 첫 체크 시 lazy 초기화
+
+            int currentStep = envController != null ? envController.CurrentStep : 0;
+            pair.deployStep         = currentStep;
+            pair.lastRaycastHitStep = currentStep;
+            pair.hasEverHitRaycast  = false;
+
+            // 예비 페어: Neutralized 상태로 배치, MA-POCA 미등록
+            if (asStandby)
+            {
+                pair.isStandby = true;
+                if (pair.agent1 is not null) pair.agent1.SetNeutralized(true);
+                if (pair.agent2 is not null) pair.agent2.SetNeutralized(true);
+                // agent1 = 왼쪽, agent2 = 오른쪽 (하드코딩)
+                if (pair.agent1 != null) pair.agent1.isLeftAgent = true;
+                if (pair.agent2 != null) pair.agent2.isLeftAgent = false;
+                // SetPairActive만 호출 (위치 확정 + 그물 활성화), MA-POCA 등록 없음
+                SetPairActive(pi, true);
+                _totalPairsDeployed++;
+                Debug.LogWarning($"[DeployNextSequentialPair] #{_seqDeployNext-1}/{_seqSpawnInfos.Count} STANDBY, pi={pi}");
+                return true;
+            }
+
+            pair.isStandby = false;
+            SetPairActive(pi, true);
+            _totalPairsDeployed++;
+
+            if (_seqAgentGroup != null)
+            {
+                if (pair.agent1 != null) _seqAgentGroup.RegisterAgent(pair.agent1);
+                if (pair.agent2 != null) _seqAgentGroup.RegisterAgent(pair.agent2);
+            }
+
+            // agent1 = 왼쪽, agent2 = 오른쪽 (하드코딩 — 물리 위치와 항상 일치)
+            if (pair.agent1 != null) pair.agent1.isLeftAgent = true;
+            if (pair.agent2 != null) pair.agent2.isLeftAgent = false;
+
+            Debug.LogWarning($"[DeployNextSequentialPair] #{_seqDeployNext-1}/{_seqSpawnInfos.Count}, pi={pi}, cluster={clusterIdx}");
+            return true;
         }
 
         /// <summary>
@@ -966,35 +1186,19 @@ namespace BoatAttack
         /// 클러스터 목록에서 쌍 방향(zoneDirAngleDeg)에 가장 가까운 클러스터 인덱스 반환
         /// assignedClusters: 이미 다른 쌍에 배정된 클러스터 인덱스 집합 (중복 방지)
         /// </summary>
-        private int FindBestClusterForPair(float zoneDirAngleDeg,
+        private int FindBestClusterForPair(Vector3 pairCenter,
             List<EnemyCluster> clusters, HashSet<int> assignedClusters)
         {
+            // 미배정 클러스터 중 pairCenter에서 가장 가까운 것 선택
             int bestIdx = -1;
-            float bestDiff = float.MaxValue;
-            for (int c = 0; c < clusters.Count; c++)
-            {
-                float diff = Mathf.Abs(Mathf.DeltaAngle(zoneDirAngleDeg, clusters[c].centerAngleDeg));
-                if (diff < bestDiff)
-                {
-                    bestDiff = diff;
-                    bestIdx = c;
-                }
-            }
-            // 모든 클러스터 배정됐으면 가장 가까운 재사용 (다중 쌍 → 같은 클러스터)
-            if (bestIdx < 0 || !assignedClusters.Contains(bestIdx))
-                return bestIdx;
-
-            // 미배정 클러스터 중 가장 가까운 것
-            bestDiff = float.MaxValue;
-            bestIdx = -1;
+            float bestDist = float.MaxValue;
             for (int c = 0; c < clusters.Count; c++)
             {
                 if (assignedClusters.Contains(c)) continue;
-                float diff = Mathf.Abs(Mathf.DeltaAngle(zoneDirAngleDeg, clusters[c].centerAngleDeg));
-                if (diff < bestDiff) { bestDiff = diff; bestIdx = c; }
+                float dist = Vector3.Distance(pairCenter, clusters[c].centroidWorld);
+                if (dist < bestDist) { bestDist = dist; bestIdx = c; }
             }
-            // 미배정 클러스터 없음 → 해당 쌍은 클러스터 없음 (-1 반환, 가이던스 비활성)
-            return bestIdx; // -1
+            return bestIdx; // 미배정 클러스터 없으면 -1
         }
 
         /// <summary>
@@ -1238,11 +1442,15 @@ namespace BoatAttack
             }
             pair.isActive = active;
 
-            // 활성화 시 Disarmed/Deploying 상태 리셋
+            // 활성화 시 Disarmed/Deploying 상태 리셋; 비활성화 시 isStandby 리셋
             if (active)
             {
                 pair.isDisarmed = false;
                 pair.disarmStep = -1;
+            }
+            else
+            {
+                pair.isStandby = false;
             }
         }
 
@@ -1357,6 +1565,55 @@ namespace BoatAttack
                 }
             }
             return count;
+        }
+
+        /// <summary>첫 번째 예비 페어 인덱스 반환 (-1=없음)</summary>
+        public int GetFirstStandbyPairIndex()
+        {
+            if (_pairPool == null) return -1;
+            for (int i = 0; i < _pairPool.Count; i++)
+            {
+                if (_pairPool[i] != null && _pairPool[i].isActive && _pairPool[i].isStandby)
+                    return i;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// 예비 페어를 활성화: Neutralized 해제 + MA-POCA 등록 + 클러스터 배정 + 가이던스 시작
+        /// </summary>
+        public bool ActivateStandbyPair(int pairIdx, EnemyCluster? cluster, SimpleMultiAgentGroup agentGroup)
+        {
+            if (_pairPool == null || pairIdx < 0 || pairIdx >= _pairPool.Count) return false;
+            DefensePair pair = _pairPool[pairIdx];
+            if (pair == null || !pair.isActive || !pair.isStandby) return false;
+
+            pair.isStandby = false;
+            if (pair.agent1 is not null) pair.agent1.SetNeutralized(false);
+            if (pair.agent2 is not null) pair.agent2.SetNeutralized(false);
+
+            // MA-POCA 등록
+            if (agentGroup != null)
+            {
+                if (pair.agent1 is not null) agentGroup.RegisterAgent(pair.agent1);
+                if (pair.agent2 is not null) agentGroup.RegisterAgent(pair.agent2);
+            }
+
+            // 클러스터 배정 + 가이던스
+            if (cluster.HasValue)
+            {
+                pair.clusterCentroid     = cluster.Value.centroidWorld;
+                pair.clusterEnemyIndices = cluster.Value.enemyIndices != null
+                    ? new System.Collections.Generic.List<int>(cluster.Value.enemyIndices) : null;
+                int repIdx     = cluster.Value.representativeIdx;
+                int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
+                if (pair.agent1 is not null) pair.agent1.assignedTargetIndex = initTarget;
+                if (pair.agent2 is not null) pair.agent2.assignedTargetIndex = initTarget;
+            }
+
+            _deployedPairCount++;
+            Debug.LogWarning($"[LaunchZoneManager] Pair {pairIdx} 예비 → 활성화, cluster={cluster?.centerAngleDeg:F0}°");
+            return true;
         }
 
         /// <summary>
@@ -1493,29 +1750,35 @@ namespace BoatAttack
             if (zoneIdx >= launchZones.Length) zoneIdx = 0;
             LaunchZone zone = launchZones[zoneIdx];
 
-            // 진수 위치: 구역 각도 + jitter, 거리는 구역 고유값
-            float spawnAngleDeg = zone.angleDeg + Random.Range(-zone.angleJitter, zone.angleJitter);
-            float spawnAngleRad = spawnAngleDeg * Mathf.Deg2Rad;
-            Vector3 zoneDir = new Vector3(Mathf.Sin(spawnAngleRad), 0f, Mathf.Cos(spawnAngleRad));
-            float zoneDist = zone.distance;
+            // 스폰 방향 강제 없음 — identity 회전, 좌우 배치는 zone 방향 기준
+            Vector3 pairCenter;
+            Vector3 singleHDir;
+            if (zone.hasWorldPos)
+            {
+                pairCenter  = zone.worldPos;
+                float hr    = zone.angleDeg * Mathf.Deg2Rad;
+                singleHDir  = new Vector3(Mathf.Sin(hr), 0f, Mathf.Cos(hr));
+            }
+            else
+            {
+                float ang  = zone.angleDeg * Mathf.Deg2Rad;
+                singleHDir = new Vector3(Mathf.Sin(ang), 0f, Mathf.Cos(ang));
+                pairCenter = motherPos + singleHDir * zone.distance;
+            }
 
-            Vector3 pairCenter = motherPos + zoneDir * zoneDist;
-            float tempSpacing = 10f;
+            Vector3 singlePerp = new Vector3(singleHDir.z, 0f, -singleHDir.x);
+            Quaternion rot = Quaternion.identity;
+
+            const float singleSpawnWidth = 10f;
+            Vector3 pos1 = pairCenter + (-singlePerp) * (singleSpawnWidth * 0.5f);
+            pos1.y = _templateAgent1Y;
+            Vector3 pos2 = pairCenter + singlePerp * (singleSpawnWidth * 0.5f);
+            pos2.y = _templateAgent2Y;
 
             // 2. 기존 비활성 쌍 재사용 또는 프리팹에서 새로 생성
             int pairIdx;
             DefensePair pair;
             GameObject[] enemies = envController != null ? envController.enemyShips : null;
-
-            // 임시로 zoneDir 기본 회전 사용 (후에 적 방향으로 보정)
-            Quaternion rot = Quaternion.LookRotation(zoneDir, Vector3.up);
-
-            // 임시 위치 (회전 계산 후 재설정)
-            Vector3 tempLateral = new Vector3(zoneDir.z, 0f, -zoneDir.x);
-            Vector3 pos1 = pairCenter + tempLateral * (-tempSpacing * 0.5f);
-            pos1.y = _templateAgent1Y;
-            Vector3 pos2 = pairCenter + tempLateral * (tempSpacing * 0.5f);
-            pos2.y = _templateAgent2Y;
 
             int existingInactive = FindInactivePairIndex();
             if (existingInactive >= 0)
@@ -1541,9 +1804,9 @@ namespace BoatAttack
             }
 
             pair.assignedZoneIndex = zoneIdx;
-            pair.launchAngleDeg = spawnAngleDeg;
+            pair.launchAngleDeg = zone.angleDeg;
             pair.deployStep = envController != null ? envController.CurrentStep : 0;
-            pair.lastRaycastHitStep = pair.deployStep; // 배치 시점부터 타임아웃 카운트 시작
+            pair.lastRaycastHitStep = pair.deployStep;
             pair.hasEverHitRaycast = false;
 
             // 3. 적군 참조 설정
@@ -1553,50 +1816,13 @@ namespace BoatAttack
                 pair.agent2.enemyShips = enemies;
             }
 
-            // 미배정 적 Greedy 배정: 기존 배정 현황 수집 후 가장 가까운 미배정 적 선택
-            var singleAssigned = new HashSet<int>();
-            if (_pairPool != null)
-            {
-                for (int si = 0; si < _pairPool.Count; si++)
-                {
-                    if (!_pairPool[si].isActive || _pairPool[si].agent1 == null) continue;
-                    int existIdx = _pairPool[si].agent1.assignedTargetIndex;
-                    if (existIdx > 0) singleAssigned.Add(existIdx - 1);
-                }
-            }
-            int bestEnemy = FindClosestUnassignedEnemy(
-                pairCenter, enemies, singleAssigned,
-                zoneDir, motherPos, filterByDirection: true);
-            // 방향 필터 폴백 제거 — 해당 방향 적 없으면 미배정(-1) 유지 (엉뚱한 적 배정 방지)
-            // 항상 모선 후미 방향(후방 직선각도)으로 스폰
-            rot = GetRearFacingRotation();
-
-            // 스폰 방향에 수직으로 agent1/2 배치 → 그물이 펴짐
-            Vector3 spawnFwd = rot * Vector3.forward;
-            Vector3 lateralDir = new Vector3(-spawnFwd.z, 0f, spawnFwd.x);
-            // 50% 확률로 좌우 반전 → Agent1/2 배치 편향 제거
-            if (Random.value < 0.5f) lateralDir = -lateralDir;
-
-            float singleSpawnWidth = 10f;
-
-            pos1 = pairCenter + lateralDir * (-singleSpawnWidth * 0.5f);
-            pos1.y = _templateAgent1Y;
-            pos2 = pairCenter + lateralDir * (singleSpawnWidth * 0.5f);
-            pos2.y = _templateAgent2Y;
-
-            // ResetAgent 먼저 (ResetForDeployment에서 assignedTargetIndex=-1)
+            // ResetAgent (ResetForDeployment에서 assignedTargetIndex=-1)
             ResetAgent(pair.agent1, pos1, rot);
             ResetAgent(pair.agent2, pos2, rot);
 
-            // ResetAgent 이후에 배정 — -1 초기화 이후 덮어씀
-            if (bestEnemy >= 0)
-                SetPairTarget(pairIdx, bestEnemy + 1); // 중복 방지 로직 포함
-
-            // 좌/우 교차 체크용 초기값 기록 (실제 agent1→agent2 방향)
-            pair.deployLateralDir = lateralDir;
-            pair.prevLateralDir = Vector3.zero; // 유예 후 실제 위치로 기록됨
-            float dotSingle = Vector3.Dot(pos1 - pairCenter, lateralDir);
-            pair.agent1StartsOnLeft = dotSingle < 0f;
+            pair.deployLateralDir = singlePerp;
+            pair.prevLateralDir = Vector3.zero;
+            pair.agent1StartsOnLeft = true;
 
             // 4. 활성화
             SetPairActive(pairIdx, true);
@@ -1610,6 +1836,10 @@ namespace BoatAttack
             }
 
             _deployedPairCount++;
+
+            // agent1 = 왼쪽, agent2 = 오른쪽 (하드코딩)
+            if (pair.agent1 != null) pair.agent1.isLeftAgent = true;
+            if (pair.agent2 != null) pair.agent2.isLeftAgent = false;
 
             // 해당 진수구역 쿨다운 기록
             if (_zoneLastDeployStep != null && zoneIdx >= 0 && zoneIdx < _zoneLastDeployStep.Length)
@@ -1973,6 +2203,7 @@ namespace BoatAttack
             pair.splitStartStep = -1;
             pair.assignedZoneIndex = -1;
             pair.launchAngleDeg = -1f;
+            pair.initialPartnerBearingSign = 0f;
             pair.deployStep = -1;
             pair.lastRaycastHitStep = -1;
             pair.hasEverHitRaycast = false;
@@ -2008,6 +2239,7 @@ namespace BoatAttack
             pair.splitStartStep = -1;
             pair.assignedZoneIndex = -1;
             pair.launchAngleDeg = -1f;
+            pair.initialPartnerBearingSign = 0f;
             pair.deployStep = -1;
             pair.lastRaycastHitStep = -1;
             pair.hasEverHitRaycast = false;
@@ -2150,7 +2382,34 @@ namespace BoatAttack
         {
             Vector3 motherPos = motherShip != null ? motherShip.transform.position : Vector3.zero;
 
-            // === 씬 오브젝트 기반 진수구역 (우선) ===
+            // === 1순위: SpawnZoneConfig 배열 (인스펙터 직접 지정) ===
+            if (spawnZones != null && spawnZones.Length > 0)
+            {
+                var validZones = new System.Collections.Generic.List<LaunchZone>();
+                foreach (var sz in spawnZones)
+                {
+                    if (sz == null || sz.position == null) continue;
+                    Vector3 offset = sz.position.position - motherPos;
+                    offset.y = 0f;
+                    float angleDeg = Mathf.Atan2(offset.x, offset.z) * Mathf.Rad2Deg;
+                    if (angleDeg < 0f) angleDeg += 360f;
+                    float distance = Mathf.Max(offset.magnitude, 1f);
+                    validZones.Add(new LaunchZone
+                    {
+                        angleDeg    = angleDeg,
+                        distance    = distance,
+                        angleJitter = 0f,
+                        worldPos    = sz.position.position,
+                        hasWorldPos = true
+                    });
+                }
+                launchZones = validZones.ToArray();
+                _zoneLastDeployStep = new int[launchZones.Length];
+                ResetZoneCooldowns();
+                return;
+            }
+
+            // === 2순위: 레거시 zoneTransforms ===
             if (zoneTransforms != null && zoneTransforms.Length > 0)
             {
                 var validZones = new System.Collections.Generic.List<LaunchZone>();
@@ -2162,7 +2421,14 @@ namespace BoatAttack
                     float angleDeg = Mathf.Atan2(offset.x, offset.z) * Mathf.Rad2Deg;
                     if (angleDeg < 0f) angleDeg += 360f;
                     float distance = Mathf.Max(offset.magnitude, 1f);
-                    validZones.Add(new LaunchZone { angleDeg = angleDeg, distance = distance, angleJitter = angleJitter });
+                    validZones.Add(new LaunchZone
+                    {
+                        angleDeg    = angleDeg,
+                        distance    = distance,
+                        angleJitter = angleJitter,
+                        worldPos    = t.position,
+                        hasWorldPos = true
+                    });
                 }
                 launchZones = validZones.ToArray();
                 _zoneLastDeployStep = new int[launchZones.Length];
@@ -2170,7 +2436,7 @@ namespace BoatAttack
                 return;
             }
 
-            // === Fallback: 후미 자동 생성 ===
+            // === 3순위: Fallback — 모선 후미 자동 생성 ===
             float rearAngleDeg = GetMotherShipRearAngleDeg();
             int count = Mathf.Clamp(maxPairCount, 1, 10);
             launchZones = new LaunchZone[count];
@@ -2290,286 +2556,6 @@ namespace BoatAttack
                 dir.y,
                 dir.x * sin + dir.z * cos
             );
-        }
-
-        /// <summary>
-        /// Voronoi 배정: 해당 쌍이 담당하는 적 중 가장 가까운 적의 인덱스를 반환.
-        /// "담당" = 이 적에 대해 모든 활성 쌍 중 이 쌍의 Web 중심이 가장 가까운 경우.
-        /// 담당 적이 없으면 -1 반환.
-        /// </summary>
-        /// <param name="pairIdx">쌍 인덱스 (-1이면 webCenter 직접 사용)</param>
-        /// <param name="webCenter">pairIdx=-1일 때 사용할 Web 중심 위치</param>
-        /// <param name="enemies">적군 배열</param>
-        /// <returns>담당 적 중 가장 가까운 적의 인덱스 (0-based), 없으면 -1</returns>
-        // Greedy 1:1 매칭 캐시 (매 스텝 1회만 계산)
-        private int _lastMatchingStep = -1;
-        private readonly System.Collections.Generic.Dictionary<int, int> _pairToEnemyAssignment
-            = new System.Collections.Generic.Dictionary<int, int>();
-
-        /// <summary>
-        /// Greedy 1:1 매칭 기반 담당 적 반환.
-        /// 비용 함수: interceptDist / max(alongDist, 1) × refDist
-        /// alongDist ≤ 0 (뒤쪽)이면 직선거리 × 2 페널티.
-        /// 매 스텝 첫 호출 시 전체 매칭 계산 후 캐시.
-        /// </summary>
-        public int GetClosestResponsibleEnemy(int pairIdx, Vector3 webCenter, GameObject[] enemies)
-        {
-            if (enemies == null || _pairPool == null) return -1;
-
-            // 현재 스텝 확인 (envController에서 가져옴)
-            int currentStep = envController != null ? envController.CurrentStep : -1;
-
-            // 이번 스텝에 아직 매칭 안 했으면 전체 계산
-            if (currentStep != _lastMatchingStep)
-            {
-                ComputeGreedyMatching(enemies);
-                _lastMatchingStep = currentStep;
-            }
-
-            // 캐시에서 반환
-            if (_pairToEnemyAssignment.TryGetValue(pairIdx, out int assignedEnemy))
-                return assignedEnemy;
-
-            return -1;
-        }
-
-        /// <summary>
-        /// Greedy 1:1 매칭: 차단 비용이 낮은 (쌍, 적) 순으로 배정.
-        /// 적 > 쌍이면 남은 미배정 적 중 가장 비용 낮은 적을 가장 여유있는 쌍에 추가 배정.
-        /// </summary>
-        private void ComputeGreedyMatching(GameObject[] enemies)
-        {
-            _pairToEnemyAssignment.Clear();
-
-            const float interceptRefDist = 200f;
-            const float behindPenaltyMul = 2f;
-
-            // 활성 쌍 수집
-            var activePairs = new System.Collections.Generic.List<int>();
-            var webCenters = new System.Collections.Generic.Dictionary<int, Vector3>();
-            for (int pi = 0; pi < _pairPool.Count; pi++)
-            {
-                var pair = _pairPool[pi];
-                if (pair == null || !pair.isActive) continue;
-                if (pair.agent1 == null || pair.agent2 == null) continue;
-                activePairs.Add(pi);
-                webCenters[pi] = (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f;
-            }
-
-            // 활성 적 수집
-            var activeEnemies = new System.Collections.Generic.List<int>();
-            for (int ei = 0; ei < enemies.Length; ei++)
-            {
-                if (enemies[ei] != null && enemies[ei].activeInHierarchy)
-                    activeEnemies.Add(ei);
-            }
-
-            if (activePairs.Count == 0 || activeEnemies.Count == 0) return;
-
-            // 모든 (쌍, 적) 비용 계산
-            var costList = new System.Collections.Generic.List<(int pairIdx, int enemyIdx, float cost)>();
-            foreach (int pi in activePairs)
-            {
-                Vector3 wc = webCenters[pi];
-                foreach (int ei in activeEnemies)
-                {
-                    float cost = CalculateInterceptCost(wc, enemies[ei].transform, interceptRefDist, behindPenaltyMul);
-                    costList.Add((pi, ei, cost));
-                }
-            }
-
-            // 비용 오름차순 정렬
-            costList.Sort((a, b) => a.cost.CompareTo(b.cost));
-
-            // Greedy 매칭: 비용 낮은 순으로 1:1 배정
-            var assignedPairs = new System.Collections.Generic.HashSet<int>();
-            var assignedEnemies = new System.Collections.Generic.HashSet<int>();
-
-            foreach (var (pi, ei, cost) in costList)
-            {
-                if (assignedPairs.Contains(pi) || assignedEnemies.Contains(ei)) continue;
-                _pairToEnemyAssignment[pi] = ei;
-                assignedPairs.Add(pi);
-                assignedEnemies.Add(ei);
-
-                // 모든 쌍이 배정되면 종료
-                if (assignedPairs.Count >= activePairs.Count) break;
-            }
-
-            // 미배정 쌍이 있으면 (쌍 > 적): 남은 쌍에게 가장 비용 낮은 적 배정 (중복 허용)
-            foreach (int pi in activePairs)
-            {
-                if (assignedPairs.Contains(pi)) continue;
-                float bestCost = float.MaxValue;
-                int bestEi = -1;
-                foreach (int ei in activeEnemies)
-                {
-                    float cost = CalculateInterceptCost(webCenters[pi], enemies[ei].transform, interceptRefDist, behindPenaltyMul);
-                    if (cost < bestCost) { bestCost = cost; bestEi = ei; }
-                }
-                if (bestEi >= 0)
-                    _pairToEnemyAssignment[pi] = bestEi;
-            }
-        }
-
-        /// <summary>
-        /// 차단 비용 계산: interceptDist/alongDist 기반.
-        /// 전방: interceptDist / max(alongDist,1) × refDist
-        /// 후방(alongDist≤0): 직선거리 × behindMul
-        /// </summary>
-        private float CalculateInterceptCost(Vector3 webCenter, Transform enemy,
-            float refDist, float behindMul)
-        {
-            Vector3 toWeb = webCenter - enemy.position;
-            toWeb.y = 0f;
-            Vector3 enemyDir = enemy.forward;
-            enemyDir.y = 0f;
-
-            float straightDist = toWeb.magnitude;
-
-            if (enemyDir.sqrMagnitude < 0.001f)
-                return straightDist; // forward 없으면 직선거리
-
-            enemyDir.Normalize();
-            float along = Vector3.Dot(toWeb, enemyDir);
-
-            if (along <= 0f)
-                return straightDist * behindMul; // 뒤쪽: 페널티
-
-            Vector3 perp = toWeb - along * enemyDir;
-            float interceptDist = perp.magnitude;
-
-            // 비용 = 수직거리 / 남은 거리 × 기준거리
-            return interceptDist / Mathf.Max(along, 1f) * refDist;
-        }
-
-        /// <summary>
-        /// 스폰용 Voronoi: pairCenter 기준으로 담당 적 계산 (아직 활성화 전이라 pairCenters 배열 사용)
-        /// 헤딩 각도 포함 스코어 — AutoAssignOneToOneTargets()와 동일한 배정 기준으로 일관성 보장
-        /// </summary>
-        public int GetClosestResponsibleEnemyForSpawn(Vector3 myCenter, Vector3[] allCenters, int myIndex, GameObject[] enemies)
-        {
-            if (enemies == null || allCenters == null) return -1;
-
-            const float ANGLE_WEIGHT = 9.0f;
-            const float HEADING_WEIGHT = 2.5f;
-
-            int bestIdx = -1;
-            float bestScore = float.MaxValue;
-
-            for (int ei = 0; ei < enemies.Length; ei++)
-            {
-                if (enemies[ei] == null || !enemies[ei].activeInHierarchy) continue;
-
-                float myDist = Vector3.Distance(myCenter, enemies[ei].transform.position);
-
-                // 다른 쌍 중심이 더 가깝거나, 같은 거리면 인덱스가 낮은 쌍에 우선권 → 중복 배정 방지
-                bool isResponsible = true;
-                for (int pi = 0; pi < allCenters.Length; pi++)
-                {
-                    if (pi == myIndex) continue;
-                    float otherDist = Vector3.Distance(allCenters[pi], enemies[ei].transform.position);
-                    if (otherDist < myDist || (Mathf.Approximately(otherDist, myDist) && pi < myIndex))
-                    {
-                        isResponsible = false;
-                        break;
-                    }
-                }
-                if (!isResponsible) continue;
-
-                // 적 헤딩 vs 적→그물 방향 각도
-                Vector3 enemyFwd = enemies[ei].transform.forward; enemyFwd.y = 0f;
-                Vector3 enemyToSpawn = myCenter - enemies[ei].transform.position; enemyToSpawn.y = 0f;
-                float headingAngle = 90f;
-                if (enemyFwd.sqrMagnitude > 0.01f && enemyToSpawn.sqrMagnitude > 0.01f)
-                    headingAngle = Vector3.Angle(enemyFwd.normalized, enemyToSpawn.normalized);
-
-                // 적이 이 쌍 반대 방향으로 이동 중이면 제외
-                if (headingAngle > 110f) continue;
-
-                // 인터셉트 각도: 스폰 방향과 적 방향의 차이
-                Vector3 toEnemy = enemies[ei].transform.position - myCenter; toEnemy.y = 0f;
-                // 스폰 시점엔 webNormal 미확정 → myCenter→enemy 방향 기준으로 간이 계산 (0° = 정면)
-                // 후속 ComputeSpawnRotation이 실제 방향 결정하므로 여기선 헤딩 가중치만 추가
-                float score = myDist + headingAngle * HEADING_WEIGHT;
-
-                if (score < bestScore)
-                {
-                    bestScore = score;
-                    bestIdx = ei;
-                }
-            }
-
-            // 모든 적이 headingAngle > 110° 제외되면 fallback: 순수 거리 최솟값
-            if (bestIdx < 0)
-            {
-                float fallbackDist = float.MaxValue;
-                for (int ei = 0; ei < enemies.Length; ei++)
-                {
-                    if (enemies[ei] == null || !enemies[ei].activeInHierarchy) continue;
-                    float myDist = Vector3.Distance(myCenter, enemies[ei].transform.position);
-                    bool isResponsible = true;
-                    for (int pi = 0; pi < allCenters.Length; pi++)
-                    {
-                        if (pi == myIndex) continue;
-                        if (Vector3.Distance(allCenters[pi], enemies[ei].transform.position) < myDist)
-                        { isResponsible = false; break; }
-                    }
-                    if (!isResponsible) continue;
-                    if (myDist < fallbackDist) { fallbackDist = myDist; bestIdx = ei; }
-                }
-            }
-
-            return bestIdx;
-        }
-
-        /// <summary>
-        /// 적군 방향을 직접 바라보는 스폰 회전 계산 (head-on 인터셉트).
-        /// 적이 없으면 기본 zoneDir 사용.
-        /// </summary>
-        private Quaternion ComputeSpawnRotation(Vector3 zoneDir, Vector3 pairCenter,
-            GameObject[] enemies, int assignedTargetIndex)
-        {
-            Vector3 targetDir = Vector3.zero;
-            bool hasTarget = false;
-
-            // 1. 배정된 타겟이 있으면 그 방향 사용 (1-indexed)
-            if (assignedTargetIndex > 0 && enemies != null)
-            {
-                int idx = assignedTargetIndex - 1;
-                if (idx < enemies.Length && enemies[idx] != null && enemies[idx].activeInHierarchy)
-                {
-                    targetDir = enemies[idx].transform.position - pairCenter;
-                    targetDir.y = 0f;
-                    hasTarget = targetDir.sqrMagnitude > 1f;
-                }
-            }
-
-            // 2. 배정 타겟 없으면 가장 가까운 활성 적 사용
-            if (!hasTarget && enemies != null)
-            {
-                float closestDist = float.MaxValue;
-                for (int i = 0; i < enemies.Length; i++)
-                {
-                    if (enemies[i] == null || !enemies[i].activeInHierarchy) continue;
-                    Vector3 toEnemy = enemies[i].transform.position - pairCenter;
-                    toEnemy.y = 0f;
-                    float dist = toEnemy.sqrMagnitude;
-                    if (dist < closestDist)
-                    {
-                        closestDist = dist;
-                        targetDir = toEnemy;
-                        hasTarget = true;
-                    }
-                }
-            }
-
-            if (!hasTarget)
-                return Quaternion.LookRotation(zoneDir, Vector3.up);
-
-            // 적군 방향을 직접 바라봄 (클램프 없음 → head-on 인터셉트)
-            targetDir.Normalize();
-            return Quaternion.LookRotation(targetDir, Vector3.up);
         }
 
         /// <summary>

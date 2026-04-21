@@ -737,20 +737,20 @@ MonoBehaviour:
   steeringSensitivity: 1.112
   speedMultiplier: 1
   inputSmoothing: 0.2
-  enemyNormK: 2000
+  enemyNormK: 77
   useLOSObservation: 1
   losLookAheadDist: 150
   bearingNormK: 10
   enemyDistScale: 1
   enemyBearingScale: 1
   enemyHeadingScale: 1
-  allyDistScale: 10
-  allyBearingScale: 10
-  allyWebLengthScale: 10
+  allyDistScale: 1
+  allyBearingScale: 1
+  allyWebLengthScale: 1
   speedNormK: 10
   forwardSpeedScale: 1
   driftSpeedScale: 1
-  allyPairNormK: 300
+  allyPairNormK: 100
   webLengthNormK: 50
   phantomSpacing: 80
   phantomSpeed: 50
@@ -780,8 +780,9 @@ MonoBehaviour:
   lastEnemyBufferObs: []
   lastAllyBufferObs: []
   losSpreadDistance: 30
-  isLeftAgent: 1
-  guidanceDuration: 5
+  losHeadingClampDeg: 60
+  isLeftAgent: 0
+  guidanceDuration: 0
   guidanceKp: 10
   guidanceKd: 0.5
   showLOSVisualization: 1

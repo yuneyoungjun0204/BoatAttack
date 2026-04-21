@@ -246,12 +246,14 @@ namespace BoatAttack
         [Header("=== Formation Spread (LOS offset, 0=RL 대형학습) ===")]
         [Tooltip("LOS 기준선에서 좌/우로 벌리는 거리 (m). isLeftAgent에 따라 좌/우 바이어스. 권장: 50m")]
         [Range(0f, 200f)] public float losSpreadDistance = 50f;
+        [Tooltip("LOS 타겟 방향으로부터 선수가 벗어날 수 있는 최대 각도 (°). 0=비활성화")]
+        [Range(0f, 180f)] public float losHeadingClampDeg = 60f;
         [Tooltip("true=왼쪽 선박(agent1), false=오른쪽 선박(agent2). LaunchZoneManager에서 자동 설정")]
         public bool isLeftAgent = true;
 
         [Header("=== PD LOS Guidance ===")]
         [Tooltip("배치 후 PD 가이던스 유지 시간 (초). 0이면 즉시 RL 전환")]
-        public float guidanceDuration = 15f;
+        public float guidanceDuration = 0f;
         [Tooltip("PD 가이던스 조향 비례 게인 (Kp)")]
         [Range(0f, 10f)]
         public float guidanceKp = 1.5f;
@@ -687,7 +689,7 @@ namespace BoatAttack
         private float NormalizeHeadingDiff(float fromAngle, float toAngle)
         {
             float delta = Mathf.DeltaAngle(fromAngle, toAngle); // -180 ~ +180
-            return Mathf.Cos(delta * 0.5f * Mathf.Deg2Rad) * Mathf.Sign(delta);
+            return Mathf.Cos(delta * 0.5f * Mathf.Deg2Rad);
         }
 
         /// <summary>
@@ -703,12 +705,19 @@ namespace BoatAttack
 
             if (_guidanceTarget != Vector3.zero)
             {
-                // 클러스터 배정(정지 트랩 설치):
-                // 기준선 = 클러스터 centroid → 모선 (에피소드 초기 고정, 적 이동 무관)
-                // foot 투영 후 클러스터 방향(모선 반대)으로 look-ahead
+                // SingleNet 모드: 배정된 적 위치를 centroid로 사용 (클러스터 centroid 무시)
+                // 정지트랩 모드: 원래 클러스터 centroid 사용
+                Vector3 resolvedCentroid = _guidanceTarget;
+                if (_singleNetMode)
+                {
+                    GameObject assignedEnemy = GetAssignedEnemy();
+                    if (assignedEnemy != null && assignedEnemy.activeInHierarchy)
+                        resolvedCentroid = assignedEnemy.transform.position;
+                }
+
                 if (motherShip != null)
                 {
-                    Vector3 cPos = _guidanceTarget;                  cPos.y = 0f;  // 클러스터
+                    Vector3 cPos = resolvedCentroid;                 cPos.y = 0f;  // centroid
                     Vector3 mPos = motherShip.transform.position;    mPos.y = 0f;  // 모선
                     Vector3 aPos = transform.position;               aPos.y = 0f;
 
@@ -918,20 +927,16 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 배정된 적군 반환 (Commander가 지정한 타겟 or 가장 가까운 적 fallback)
-        /// 조건: 적군이 아군보다 모선에 더 가까워야 매칭 가능 (더 먼 적은 절대 매칭 불가)
+        /// 가장 가까운 활성 적군 반환
         /// </summary>
         public GameObject GetAssignedEnemy()
         {
-            // 배정된 타겟이 있으면 거리 무관하게 반환 (배정은 AutoAssign에서 주기적 갱신)
+            // 배정된 타겟 우선
             if (assignedTargetIndex > 0 && enemyShips != null)
             {
                 int idx = assignedTargetIndex - 1;
                 if (idx < enemyShips.Length && enemyShips[idx] != null && enemyShips[idx].activeInHierarchy)
-                {
                     return enemyShips[idx];
-                }
-                // 적이 비활성화된 경우에만 매칭 해제
                 assignedTargetIndex = -1;
             }
 
@@ -964,7 +969,7 @@ namespace BoatAttack
             //  [1] motherDistNorm   — 모선 거리
             //  [2] partner dist     — 파트너 거리 정규화
             //  [3] partner hdg      — 파트너 헤딩차
-            const int VECTOR_OBS_COUNT = 4;
+            const int VECTOR_OBS_COUNT = 5;
             if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
                 lastObservations = new float[VECTOR_OBS_COUNT];
             int oi = 0;
@@ -987,26 +992,32 @@ namespace BoatAttack
             {
                 Vector3 toMother = motherShip.transform.position - transform.position;
                 toMother.y = 0f;
-                motherDistNorm = enemyNormK / (toMother.magnitude + enemyNormK);
+                float _normK = (envController != null) ? envController.enemyNormK : enemyNormK;
+                motherDistNorm = _normK / (toMother.magnitude + _normK);
             }
             sensor.AddObservation(motherDistNorm);
             lastObservations[1] = motherDistNorm;
 
-            // [2][3] 파트너 관측 (dist, hdgDiff)
+            // [2][3][4] 파트너 관측 (dist, hdgDiff, bearing)
             {
                 float myAngle = transform.eulerAngles.y;
-                float pDist = 0f, pHdg = 0f;
+                float pDist = 0f, pHdg = 0f, pBrg = 0f;
                 if (partnerAgent != null)
                 {
                     Vector3 rel = partnerAgent.transform.position - transform.position;
-                    rel.y       = 0f;
+                    rel.y = 0f;
                     pDist = NormalizePosition(rel.magnitude, allyPairNormK);
-                    pHdg  = NormalizeHeadingDiff(myAngle, partnerAgent.transform.eulerAngles.y);
+                    // sin(δ/2): 동일 방향=0, 반대 방향=±1 (적군과 반대 기준)
+                    float pDelta = Mathf.DeltaAngle(myAngle, partnerAgent.transform.eulerAngles.y);
+                    pHdg  = Mathf.Sin(pDelta * 0.5f * Mathf.Deg2Rad);
+                    pBrg  = ComputeSignedBearing(transform.forward, rel);
                 }
                 sensor.AddObservation(pDist);
                 sensor.AddObservation(pHdg);
+                sensor.AddObservation(pBrg);
                 lastObservations[2] = pDist;
                 lastObservations[3] = pHdg;
+                lastObservations[4] = pBrg;
             }
 
             oi = VECTOR_OBS_COUNT;
@@ -1027,6 +1038,7 @@ namespace BoatAttack
             lastEnemyBufferObs.Clear();
             if (enemyBufferSensor != null)
             {
+                float normK  = (envController != null) ? envController.enemyNormK        : enemyNormK;
                 float eDistS = (envController != null) ? envController.enemyDistScale    : enemyDistScale;
                 float eBrgS  = (envController != null) ? envController.enemyBearingScale : enemyBearingScale;
                 float eHdgS  = (envController != null) ? envController.enemyHeadingScale : enemyHeadingScale;
@@ -1055,20 +1067,9 @@ namespace BoatAttack
                     var enemy = enemyShips[enemyByDist[ei].idx];
                     float hdg = NormalizeHeadingDiff(webAngle, enemy.transform.eulerAngles.y) * eHdgS;
                     float obs0, obs1;
-                    if (useLOS)
                     {
-                        // LOS 기반: 적→모선 선 위 look-ahead 지점과 웹 중심의 관계
-                        var (perp, along) = ComputeLOSObs(
-                            enemy.transform.position, webCenter,
-                            motherShip.transform.position, losLookAheadDist, enemyNormK);
-                        obs0 = perp  * eDistS;
-                        obs1 = along * eBrgS;
-                    }
-                    else
-                    {
-                        // 개별 적군 raw: 적 위치 기준 거리 + 베어링 (클러스터 추상 없음)
                         Vector3 rel = enemy.transform.position - webCenter;
-                        obs0 = NormalizePosition(rel.magnitude, enemyNormK) * eDistS;
+                        obs0 = NormalizePosition(rel.magnitude, normK) * eDistS;
                         obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
                     }
                     enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, hdg });
@@ -1385,8 +1386,28 @@ namespace BoatAttack
                 return;
             }
 
+            // Split 분리 모드: 가이던스보다 최우선 — 트랩 전개 긴급 기동
+            // (가이던스 중 split 이벤트 발생 시 즉시 실행되어야 함)
+            if (_splitMode)
+            {
+                if (_splitStepsRemaining > 0)
+                    _splitStepsRemaining--;
+                else
+                    _splitMode = false;
+
+                if (_splitMode)
+                {
+                    _guidancePhase = false; // 가이던스 강제 종료
+                    float splitSteering = Mathf.Clamp(_splitSteer * steeringSensitivity, -1f, 1f);
+                    _engine.Accelerate(maxThrottle);
+                    _engine.Turn(splitSteering);
+                    _prevThrottle = maxThrottle;
+                    _prevSteering = splitSteering;
+                    return;
+                }
+            }
+
             // PD LOS 가이던스 — 배치 후 guidanceDuration초 동안 클러스터 방향으로 유도
-            // CONVOY 모드 포함: 정렬 먼저 → 이후 RL(차동 추력) 전환
             // Residual Policy: 가이던스가 베이스라인을 제공하고 RL이 잔차를 더함 (return 없이 fall-through)
             if (_guidancePhase)
             {
@@ -1427,25 +1448,6 @@ namespace BoatAttack
                 _prevThrottle = maxThrottle;
                 _prevSteering = 0f;
                 return;
-            }
-
-            // Split 분리 모드: 적 근접 시 강제 좌/우 조향으로 그물 전개
-            if (_splitMode)
-            {
-                if (_splitStepsRemaining > 0)
-                    _splitStepsRemaining--;
-                else
-                    _splitMode = false;
-
-                if (_splitMode)
-                {
-                    float splitSteering = Mathf.Clamp(_splitSteer * steeringSensitivity, -1f, 1f);
-                    _engine.Accelerate(maxThrottle);
-                    _engine.Turn(splitSteering);
-                    _prevThrottle = maxThrottle;
-                    _prevSteering = splitSteering;
-                    return;
-                }
             }
 
             float throttleInput = actions.ContinuousActions[0];
@@ -1489,6 +1491,24 @@ namespace BoatAttack
 
             _engine.Accelerate(throttle);
             _engine.Turn(steering);
+
+            // LOS 헤딩 클램프: 선수가 LOS 타겟으로부터 losHeadingClampDeg 이상 벗어나면 강제 회전
+            if (losHeadingClampDeg > 0f && _losLookAheadPoint != Vector3.zero)
+            {
+                Vector3 toTarget = _losLookAheadPoint - transform.position;
+                toTarget.y = 0f;
+                if (toTarget.sqrMagnitude > 0.1f)
+                {
+                    float idealAngle  = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
+                    float currentYaw  = transform.eulerAngles.y;
+                    float delta       = Mathf.DeltaAngle(currentYaw, idealAngle);
+                    if (Mathf.Abs(delta) > losHeadingClampDeg)
+                    {
+                        float clampedYaw = idealAngle - Mathf.Sign(delta) * losHeadingClampDeg;
+                        _engine.RB.MoveRotation(Quaternion.Euler(0f, clampedYaw, 0f));
+                    }
+                }
+            }
 
             // 디버그 로그
             if (enableDebugLog)
@@ -1721,11 +1741,11 @@ namespace BoatAttack
                 Transform envRoot = transform.parent != null ? transform.parent : transform;
                 DefenseEnvController envController = envRoot.GetComponentInChildren<DefenseEnvController>();
 
-                // 모선 충돌: 페널티만, 비활성화 없음
+                // 모선 충돌: 페널티 + 쌍 비활성화
                 if (isMotherShip)
                 {
                     if (envController != null)
-                        envController.OnPartnerCollision(this); // 페널티 재사용
+                        envController.OnAllyHitMotherShip(this);
                     return;
                 }
 
