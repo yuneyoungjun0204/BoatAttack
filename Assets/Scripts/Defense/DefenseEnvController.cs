@@ -1024,8 +1024,8 @@ namespace BoatAttack
                         if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
                         // prtBrg 부호 역전 감지: agent1 시점으로 시간축 추적
-                        // 첫 유효 체크에서 초기 부호를 lazy 기록, 이후 변화 시 비활성화
-                        if (!pair.agent1.IsNeutralized && !pair.agent2.IsNeutralized)
+                        // 분리(split) 중에는 반대 조향으로 부호가 바뀌므로 스킵
+                        if (!pair.isSplitting && !pair.agent1.IsNeutralized && !pair.agent2.IsNeutralized)
                         {
                             Vector3 toPartner = pair.agent2.transform.position - pair.agent1.transform.position;
                             toPartner.y = 0f;
@@ -1405,6 +1405,7 @@ namespace BoatAttack
                 {
                     DefensePair pair = launchZoneManager.GetPair(pi);
                     if (pair == null || !pair.isActive || pair.isDisarmed) continue;
+                    if (pair.isSplitting) continue; // 분리 중: Web이 LOS 미차단이므로 타임아웃 제외
                     if (pair.lastRaycastHitStep < 0) continue;
                     if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
                     if (pair.agent1 != null && pair.agent1.IsNeutralized
@@ -1977,7 +1978,16 @@ namespace BoatAttack
                     if (pair != null && currentStage != TrainingStage.Stage8_TacticalFullObs
                         && currentStage != TrainingStage.Stage9_DisarmReform)
                     {
+                        // 현재 다른 쌍이 배정받은 적 인덱스를 먼저 수집 → 중복 방지
                         var taken = new System.Collections.Generic.HashSet<int>();
+                        int poolCap = launchZoneManager.GetPoolCapacity();
+                        for (int pi2 = 0; pi2 < poolCap; pi2++)
+                        {
+                            var other = launchZoneManager.GetPair(pi2);
+                            if (other == null || !other.isActive || other == pair) continue;
+                            if (other.agent1 != null && other.agent1.assignedTargetIndex > 0)
+                                taken.Add(other.agent1.assignedTargetIndex - 1);
+                        }
                         int nextEi = FindLiveEnemyInCluster(pair, taken);
                         if (pair.agent1 != null) pair.agent1.assignedTargetIndex = nextEi >= 0 ? nextEi + 1 : -1;
                         if (pair.agent2 != null) pair.agent2.assignedTargetIndex = nextEi >= 0 ? nextEi + 1 : -1;
@@ -2435,7 +2445,7 @@ namespace BoatAttack
             for (int i = 0; i < poolCount; i++)
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive || pair.isDisarmed || pair.isStandby) continue;
+                if (pair == null || !pair.isActive || pair.isStandby) continue;
                 if (pair.agent1 == null) continue;
                 Vector3 pairCenter = pair.agent2 != null
                     ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f
@@ -2561,6 +2571,25 @@ namespace BoatAttack
                         pair.agent2.SetNeutralized(false);
                         pair.agent1.ActivateSingleNet();
                         pair.agent2.ActivateSingleNet();
+
+                        // agent1/agent2 각각 다른 적 배정 (중복 방지)
+                        {
+                            var takenSingle = new System.Collections.Generic.HashSet<int>();
+                            int poolCap2 = launchZoneManager.GetPoolCapacity();
+                            for (int pi2 = 0; pi2 < poolCap2; pi2++)
+                            {
+                                var other = launchZoneManager.GetPair(pi2);
+                                if (other == null || !other.isActive || other == pair) continue;
+                                if (other.agent1 != null && other.agent1.assignedTargetIndex > 0)
+                                    takenSingle.Add(other.agent1.assignedTargetIndex - 1);
+                                if (other.agent2 != null && other.agent2.assignedTargetIndex > 0)
+                                    takenSingle.Add(other.agent2.assignedTargetIndex - 1);
+                            }
+                            int ei1 = FindLiveEnemyInCluster(pair, takenSingle);
+                            if (ei1 >= 0) { pair.agent1.assignedTargetIndex = ei1 + 1; takenSingle.Add(ei1); }
+                            int ei2 = FindLiveEnemyInCluster(pair, takenSingle);
+                            if (ei2 >= 0) pair.agent2.assignedTargetIndex = ei2 + 1;
+                        }
 
                         // isDisarmed → ProcessSplitAndSeparation 재진입 방지
                         pair.isDisarmed = true;
@@ -2768,7 +2797,7 @@ namespace BoatAttack
                 }
             }
 
-            // 미배정 페어만 클러스터 내 생존 적으로 재배정
+            // 미배정 일반 페어: 클러스터 내 생존 적으로 재배정 (agent1/2 동일 타겟)
             for (int pi = 0; pi < poolCap; pi++)
             {
                 DefensePair pair = launchZoneManager.GetPair(pi);
@@ -2781,6 +2810,45 @@ namespace BoatAttack
                     pair.agent1.assignedTargetIndex = newEi + 1;
                     if (pair.agent2 != null) pair.agent2.assignedTargetIndex = newEi + 1;
                     takenEnemies.Add(newEi);
+                }
+            }
+
+            // SingleNet(isDisarmed) 페어: agent1/agent2 각각 개별 타겟 갱신
+            for (int pi = 0; pi < poolCap; pi++)
+            {
+                DefensePair pair = launchZoneManager.GetPair(pi);
+                if (pair == null || !pair.isActive || !pair.isDisarmed || pair.isStandby) continue;
+
+                // agent1
+                if (pair.agent1 != null)
+                {
+                    int cur1 = pair.agent1.assignedTargetIndex;
+                    bool alive1 = cur1 > 0 && (cur1 - 1) < enemyShips.Length
+                        && enemyShips[cur1 - 1] != null && enemyShips[cur1 - 1].activeInHierarchy
+                        && !IsEnemyNeutralized(enemyShips[cur1 - 1]);
+                    if (alive1) takenEnemies.Add(cur1 - 1);
+                    else
+                    {
+                        pair.agent1.assignedTargetIndex = -1;
+                        int newEi = FindLiveEnemyInCluster(pair, takenEnemies);
+                        if (newEi >= 0) { pair.agent1.assignedTargetIndex = newEi + 1; takenEnemies.Add(newEi); }
+                    }
+                }
+
+                // agent2
+                if (pair.agent2 != null)
+                {
+                    int cur2 = pair.agent2.assignedTargetIndex;
+                    bool alive2 = cur2 > 0 && (cur2 - 1) < enemyShips.Length
+                        && enemyShips[cur2 - 1] != null && enemyShips[cur2 - 1].activeInHierarchy
+                        && !IsEnemyNeutralized(enemyShips[cur2 - 1]);
+                    if (alive2) takenEnemies.Add(cur2 - 1);
+                    else
+                    {
+                        pair.agent2.assignedTargetIndex = -1;
+                        int newEi = FindLiveEnemyInCluster(pair, takenEnemies);
+                        if (newEi >= 0) { pair.agent2.assignedTargetIndex = newEi + 1; takenEnemies.Add(newEi); }
+                    }
                 }
             }
         }
@@ -3129,6 +3197,7 @@ namespace BoatAttack
             DefensePair pair = launchZoneManager.GetPair(pairIdx);
             if (pair == null) return;
             if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 50) return; // 배치 유예기간
+            if (pair.isDisarmed) return; // SingleNet 포획 모드 중 모선 충돌은 무시
 
             float penalty = rewardCalculator.collisionPenalty;
             if (pair.agent1 != null) pair.agent1.AddReward(penalty);

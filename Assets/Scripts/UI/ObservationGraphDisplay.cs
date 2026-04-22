@@ -60,8 +60,8 @@ namespace BoatAttack
         private int _lastCallCount = -1; // collectObsCallCount 변화 추적
         private int _staleFrames = 0;    // 관측 갱신 없이 경과한 프레임 수
 
-        // VectorSensor 5개: isLeftAgent, 모선거리, 파트너거리, 파트너헤딩, 파트너베어링
-        private static readonly string[] Labels = { "IsLeft", "MthDst", "PrtDst", "PrtHdg", "PrtBrg" };
+        // VectorSensor 6개: isLeftAgent, 모선거리, 파트너거리, 파트너헤딩, 파트너베어링, LOS조향명령
+        private static readonly string[] Labels = { "IsLeft", "MthDst", "PrtDst", "PrtHdg", "PrtBrg", "LOSCmd" };
 
         // EnemyBuffer: 3개씩 (Dist, Brg, Hdg)
         private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "Hdg" };
@@ -75,6 +75,7 @@ namespace BoatAttack
             new Color(0.3f, 0.8f, 0.4f, 1f),  // PrtDst   - 녹색
             new Color(0.9f, 0.5f, 0.3f, 1f),  // PrtHdg   - 주황
             new Color(0.9f, 0.5f, 0.9f, 1f),  // PrtBrg   - 보라
+            new Color(0.4f, 0.7f, 1.0f, 1f),  // LOSCmd   - 하늘색
         };
 
         // P키 포커스 모드: -1=전체, 0~N=해당 인덱스만 확대

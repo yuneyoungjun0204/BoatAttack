@@ -266,6 +266,12 @@ namespace BoatAttack
         private Vector3 _guidanceTarget = Vector3.zero;
         private float _prevBearingError = 0f;
 
+        // OnEpisodeBegin에 의해 초기화되지 않는 클러스터 타겟 (residual policy용)
+        private Vector3 _clusterTarget = Vector3.zero;
+
+        // LOS 베이스라인 조향 캐시 (CollectObservations에서 관측용)
+        private float _cachedLOSBaseline = 0f;
+
         // LOS 가이던스 시각화
         private Vector3 _losFootPoint      = Vector3.zero;
         private Vector3 _losLookAheadPoint = Vector3.zero;
@@ -642,6 +648,15 @@ namespace BoatAttack
             _prevBearingError = 0f;
         }
 
+        /// <summary>
+        /// Residual policy용 클러스터 타겟 설정.
+        /// OnEpisodeBegin에 의해 초기화되지 않으므로 에피소드 전반에 유지됨.
+        /// </summary>
+        public void SetClusterTarget(Vector3 worldTarget)
+        {
+            _clusterTarget = worldTarget;
+        }
+
         public override void OnEpisodeBegin()
         {
             _episodeEnded = false;
@@ -703,11 +718,11 @@ namespace BoatAttack
             Vector3 steerTarget = Vector3.zero;
             bool valid = false;
 
-            if (_guidanceTarget != Vector3.zero)
+            if (_clusterTarget != Vector3.zero)
             {
                 // SingleNet 모드: 배정된 적 위치를 centroid로 사용 (클러스터 centroid 무시)
                 // 정지트랩 모드: 원래 클러스터 centroid 사용
-                Vector3 resolvedCentroid = _guidanceTarget;
+                Vector3 resolvedCentroid = _clusterTarget;
                 if (_singleNetMode)
                 {
                     GameObject assignedEnemy = GetAssignedEnemy();
@@ -747,7 +762,7 @@ namespace BoatAttack
                             // isLeftAgent=false → side=+1 → steerTarget += perpRight → 오른쪽
                             Vector3 perpRight = new Vector3(losDir.z, 0f, -losDir.x);
                             float side = isLeftAgent ? -1f : 1f;
-                            steerTarget += perpRight * side * losSpreadDistance;
+                            steerTarget -= perpRight * side * losSpreadDistance;
                         }
 
                         _losFootPoint      = foot;
@@ -759,7 +774,7 @@ namespace BoatAttack
                 // fallback: 모선 없으면 클러스터 직접 향함
                 if (!valid)
                 {
-                    Vector3 toCluster = _guidanceTarget - transform.position;
+                    Vector3 toCluster = _clusterTarget - transform.position;
                     toCluster.y = 0f;
                     float clusterDist = toCluster.magnitude;
                     if (clusterDist > 0.1f)
@@ -772,7 +787,7 @@ namespace BoatAttack
                     }
                     else
                     {
-                        steerTarget = _guidanceTarget;
+                        steerTarget = _clusterTarget;
                         _losLookAheadPoint = steerTarget;
                         valid = true;
                     }
@@ -964,14 +979,16 @@ namespace BoatAttack
         {
             collectObsCallCount++;
 
-            // VectorSensor 4개:
+            // VectorSensor 6개:
             //  [0] isLeftAgent (0/1) — RL 대형 대칭 파괴용
             //  [1] motherDistNorm   — 모선 거리
             //  [2] partner dist     — 파트너 거리 정규화
             //  [3] partner hdg      — 파트너 헤딩차
-            const int VECTOR_OBS_COUNT = 5;
+            //  [4] partner bearing  — 파트너 베어링
+            //  [5] LOSBaseline      — LOS 조향 명령 [-1,1]
+            const int VECTOR_OBS_COUNT = 6;
             if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
-                lastObservations = new float[VECTOR_OBS_COUNT];
+                lastObservations = new float[VECTOR_OBS_COUNT];  // [5] 추가 시 크기 자동 반영
             int oi = 0;
 
             if (_engine == null || _engine.RB == null)
@@ -1019,6 +1036,10 @@ namespace BoatAttack
                 lastObservations[3] = pHdg;
                 lastObservations[4] = pBrg;
             }
+
+            // [5] LOS 베이스라인 조향 명령 [-1, 1]
+            sensor.AddObservation(_cachedLOSBaseline);
+            if (lastObservations.Length > 5) lastObservations[5] = _cachedLOSBaseline;
 
             oi = VECTOR_OBS_COUNT;
 
@@ -1386,8 +1407,7 @@ namespace BoatAttack
                 return;
             }
 
-            // Split 분리 모드: 가이던스보다 최우선 — 트랩 전개 긴급 기동
-            // (가이던스 중 split 이벤트 발생 시 즉시 실행되어야 함)
+            // Split 분리 모드
             if (_splitMode)
             {
                 if (_splitStepsRemaining > 0)
@@ -1397,7 +1417,6 @@ namespace BoatAttack
 
                 if (_splitMode)
                 {
-                    _guidancePhase = false; // 가이던스 강제 종료
                     float splitSteering = Mathf.Clamp(_splitSteer * steeringSensitivity, -1f, 1f);
                     _engine.Accelerate(maxThrottle);
                     _engine.Turn(splitSteering);
@@ -1407,40 +1426,7 @@ namespace BoatAttack
                 }
             }
 
-            // PD LOS 가이던스 — 배치 후 guidanceDuration초 동안 클러스터 방향으로 유도
-            // Residual Policy: 가이던스가 베이스라인을 제공하고 RL이 잔차를 더함 (return 없이 fall-through)
-            if (_guidancePhase)
-            {
-                if (Time.time >= _guidanceEndTime)
-                {
-                    _guidancePhase = false; // 시간 종료 → RL 전환
-                }
-                else if (!enableResidualPolicy)
-                {
-                    // 기존 동작: 가이던스 중 ML 완전 무시, LOS만으로 구동
-                    Vector3 toTarget = _guidanceTarget - transform.position;
-                    toTarget.y = 0f;
-                    float bearingError = 0f;
-                    if (toTarget.sqrMagnitude > 0.1f)
-                    {
-                        float targetAngle = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
-                        float myAngle     = transform.eulerAngles.y;
-                        bearingError      = Mathf.DeltaAngle(myAngle, targetAngle) / 180f;
-                    }
-                    float dError  = (bearingError - _prevBearingError) / Mathf.Max(Time.fixedDeltaTime, 0.001f);
-                    float guidanceSteering = Mathf.Clamp(guidanceKp * bearingError + guidanceKd * dError, -1f, 1f);
-                    _prevBearingError = bearingError;
-
-                    _engine.Accelerate(maxThrottle);
-                    _engine.Turn(guidanceSteering);
-
-                    _prevThrottle = maxThrottle;
-                    _prevSteering = guidanceSteering;
-                    return;
-                }
-            }
-
-            // Stage9: 직진 이탈 모드 — ML 정책 무시, 현재 헤딩으로 전속력 직진
+            // 직진 이탈 모드 (Stage9)
             if (_straightMode)
             {
                 _engine.Accelerate(maxThrottle);
@@ -1450,34 +1436,29 @@ namespace BoatAttack
                 return;
             }
 
+            // RL 액션
             float throttleInput = actions.ContinuousActions[0];
             float steeringInput = actions.ContinuousActions[1];
 
-            // NaN 방지
             if (float.IsNaN(throttleInput) || float.IsInfinity(throttleInput)) throttleInput = 0f;
             if (float.IsNaN(steeringInput) || float.IsInfinity(steeringInput)) steeringInput = 0f;
 
-            throttleInput = Mathf.Clamp(throttleInput, -1f, 1f);
-            steeringInput = Mathf.Clamp(steeringInput, -1f, 1f);
-
-            // LOS를 항상 기본 명령으로 사용, RL은 좌우(δsteering)/전후(δthrottle) 잔차 학습
-            // enableResidualPolicy=false → 순수 LOS
             float throttle, steering;
-            if (enableResidualPolicy)
+            if (enableResidualPolicy && _clusterTarget != Vector3.zero)
             {
+                // LOS 수선의 발 기반 베이스라인, RL은 잔차(±보정)만 학습
                 float baseSteering = ComputeLOSBaselineSteering();
+                _cachedLOSBaseline = baseSteering;
                 float baseThrottle = (1f - residualThrottleScale) * maxThrottle;
                 throttle = Mathf.Clamp(baseThrottle + throttleInput * residualThrottleScale * maxThrottle, 0f, maxThrottle);
                 steering = Mathf.Clamp(baseSteering + steeringInput * residualSteerScale, -1f, 1f);
             }
             else
             {
-                // 순수 LOS (RL 액션 무시)
-                throttle = maxThrottle;
-                steering = ComputeLOSBaselineSteering();
+                throttle = Mathf.Clamp((throttleInput + 1f) * 0.25f + 0.5f, 0f, maxThrottle);
+                steering = Mathf.Clamp(steeringInput, -1f, 1f);
             }
 
-            // Smoothing
             if (inputSmoothing < 1f)
             {
                 throttle = Mathf.Lerp(_prevThrottle, throttle, inputSmoothing);
@@ -1492,29 +1473,8 @@ namespace BoatAttack
             _engine.Accelerate(throttle);
             _engine.Turn(steering);
 
-            // LOS 헤딩 클램프: 선수가 LOS 타겟으로부터 losHeadingClampDeg 이상 벗어나면 강제 회전
-            if (losHeadingClampDeg > 0f && _losLookAheadPoint != Vector3.zero)
-            {
-                Vector3 toTarget = _losLookAheadPoint - transform.position;
-                toTarget.y = 0f;
-                if (toTarget.sqrMagnitude > 0.1f)
-                {
-                    float idealAngle  = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
-                    float currentYaw  = transform.eulerAngles.y;
-                    float delta       = Mathf.DeltaAngle(currentYaw, idealAngle);
-                    if (Mathf.Abs(delta) > losHeadingClampDeg)
-                    {
-                        float clampedYaw = idealAngle - Mathf.Sign(delta) * losHeadingClampDeg;
-                        _engine.RB.MoveRotation(Quaternion.Euler(0f, clampedYaw, 0f));
-                    }
-                }
-            }
-
-            // 디버그 로그
             if (enableDebugLog)
-            {
                 Debug.Log($"[{gameObject.name}] Throttle: {throttle:F2}, Steering: {steering:F2}");
-            }
         }
 
         /// <summary>

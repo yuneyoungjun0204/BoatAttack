@@ -113,7 +113,7 @@ namespace BoatAttack
         public Transform[] zoneTransforms;
 
         [Tooltip("모선 후미 진수거리 (m) — zoneTransforms 미설정 시 fallback으로 사용")]
-        public float rearDistance = 80f;
+        public float rearDistance = 10f;
 
         [Tooltip("후미 좌/우 분산 각도 (°) — zoneTransforms 미설정 시 fallback으로 사용")]
         [Range(0f, 45f)]
@@ -795,6 +795,11 @@ namespace BoatAttack
                     int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
                     if (pair.agent1 != null) pair.agent1.assignedTargetIndex = initTarget;
                     if (pair.agent2 != null) pair.agent2.assignedTargetIndex = initTarget;
+
+                    // Residual policy용 클러스터 타겟 (OnEpisodeBegin 이후에도 유지)
+                    Vector3 centroid = pair.clusterCentroid;
+                    if (pair.agent1 != null) pair.agent1.SetClusterTarget(centroid);
+                    if (pair.agent2 != null) pair.agent2.SetClusterTarget(centroid);
                 }
             }
 
@@ -950,6 +955,14 @@ namespace BoatAttack
             int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
             if (pair.agent1 is not null) pair.agent1.assignedTargetIndex = initTarget;
             if (pair.agent2 is not null) pair.agent2.assignedTargetIndex = initTarget;
+
+            // Residual policy용 클러스터 타겟
+            if (clusterIdx >= 0)
+            {
+                Vector3 centroid = pair.clusterCentroid;
+                if (pair.agent1 != null) pair.agent1.SetClusterTarget(centroid);
+                if (pair.agent2 != null) pair.agent2.SetClusterTarget(centroid);
+            }
 
             // 스폰 방향 = 모선 후미 방향
             float seqRearDeg = GetMotherShipRearAngleDeg();
@@ -1609,6 +1622,11 @@ namespace BoatAttack
                 int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
                 if (pair.agent1 is not null) pair.agent1.assignedTargetIndex = initTarget;
                 if (pair.agent2 is not null) pair.agent2.assignedTargetIndex = initTarget;
+
+                // Residual policy용 클러스터 타겟
+                Vector3 centroid = pair.clusterCentroid;
+                pair.agent1?.SetClusterTarget(centroid);
+                pair.agent2?.SetClusterTarget(centroid);
             }
 
             _deployedPairCount++;
