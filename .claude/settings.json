@@ -3,7 +3,10 @@
     "allow": [
       "Bash(ls -la \"c:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\Assets\\\\Scripts\"\" | findstr /E \"RL Connect Environment \")",
       "Bash(curl -s \"http://localhost:6006/data/logdir\")",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Read(//c/tmp/**)",
+      "Bash(unzip -q \"c/Users/ANSL/Desktop/BoatAttack/피지컬 AI기반 저비용 USV 트랩_시나리오260407.pptx\" -d pptx_extracted)",
+      "Read(//c/Users/ANSL/**)"
     ]
   }
 }

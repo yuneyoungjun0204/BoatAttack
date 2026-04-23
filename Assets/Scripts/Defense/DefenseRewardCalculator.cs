@@ -28,6 +28,9 @@ namespace BoatAttack
         [Tooltip("시간 페널티 (매 스텝). 권장: -0.0001")]
         public float timePenalty = -0.0001f;
 
+        [Tooltip("RL 조향이 LOS 베이스라인에 가까울수록 보상. 권장: 0.001")]
+        public float losAlignmentRewardCoeff = 0.001f;
+
         [Header("=== 선회 대형 보상 ===")]
         [Tooltip("그물이 optimalDistance보다 줄어드는 속도에 비례한 페널티 (선회 외곽 선박 가속 유도). 권장: 0.0003")]
         public float webShrinkPenalty = 0.0003f;
@@ -61,6 +64,16 @@ namespace BoatAttack
 
         [Tooltip("충돌 페널티 (아군끼리/거리초과 등). ONE-attack: -0.5")]
         public float collisionPenalty = -0.5f;
+
+        [Header("=== 타 페어 충돌 회피 보상 ===")]
+        [Tooltip("타 페어 에이전트 접근 시 페널티 계수. 권장: 0.003")]
+        public float interPairAvoidanceCoeff = 0.003f;
+
+        [Tooltip("충돌 회피 경보 반경 (m). 이 거리 이내부터 페널티 시작. 권장: 30m")]
+        public float avoidanceWarningRadius = 30f;
+
+        [Tooltip("충돌 위험 반경 (m). 이 거리 이내에서 급격한 추가 페널티. 권장: 8m")]
+        public float avoidanceDangerRadius = 8f;
 
         [Header("=== 아군 거리 제한 ===")]
         [Tooltip("아군 간 최대 허용 거리 (m). ONE-attack: 120m")]

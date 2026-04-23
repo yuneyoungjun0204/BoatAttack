@@ -67,6 +67,17 @@ Assets/ML-Agents/Timers/*.json
 Assets/_Ignore/
 Assets/ActualImages*
 
+# === 문서/기획 파일 ===
+*.pptx
+*.ppt
+*.docx
+*.doc
+*.xlsx
+*.xls
+*.pdf
+pptx_content.txt
+pptx_extracted/
+
 # === 외부 에셋 (에셋 스토어/패키지) ===
 Assets/UMO Assets/
 Assets/**/WarFX/

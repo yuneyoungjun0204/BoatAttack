@@ -117,6 +117,9 @@ namespace BoatAttack
         [Range(5f, 90f)] public float bearingNormK = 30f;
 
         [Header("Enemy Observation Scale (적군 관측 계수)")]
+        [Tooltip("일반 포획 모드에서 EnemyBufferSensor에 넣을 최대 적 수 (거리순). SingleNet 모드는 배정 적 1개만 고정.")]
+        public int maxEnemyObsNormal = 5;
+
         [Tooltip("LOS 모드: obs[0] = LOS 수직 편차(perp) 가중치 / 기존 모드: 거리 가중치")]
         [Range(1f, 10f)] public float enemyDistScale = 1f;
         [Tooltip("LOS 모드: obs[1] = LOS 전진 편차(along) 가중치 / 기존 모드: 베어링 가중치")]
@@ -239,6 +242,7 @@ namespace BoatAttack
         private bool _splitMode = false;
         private float _splitSteer = 0f;
         private int _splitStepsRemaining = 0;
+        private float _splitInitialLateralSign = 0f; // [C] split 시작 시 파트너의 내 right축 부호 스냅샷
         private SingleNetCapture _singleNetCapture;  // Disarm 후 소형 포획 존
         private bool _singleNetMode = false;          // SingleNet 포획 모드 (LOS 방향 반전)
 
@@ -286,16 +290,11 @@ namespace BoatAttack
         private LineRenderer _losSteerLine; // 에이전트→P (조향 방향)
         private Transform    _losMarker;    // P 위치 구체 마커
 
-        [Header("=== Residual Policy (LOS Baseline + RL Delta) ===")]
-        [Tooltip("true: LOS 추종을 베이스라인으로 두고 RL이 잔차(δ)를 학습\n" +
-                 "false: 기존 순수 RL (action=[-1,1] 전범위 탐색)")]
-        public bool enableResidualPolicy = true;
-
-        [Tooltip("RL 잔차 조향 스케일 (0=완전 LOS 고정, 1=RL이 ±1 전범위 수정 가능)")]
-        [Range(0f, 1f)] public float residualSteerScale = 0.5f;
-
-        [Tooltip("RL 잔차 스로틀 스케일 (0=LOS 최대 스로틀 고정, 1=RL이 스로틀 전범위 조절)")]
-        [Range(0f, 1f)] public float residualThrottleScale = 0.25f;
+        [Header("=== Safety Layer (충돌 회피) ===")]
+        [Tooltip("splitMode 중 타 페어 APF 척력 활성 반경 (m). 권장: 30m")]
+        public float safetyRadius = 30f;
+        [Tooltip("APF 척력 조향 혼합 강도. 0=비활성, 1=최대. 권장: 0.8")]
+        [Range(0f, 2f)] public float safetyRepulsionScale = 0.8f;
 
         [Header("=== Convoy (FixedJoint) ===")]
         private float _prevThrottle = 0f;
@@ -515,6 +514,15 @@ namespace BoatAttack
             _splitMode = active;
             _splitSteer = steerOverride;
             _splitStepsRemaining = active ? durationSteps : 0;
+
+            // [C] split 시작 시 파트너의 내 right축 부호 기록 (교차 감지 기준)
+            if (active && partnerAgent != null)
+            {
+                Vector3 toPartner = partnerAgent.transform.position - transform.position;
+                toPartner.y = 0f;
+                float lateral = Vector3.Dot(toPartner, transform.right);
+                _splitInitialLateralSign = lateral >= 0f ? 1f : -1f;
+            }
         }
 
         /// <summary>
@@ -882,6 +890,68 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// 타 페어(자신과 파트너 제외) 에이전트 중 가장 가까운 거리 반환
+        /// </summary>
+        private float GetNearestInterPairDistance()
+        {
+            float minDist = float.MaxValue;
+            if (envController == null || envController.launchZoneManager == null) return minDist;
+
+            int cap = envController.launchZoneManager.GetPoolCapacity();
+            for (int i = 0; i < cap; i++)
+            {
+                var pair = envController.launchZoneManager.GetPair(i);
+                if (pair == null || !pair.isActive) continue;
+                if (pair.agent1 == this || pair.agent2 == this) continue;
+                if (pair.agent1 != null)
+                {
+                    float d = Vector3.Distance(transform.position, pair.agent1.transform.position);
+                    if (d < minDist) minDist = d;
+                }
+                if (pair.agent2 != null)
+                {
+                    float d = Vector3.Distance(transform.position, pair.agent2.transform.position);
+                    if (d < minDist) minDist = d;
+                }
+            }
+            return minDist;
+        }
+
+        /// <summary>
+        /// 타 페어 에이전트로부터의 APF 척력 조향값 [-1,1] 반환
+        /// splitMode [A] Safety Layer에서 사용
+        /// </summary>
+        private float ComputeInterPairRepulsionSteering(float radius)
+        {
+            if (envController == null || envController.launchZoneManager == null) return 0f;
+
+            Vector3 repulsion = Vector3.zero;
+            Vector3 myPos = transform.position;
+
+            int cap = envController.launchZoneManager.GetPoolCapacity();
+            for (int i = 0; i < cap; i++)
+            {
+                var pair = envController.launchZoneManager.GetPair(i);
+                if (pair == null || !pair.isActive) continue;
+                if (pair.agent1 == this || pair.agent2 == this) continue;
+
+                DefenseAgent[] others = { pair.agent1, pair.agent2 };
+                foreach (var other in others)
+                {
+                    if (other == null) continue;
+                    Vector3 toOther = other.transform.position - myPos;
+                    toOther.y = 0f;
+                    float d = toOther.magnitude;
+                    if (d < 0.1f || d > radius) continue;
+                    repulsion += -(toOther / (d * d));
+                }
+            }
+
+            if (repulsion.sqrMagnitude < 0.0001f) return 0f;
+            return Mathf.Clamp(Vector3.Dot(repulsion.normalized, transform.right), -1f, 1f);
+        }
+
+        /// <summary>
         /// 부호 있는 베어링: 바디 좌표계 기준 (-1~+1)
         /// 0=정면, ±1=후방, 부호=좌(-)우(+)
         /// sqrt(angle/180)로 정면 민감도 유지, XZ 평면 cross product로 좌/우 판별
@@ -1070,7 +1140,25 @@ namespace BoatAttack
 
                 if (enemyShips != null)
                 {
-                // 일반 Phase — 활성 적군 전체 거리순 정렬, 하나하나 개별 관측
+                if (_singleNetMode)
+                {
+                    // SingleNet 포획 모드: 배정된 적 1개만 관측, 나머지 슬롯은 제로패딩
+                    GameObject assignedEnemy = GetAssignedEnemy();
+                    if (assignedEnemy != null && assignedEnemy.activeInHierarchy
+                        && (envController == null || !envController.IsEnemyNeutralized(assignedEnemy)))
+                    {
+                        _heuristicNearestEnemy = assignedEnemy;
+                        Vector3 rel = assignedEnemy.transform.position - webCenter;
+                        float obs0 = NormalizePosition(rel.magnitude, normK) * eDistS;
+                        float obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
+                        float hdg  = NormalizeHeadingDiff(webAngle, assignedEnemy.transform.eulerAngles.y) * eHdgS;
+                        enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, hdg });
+                        lastEnemyBufferObs.Add(obs0); lastEnemyBufferObs.Add(obs1); lastEnemyBufferObs.Add(hdg);
+                    }
+                }
+                else
+                {
+                // 일반 포획 모드 — 거리순 정렬 후 maxEnemyObsNormal개까지 관측
                 var enemyByDist = new List<(int idx, float dist)>();
                 for (int i = 0; i < enemyShips.Length; i++)
                 {
@@ -1082,21 +1170,20 @@ namespace BoatAttack
                 enemyByDist.Sort((a, b) => a.dist.CompareTo(b.dist));
                 _heuristicNearestEnemy = enemyByDist.Count > 0 ? enemyShips[enemyByDist[0].idx] : null;
 
-                int count = Mathf.Min(enemyByDist.Count, enemyBufferSensor.MaxNumObservables);
+                int count = Mathf.Min(enemyByDist.Count,
+                                      Mathf.Min(maxEnemyObsNormal, enemyBufferSensor.MaxNumObservables));
                 for (int ei = 0; ei < count; ei++)
                 {
                     var enemy = enemyShips[enemyByDist[ei].idx];
                     float hdg = NormalizeHeadingDiff(webAngle, enemy.transform.eulerAngles.y) * eHdgS;
-                    float obs0, obs1;
-                    {
-                        Vector3 rel = enemy.transform.position - webCenter;
-                        obs0 = NormalizePosition(rel.magnitude, normK) * eDistS;
-                        obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
-                    }
+                    Vector3 rel = enemy.transform.position - webCenter;
+                    float obs0 = NormalizePosition(rel.magnitude, normK) * eDistS;
+                    float obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
                     enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, hdg });
                     lastEnemyBufferObs.Add(obs0); lastEnemyBufferObs.Add(obs1); lastEnemyBufferObs.Add(hdg);
                 }
-                } // else if (enemyShips != null)
+                } // else (normal mode)
+                } // if (enemyShips != null)
             } // if (enemyBufferSensor != null)
 
             // 전체 관측을 lastObservations에 병합 (VectorSensor + EnemyBuffer + AllyBuffer)
@@ -1418,6 +1505,29 @@ namespace BoatAttack
                 if (_splitMode)
                 {
                     float splitSteering = Mathf.Clamp(_splitSteer * steeringSensitivity, -1f, 1f);
+
+                    // [C] 좌우 교차 방지: 파트너 측면 부호가 역전되면 조향 반전
+                    if (_splitInitialLateralSign != 0f && partnerAgent != null)
+                    {
+                        Vector3 toPartner = partnerAgent.transform.position - transform.position;
+                        toPartner.y = 0f;
+                        float dist = toPartner.magnitude;
+                        if (dist < 15f) // 근거리에서만 감지 (멀면 정상적인 벌어짐)
+                        {
+                            float curLateral = Vector3.Dot(toPartner, transform.right);
+                            float curSign = curLateral >= 0f ? 1f : -1f;
+                            if (curSign != _splitInitialLateralSign)
+                                splitSteering = -splitSteering; // 역전
+                        }
+                    }
+
+                    // [A] Safety Layer: 타 페어 APF 척력 혼합
+                    if (safetyRepulsionScale > 0f)
+                    {
+                        float repulsion = ComputeInterPairRepulsionSteering(safetyRadius);
+                        splitSteering = Mathf.Clamp(splitSteering + repulsion * safetyRepulsionScale, -1f, 1f);
+                    }
+
                     _engine.Accelerate(maxThrottle);
                     _engine.Turn(splitSteering);
                     _prevThrottle = maxThrottle;
@@ -1443,20 +1553,37 @@ namespace BoatAttack
             if (float.IsNaN(throttleInput) || float.IsInfinity(throttleInput)) throttleInput = 0f;
             if (float.IsNaN(steeringInput) || float.IsInfinity(steeringInput)) steeringInput = 0f;
 
-            float throttle, steering;
-            if (enableResidualPolicy && _clusterTarget != Vector3.zero)
+            // LOS 베이스라인 캐싱 (관측 + LOS 정렬 보상용)
+            if (_clusterTarget != Vector3.zero)
+                _cachedLOSBaseline = ComputeLOSBaselineSteering();
+
+            // 순수 RL 제어
+            float throttle = Mathf.Clamp((throttleInput + 1f) * 0.25f + 0.5f, 0f, maxThrottle);
+            float steering = Mathf.Clamp(steeringInput, -1f, 1f);
+
+            // [B] 타 페어 충돌 회피 보상
+            if (envController != null && envController.rewardCalculator != null)
             {
-                // LOS 수선의 발 기반 베이스라인, RL은 잔차(±보정)만 학습
-                float baseSteering = ComputeLOSBaselineSteering();
-                _cachedLOSBaseline = baseSteering;
-                float baseThrottle = (1f - residualThrottleScale) * maxThrottle;
-                throttle = Mathf.Clamp(baseThrottle + throttleInput * residualThrottleScale * maxThrottle, 0f, maxThrottle);
-                steering = Mathf.Clamp(baseSteering + steeringInput * residualSteerScale, -1f, 1f);
+                float avoidCoeff = envController.rewardCalculator.interPairAvoidanceCoeff;
+                float warnR      = envController.rewardCalculator.avoidanceWarningRadius;
+                float dangR      = envController.rewardCalculator.avoidanceDangerRadius;
+                if (avoidCoeff > 0f)
+                {
+                    float d = GetNearestInterPairDistance();
+                    if (d < warnR)
+                        AddReward(-avoidCoeff * Mathf.Pow(1f - d / warnR, 2f));
+                    if (d < dangR)
+                        AddReward(-avoidCoeff * 2f);
+                }
             }
-            else
+
+            // LOS 정렬 보상
+            float losCoeff = (envController != null && envController.rewardCalculator != null)
+                ? envController.rewardCalculator.losAlignmentRewardCoeff : 0f;
+            if (losCoeff > 0f && _clusterTarget != Vector3.zero)
             {
-                throttle = Mathf.Clamp((throttleInput + 1f) * 0.25f + 0.5f, 0f, maxThrottle);
-                steering = Mathf.Clamp(steeringInput, -1f, 1f);
+                float diff = Mathf.Abs(steeringInput - _cachedLOSBaseline);
+                AddReward(losCoeff * Mathf.Max(0f, 1f - diff * 0.5f));
             }
 
             if (inputSmoothing < 1f)

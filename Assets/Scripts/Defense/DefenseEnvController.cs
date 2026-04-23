@@ -2446,6 +2446,7 @@ namespace BoatAttack
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
                 if (pair == null || !pair.isActive || pair.isStandby) continue;
+                if (pair.isDisarmed) continue; // SingleNet 포획 모드: 트랩 너머 적은 항상 모선에 더 가까워 오탐 발생
                 if (pair.agent1 == null) continue;
                 Vector3 pairCenter = pair.agent2 != null
                     ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f
@@ -2566,6 +2567,10 @@ namespace BoatAttack
                             if (dw != null) dw.FreezeAtCurrentPositions();
                         }
 
+                        // isDisarmed를 FreezeAtCurrentPositions 직후 설정:
+                        // GetFrozenTrapColliders()가 현재 쌍의 트랩도 포함하도록 보장
+                        pair.isDisarmed = true;
+
                         // 선박 재활성화 + SingleNet 포획 존 가동
                         pair.agent1.SetNeutralized(false);
                         pair.agent2.SetNeutralized(false);
@@ -2585,14 +2590,11 @@ namespace BoatAttack
                                 if (other.agent2 != null && other.agent2.assignedTargetIndex > 0)
                                     takenSingle.Add(other.agent2.assignedTargetIndex - 1);
                             }
-                            int ei1 = FindLiveEnemyInCluster(pair, takenSingle);
+                            int ei1 = FindLiveEnemyInCluster(pair, takenSingle, pair.agent1);
                             if (ei1 >= 0) { pair.agent1.assignedTargetIndex = ei1 + 1; takenSingle.Add(ei1); }
-                            int ei2 = FindLiveEnemyInCluster(pair, takenSingle);
+                            int ei2 = FindLiveEnemyInCluster(pair, takenSingle, pair.agent2);
                             if (ei2 >= 0) pair.agent2.assignedTargetIndex = ei2 + 1;
                         }
-
-                        // isDisarmed → ProcessSplitAndSeparation 재진입 방지
-                        pair.isDisarmed = true;
 
                         Debug.Log($"[Split→Trap] Pair {pi} 정지 트랩 설치 + SingleNet 포획 모드: dist={dist:F1}m, timeout={timeout}, step={_resetTimer}");
                     }
@@ -2820,46 +2822,72 @@ namespace BoatAttack
                 if (pair == null || !pair.isActive || !pair.isDisarmed || pair.isStandby) continue;
 
                 // agent1
+                bool agent1HasTarget = false;
                 if (pair.agent1 != null)
                 {
                     int cur1 = pair.agent1.assignedTargetIndex;
                     bool alive1 = cur1 > 0 && (cur1 - 1) < enemyShips.Length
                         && enemyShips[cur1 - 1] != null && enemyShips[cur1 - 1].activeInHierarchy
                         && !IsEnemyNeutralized(enemyShips[cur1 - 1]);
-                    if (alive1) takenEnemies.Add(cur1 - 1);
+                    if (alive1) { takenEnemies.Add(cur1 - 1); agent1HasTarget = true; }
                     else
                     {
                         pair.agent1.assignedTargetIndex = -1;
-                        int newEi = FindLiveEnemyInCluster(pair, takenEnemies);
-                        if (newEi >= 0) { pair.agent1.assignedTargetIndex = newEi + 1; takenEnemies.Add(newEi); }
+                        int newEi = FindLiveEnemyInCluster(pair, takenEnemies, pair.agent1);
+                        if (newEi >= 0) { pair.agent1.assignedTargetIndex = newEi + 1; takenEnemies.Add(newEi); agent1HasTarget = true; }
                     }
                 }
 
                 // agent2
+                bool agent2HasTarget = false;
                 if (pair.agent2 != null)
                 {
                     int cur2 = pair.agent2.assignedTargetIndex;
                     bool alive2 = cur2 > 0 && (cur2 - 1) < enemyShips.Length
                         && enemyShips[cur2 - 1] != null && enemyShips[cur2 - 1].activeInHierarchy
                         && !IsEnemyNeutralized(enemyShips[cur2 - 1]);
-                    if (alive2) takenEnemies.Add(cur2 - 1);
+                    if (alive2) { takenEnemies.Add(cur2 - 1); agent2HasTarget = true; }
                     else
                     {
                         pair.agent2.assignedTargetIndex = -1;
-                        int newEi = FindLiveEnemyInCluster(pair, takenEnemies);
-                        if (newEi >= 0) { pair.agent2.assignedTargetIndex = newEi + 1; takenEnemies.Add(newEi); }
+                        int newEi = FindLiveEnemyInCluster(pair, takenEnemies, pair.agent2);
+                        if (newEi >= 0) { pair.agent2.assignedTargetIndex = newEi + 1; takenEnemies.Add(newEi); agent2HasTarget = true; }
                     }
+                }
+
+                // 양쪽 모두 배정 실패 → 배정 가능한 적이 없음 → 비활성화
+                if (!agent1HasTarget && !agent2HasTarget)
+                {
+                    Debug.Log($"[DefenseEnv] SingleNet Pair {pi} 배정 가능 적 없음 → 비활성화, step={_resetTimer}");
+                    launchZoneManager.ReturnPairToPool(pi, m_AgentGroup);
                 }
             }
         }
 
         /// <summary>
-        /// 클러스터 내 생존 적 중 미배정 인덱스 반환 (-1 = 없음)
+        /// 포획 모드 배정:
+        ///  1차 필터: 정지 트랩에 이미 차단된 적 제외
+        ///  2차 매칭: 에이전트 위치 → 적→모선 LOS 선분 수직 거리 최솟값
+        /// callerAgent=null 이면 pair.agent1 위치 사용
         /// </summary>
-        private int FindLiveEnemyInCluster(DefensePair pair, System.Collections.Generic.HashSet<int> taken)
+        private int FindLiveEnemyInCluster(DefensePair pair,
+            System.Collections.Generic.HashSet<int> taken,
+            DefenseAgent callerAgent = null)
         {
             if (enemyShips == null) return -1;
-            // 클러스터 내 적 우선
+
+            Vector3 agentPos = (callerAgent != null ? callerAgent.transform.position
+                                                    : pair.agent1.transform.position);
+            agentPos.y = 0f;
+
+            Vector3 motherPos3 = motherShip != null ? motherShip.transform.position : Vector3.zero;
+            motherPos3.y = 0f;
+
+            // 정지 트랩 BoxCollider 목록 수집
+            var frozenCols = GetFrozenTrapColliders();
+
+            // 후보 풀: 클러스터 내 우선, 없으면 전체
+            var candidateIndices = new System.Collections.Generic.List<int>();
             if (pair.clusterEnemyIndices != null)
             {
                 foreach (int ei in pair.clusterEnemyIndices)
@@ -2867,22 +2895,105 @@ namespace BoatAttack
                     if (taken.Contains(ei)) continue;
                     if (ei >= enemyShips.Length || enemyShips[ei] == null) continue;
                     if (!enemyShips[ei].activeInHierarchy || IsEnemyNeutralized(enemyShips[ei])) continue;
-                    return ei;
+                    candidateIndices.Add(ei);
                 }
             }
-            // fallback: 전체 생존 적 중 가장 가까운 적
-            float minDist = float.MaxValue;
-            int best = -1;
-            Vector3 center = pair.agent1.transform.position;
-            for (int ei = 0; ei < enemyShips.Length; ei++)
+            if (candidateIndices.Count == 0)
             {
-                if (taken.Contains(ei)) continue;
-                if (enemyShips[ei] == null || !enemyShips[ei].activeInHierarchy) continue;
-                if (IsEnemyNeutralized(enemyShips[ei])) continue;
-                float d = Vector3.Distance(center, enemyShips[ei].transform.position);
-                if (d < minDist) { minDist = d; best = ei; }
+                for (int ei = 0; ei < enemyShips.Length; ei++)
+                {
+                    if (taken.Contains(ei)) continue;
+                    if (enemyShips[ei] == null || !enemyShips[ei].activeInHierarchy) continue;
+                    if (IsEnemyNeutralized(enemyShips[ei])) continue;
+                    candidateIndices.Add(ei);
+                }
+            }
+            if (candidateIndices.Count == 0) return -1;
+
+            // 1차 필터: 정지 트랩에 차단되지 않은 적만 추림
+            var unblocked = new System.Collections.Generic.List<int>();
+            foreach (int ei in candidateIndices)
+            {
+                Vector3 ePos = enemyShips[ei].transform.position; ePos.y = 0f;
+                if (!IsSegmentBlockedByFrozenTrap(ePos, motherPos3, frozenCols))
+                    unblocked.Add(ei);
+            }
+            // 모두 차단된 경우 필터 무시
+            var pool = unblocked.Count > 0 ? unblocked : candidateIndices;
+
+            // 2차 매칭: 에이전트 위치 → 적→모선 LOS 수직 거리 최솟값
+            int best = -1;
+            float bestPerp = float.MaxValue;
+            foreach (int ei in pool)
+            {
+                Vector3 ePos = enemyShips[ei].transform.position; ePos.y = 0f;
+                Vector3 seg  = motherPos3 - ePos;
+                float   len  = seg.magnitude;
+                if (len < 0.1f) { best = ei; break; }
+                Vector3 dir  = seg / len;
+                float   t    = Mathf.Clamp(Vector3.Dot(agentPos - ePos, dir), 0f, len);
+                float   perp = Vector3.Distance(agentPos, ePos + dir * t);
+                if (perp < bestPerp) { bestPerp = perp; best = ei; }
             }
             return best;
+        }
+
+        /// <summary>isDisarmed 페어의 frozen web BoxCollider 목록</summary>
+        private System.Collections.Generic.List<BoxCollider> GetFrozenTrapColliders()
+        {
+            var result = new System.Collections.Generic.List<BoxCollider>();
+            if (launchZoneManager == null) return result;
+            int cap = launchZoneManager.GetPoolCapacity();
+            for (int i = 0; i < cap; i++)
+            {
+                var p = launchZoneManager.GetPair(i);
+                if (p == null || !p.isActive || !p.isDisarmed || p.webObject == null) continue;
+                var dw = p.webObject.GetComponent<DynamicWeb>();
+                if (dw == null || !dw.IsFrozen) continue;
+                var col = p.webObject.GetComponent<BoxCollider>();
+                if (col != null) result.Add(col);
+            }
+            return result;
+        }
+
+        /// <summary>선분 worldA→worldB 가 frozenColliders 중 하나라도 교차하면 true (슬래브법)</summary>
+        private static bool IsSegmentBlockedByFrozenTrap(Vector3 worldA, Vector3 worldB,
+            System.Collections.Generic.List<BoxCollider> cols)
+        {
+            foreach (var col in cols)
+            {
+                Vector3 lA = col.transform.InverseTransformPoint(worldA) - col.center;
+                Vector3 lB = col.transform.InverseTransformPoint(worldB) - col.center;
+                Vector3 half = col.size * 0.5f;
+                if (SegmentIntersectsAABB(lA, lB, half)) return true;
+            }
+            return false;
+        }
+
+        private static bool SegmentIntersectsAABB(Vector3 a, Vector3 b, Vector3 half)
+        {
+            Vector3 d = b - a;
+            float tMin = 0f, tMax = 1f;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                float da = axis == 0 ? d.x : axis == 1 ? d.y : d.z;
+                float aa = axis == 0 ? a.x : axis == 1 ? a.y : a.z;
+                float h  = axis == 0 ? half.x : axis == 1 ? half.y : half.z;
+                if (Mathf.Abs(da) < 1e-6f)
+                {
+                    if (aa < -h || aa > h) return false;
+                }
+                else
+                {
+                    float t1 = (-h - aa) / da;
+                    float t2 = ( h - aa) / da;
+                    if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+                    tMin = Mathf.Max(tMin, t1);
+                    tMax = Mathf.Min(tMax, t2);
+                    if (tMin > tMax) return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>
