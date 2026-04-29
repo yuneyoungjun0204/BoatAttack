@@ -1024,8 +1024,11 @@ namespace BoatAttack
                         if (pair.agent1.IsNeutralized && pair.agent2.IsNeutralized) continue;
 
                         // prtBrg 부호 역전 감지: agent1 시점으로 시간축 추적
-                        // 분리(split) 중에는 반대 조향으로 부호가 바뀌므로 스킵
-                        if (!pair.isSplitting && !pair.agent1.IsNeutralized && !pair.agent2.IsNeutralized)
+                        // 분리(split) 중이거나 적이 splitTriggerDistance 이내(분리 임박)면 스킵
+                        float nearestForSwap = GetNearestActiveEnemyDistToPair(pair);
+                        bool splitImminent = nearestForSwap < splitTriggerDistance;
+                        if (!pair.isSplitting && !splitImminent
+                            && !pair.agent1.IsNeutralized && !pair.agent2.IsNeutralized)
                         {
                             Vector3 toPartner = pair.agent2.transform.position - pair.agent1.transform.position;
                             toPartner.y = 0f;
@@ -1037,7 +1040,6 @@ namespace BoatAttack
                                 {
                                     if (pair.initialPartnerBearingSign == 0f)
                                     {
-                                        // 첫 유효 측정: 기준 부호 기록
                                         pair.initialPartnerBearingSign = Mathf.Sign(cross);
                                     }
                                     else if (Mathf.Sign(cross) != pair.initialPartnerBearingSign)
@@ -1369,7 +1371,7 @@ namespace BoatAttack
                         if (_enemyRayBlocked != null && ei < _enemyRayBlocked.Length)
                             _enemyRayBlocked[ei] = true;
 
-                        // 해당 Web의 쌍 찾기 → lastRaycastHitStep 갱신 + 보상
+                        // 해당 Web의 쌍 찾기 → 보상
                         if (launchZoneManager != null)
                         {
                             int poolCap = launchZoneManager.GetPoolCapacity();
@@ -1379,9 +1381,6 @@ namespace BoatAttack
                                 if (p == null || !p.isActive || p.webObject == null) continue;
                                 var pDw = p.webObject.GetComponent<DynamicWeb>();
                                 if (pDw != dw) continue;
-
-                                p.lastRaycastHitStep = _resetTimer;
-                                p.hasEverHitRaycast  = true;
 
                                 float r = rewardCalculator.raycastInterceptReward;
                                 if (p.agent1 != null) p.agent1.AddReward(r);
@@ -1397,34 +1396,6 @@ namespace BoatAttack
                 }
             }
 
-            // ── Raycast 타임아웃: 일정 스텝 동안 Ray 차단 못하면 페널티 + 비활성화 ──
-            if (launchZoneManager != null && rewardCalculator.raycastTimeoutSteps > 0)
-            {
-                int poolCap = launchZoneManager.GetPoolCapacity();
-                for (int pi = 0; pi < poolCap; pi++)
-                {
-                    DefensePair pair = launchZoneManager.GetPair(pi);
-                    if (pair == null || !pair.isActive || pair.isDisarmed) continue;
-                    if (pair.isSplitting) continue; // 분리 중: Web이 LOS 미차단이므로 타임아웃 제외
-                    if (pair.lastRaycastHitStep < 0) continue;
-                    if (pair.deployStep >= 0 && (_resetTimer - pair.deployStep) < 10) continue;
-                    if (pair.agent1 != null && pair.agent1.IsNeutralized
-                     && pair.agent2 != null && pair.agent2.IsNeutralized) continue;
-
-                    int stepsSinceHit    = _resetTimer - pair.lastRaycastHitStep;
-                    int effectiveTimeout = pair.hasEverHitRaycast
-                        ? rewardCalculator.raycastTimeoutSteps / 2
-                        : rewardCalculator.raycastTimeoutSteps;
-
-                    if (stepsSinceHit > effectiveTimeout)
-                    {
-                        if (pair.agent1 != null) pair.agent1.AddReward(rewardCalculator.raycastTimeoutPenalty);
-                        if (pair.agent2 != null) pair.agent2.AddReward(rewardCalculator.raycastTimeoutPenalty);
-                        Debug.LogWarning($"[RaycastTimeout] Pair {pi} 비활성화: {stepsSinceHit}스텝 미차단 (limit={effectiveTimeout}, everHit={pair.hasEverHitRaycast})");
-                        DisableOrDisarmPair(pi);
-                    }
-                }
-            }
 
             // Inspector 모니터링
             _lastStepReward = totalStepReward;
@@ -1631,19 +1602,24 @@ namespace BoatAttack
             ClearAllTraps();
             _lastResetFrame = -1; // 프레임 체크 초기화
 
-            // Stage9: 이전 에피소드에서 disarm 상태로 남은 쌍들 초기화
+            // 이전 에피소드에서 비정상 상태로 남은 쌍들 초기화 (disarm + isSplitting)
             if (launchZoneManager != null)
             {
                 for (int i = 0; i < launchZoneManager.GetPoolCapacity(); i++)
                 {
                     var pair = launchZoneManager.GetPair(i);
-                    if (pair != null && pair.isDisarmed)
+                    if (pair == null) continue;
+
+                    if (pair.isDisarmed)
                     {
                         if (pair.agent1 != null) pair.agent1.SetStraightMode(false);
                         if (pair.agent2 != null) pair.agent2.SetStraightMode(false);
                         pair.isDisarmed = false;
                         pair.disarmStep = -1;
                     }
+
+                    if (pair.isSplitting)
+                        pair.isSplitting = false;
                 }
             }
 
@@ -1809,34 +1785,10 @@ namespace BoatAttack
         /// </summary>
         /// <summary>
         /// 적군이 웹 존 안에 머무는 동안 매 FixedUpdate 호출 (OnTriggerStay)
-        /// 매 스텝 소액 보상 + lastRaycastHitStep 갱신
         /// </summary>
         public void OnEnemyInWebZone(GameObject enemyBoat, DynamicWeb web)
         {
             if (_episodeEnding || enemyBoat == null || web == null) return;
-            if (launchZoneManager == null) return;
-
-            int poolCap = launchZoneManager.GetPoolCapacity();
-            for (int pi = 0; pi < poolCap; pi++)
-            {
-                DefensePair pair = launchZoneManager.GetPair(pi);
-                if (pair == null || !pair.isActive || pair.webObject == null) continue;
-
-                DynamicWeb pairWeb = pair.webObject.GetComponent<DynamicWeb>();
-                if (pairWeb != web) continue;
-
-                // 이 쌍이 웹 존 안에 적을 감지 중
-                pair.hasEverHitRaycast = true;
-                pair.lastRaycastHitStep = _resetTimer;
-
-                if (rewardCalculator.webBlockReward > 0f)
-                {
-                    float reward = rewardCalculator.webBlockReward;
-                    if (pair.agent1 != null) pair.agent1.AddReward(reward);
-                    if (pair.agent2 != null) pair.agent2.AddReward(reward);
-                }
-                break;
-            }
         }
 
         public void OnEnemyHitWeb(GameObject enemyBoat, DynamicWeb capturingWeb = null)
@@ -2446,7 +2398,8 @@ namespace BoatAttack
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
                 if (pair == null || !pair.isActive || pair.isStandby) continue;
-                if (pair.isDisarmed) continue; // SingleNet 포획 모드: 트랩 너머 적은 항상 모선에 더 가까워 오탐 발생
+                if (pair.isDisarmed) continue;   // SingleNet 포획 모드: 트랩 너머 적은 항상 모선에 더 가까워 오탐 발생
+                if (pair.isSplitting) continue;  // 분리 전개 중: 위치가 불안정해 유효 타겟 판정 오탐 발생
                 if (pair.agent1 == null) continue;
                 Vector3 pairCenter = pair.agent2 != null
                     ? (pair.agent1.transform.position + pair.agent2.transform.position) * 0.5f

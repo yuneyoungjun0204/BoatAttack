@@ -733,7 +733,7 @@ MonoBehaviour:
   maxLinearAcceleration: 5
   maxAngularAcceleration: 45
   maxThrottle: 1
-  minThrottle: 0.15
+  minThrottle: 0
   steeringSensitivity: 1.112
   speedMultiplier: 1
   inputSmoothing: 0.2
@@ -741,6 +741,7 @@ MonoBehaviour:
   useLOSObservation: 1
   losLookAheadDist: 150
   bearingNormK: 10
+  maxEnemyObsNormal: 5
   enemyDistScale: 1
   enemyBearingScale: 1
   enemyHeadingScale: 1
@@ -786,9 +787,8 @@ MonoBehaviour:
   guidanceKp: 10
   guidanceKd: 0.5
   showLOSVisualization: 1
-  enableResidualPolicy: 1
-  residualSteerScale: 0.85
-  residualThrottleScale: 0.65
+  safetyRadius: 30
+  safetyRepulsionScale: 0.8
 --- !u!114 &7411346295538081491
 MonoBehaviour:
   m_ObjectHideFlags: 0

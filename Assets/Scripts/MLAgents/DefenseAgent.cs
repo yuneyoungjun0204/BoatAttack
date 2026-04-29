@@ -657,8 +657,7 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// Residual policy용 클러스터 타겟 설정.
-        /// OnEpisodeBegin에 의해 초기화되지 않으므로 에피소드 전반에 유지됨.
+        /// LOS 클러스터 타겟 설정. OnEpisodeBegin에서 Vector3.zero로 초기화됨.
         /// </summary>
         public void SetClusterTarget(Vector3 worldTarget)
         {
@@ -671,10 +670,13 @@ namespace BoatAttack
             _splitMode = false;
             _splitSteer = 0f;
             _splitStepsRemaining = 0;
+            _splitInitialLateralSign = 0f;
             _guidancePhase = false;
             _guidanceEndTime = 0f;
             _guidanceTarget = Vector3.zero;
-            assignedTargetIndex = -1; // Commander가 새로 배정
+            _clusterTarget = Vector3.zero;
+            DeactivateSingleNet();          // _singleNetMode = false + SingleNetCapture zone 비활성화
+            assignedTargetIndex = -1;
             // _neutralized는 여기서 리셋하지 않음
             // SetNeutralized(false)로만 해제 (DeployPairs/ResetScene에서 호출)
             _prevThrottle = 0f;
@@ -1558,7 +1560,8 @@ namespace BoatAttack
                 _cachedLOSBaseline = ComputeLOSBaselineSteering();
 
             // 순수 RL 제어
-            float throttle = Mathf.Clamp((throttleInput + 1f) * 0.25f + 0.5f, 0f, maxThrottle);
+            // float throttle = Mathf.Clamp((throttleInput + 1f) * 0.25f + 0.1f, 0f, maxThrottle);
+            float throttle = Mathf.Clamp(throttleInput+0.4f, 0f, maxThrottle);
             float steering = Mathf.Clamp(steeringInput, -1f, 1f);
 
             // [B] 타 페어 충돌 회피 보상

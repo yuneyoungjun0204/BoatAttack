@@ -73,10 +73,6 @@ namespace BoatAttack
         // 파트너 베어링 부호 역전 감지 (0=미초기화)
         [HideInInspector] public float initialPartnerBearingSign = 0f;
 
-        // 레이캐스트 타임아웃 체크용
-        [HideInInspector] public int lastRaycastHitStep = -1;
-        [HideInInspector] public bool hasEverHitRaycast = false;
-
 
         // 양동 방향 필터용: 진수 시 스폰 각도 (모선 기준, -1=미설정)
         [HideInInspector] public float launchAngleDeg = -1f;
@@ -771,8 +767,6 @@ namespace BoatAttack
 
                 int currentStep = envController != null ? envController.CurrentStep : 0;
                 pair.deployStep = currentStep;
-                pair.lastRaycastHitStep = currentStep;
-                pair.hasEverHitRaycast = false;
                 // 활성화
                 SetPairActive(pi, true);
                 _totalPairsDeployed++;
@@ -988,8 +982,6 @@ namespace BoatAttack
 
             int currentStep = envController != null ? envController.CurrentStep : 0;
             pair.deployStep         = currentStep;
-            pair.lastRaycastHitStep = currentStep;
-            pair.hasEverHitRaycast  = false;
 
             // 예비 페어: Neutralized 상태로 배치, MA-POCA 미등록
             if (asStandby)
@@ -1824,9 +1816,6 @@ namespace BoatAttack
             pair.assignedZoneIndex = zoneIdx;
             pair.launchAngleDeg = zone.angleDeg;
             pair.deployStep = envController != null ? envController.CurrentStep : 0;
-            pair.lastRaycastHitStep = pair.deployStep;
-            pair.hasEverHitRaycast = false;
-
             // 3. 적군 참조 설정
             if (enemies != null)
             {
@@ -2223,9 +2212,6 @@ namespace BoatAttack
             pair.launchAngleDeg = -1f;
             pair.initialPartnerBearingSign = 0f;
             pair.deployStep = -1;
-            pair.lastRaycastHitStep = -1;
-            pair.hasEverHitRaycast = false;
-
             if (pair.agent1 != null) pair.agent1.assignedTargetIndex = -1;
             if (pair.agent2 != null) pair.agent2.assignedTargetIndex = -1;
 
@@ -2259,8 +2245,6 @@ namespace BoatAttack
             pair.launchAngleDeg = -1f;
             pair.initialPartnerBearingSign = 0f;
             pair.deployStep = -1;
-            pair.lastRaycastHitStep = -1;
-            pair.hasEverHitRaycast = false;
 
             // neutralized 해제 (재배치 시 다시 사용 가능하도록)
             if (pair.agent1 != null) pair.agent1.SetNeutralized(false);

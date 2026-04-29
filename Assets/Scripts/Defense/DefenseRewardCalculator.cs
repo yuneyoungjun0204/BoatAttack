@@ -38,19 +38,9 @@ namespace BoatAttack
         [Tooltip("그물이 optimalDistance보다 짧을 때 개별 속도 비례 보상 — 외곽 선박이 더 빠를수록 유리. 권장: 0.0002")]
         public float webSpeedBonus = 0.0002f;
 
-        [Tooltip("적군이 웹 존 안에 머무는 동안 매 스텝 보상. 권장: 0.005")]
-        public float webBlockReward = 0.005f;
-
         [Header("=== Raycast 차단 보상 ===")]
         [Tooltip("적→모선 Ray가 Web에 닿을 때 해당 쌍에 매 스텝 보상. 권장: 0.002")]
         public float raycastInterceptReward = 0.002f;
-
-        [Header("=== Raycast 타임아웃 ===")]
-        [Tooltip("이 스텝 수 동안 Ray를 한 번도 차단 못하면 페널티 + 비활성화. 권장: 300")]
-        public int raycastTimeoutSteps = 300;
-
-        [Tooltip("타임아웃 비활성화 시 페널티")]
-        public float raycastTimeoutPenalty = -0.5f;
 
         [Header("=== 이벤트 보상 ===")]
         [Tooltip("포획 성공 보상. ONE-attack: 1.0")]
