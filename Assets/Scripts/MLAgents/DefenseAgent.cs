@@ -245,6 +245,7 @@ namespace BoatAttack
         private float _splitInitialLateralSign = 0f; // [C] split 시작 시 파트너의 내 right축 부호 스냅샷
         private SingleNetCapture _singleNetCapture;  // Disarm 후 소형 포획 존
         private bool _singleNetMode = false;          // SingleNet 포획 모드 (LOS 방향 반전)
+        private bool _stopMode = false;               // Phase1: 트랩 설치 후 정지 (RL 액션 무시)
 
         // PD LOS 가이던스 (배치 후 일정 시간 동안 클러스터 방향으로 직진)
         [Header("=== Formation Spread (LOS offset, 0=RL 대형학습) ===")]
@@ -275,6 +276,7 @@ namespace BoatAttack
 
         // LOS 베이스라인 조향 캐시 (CollectObservations에서 관측용)
         private float _cachedLOSBaseline = 0f;
+        private float _cachedLOSThrottleBaseline = 0f; // 선회 각도 기반 속도 정답지
 
         // LOS 가이던스 시각화
         private Vector3 _losFootPoint      = Vector3.zero;
@@ -554,6 +556,13 @@ namespace BoatAttack
             _singleNetMode = false;
         }
 
+        /// <summary>Phase1 정지 모드: true이면 RL 액션 무시 + Engine 물리 전면 차단</summary>
+        public void SetStopMode(bool active)
+        {
+            _stopMode = active;
+            if (_engine != null) _engine.hardStopped = active;
+        }
+
         /// <summary>
         /// Stage9: 직진 이탈 중 엔진 구동 (UnregisterAgent 후 OnActionReceived가 호출되지 않으므로 직접 구동)
         /// </summary>
@@ -632,6 +641,7 @@ namespace BoatAttack
             _splitMode = false;
             _splitSteer = 0f;
             _splitStepsRemaining = 0;
+            SetStopMode(false);
             _guidancePhase = false;
             _guidanceEndTime = 0f;
             _guidanceTarget = Vector3.zero;
@@ -671,6 +681,7 @@ namespace BoatAttack
             _splitSteer = 0f;
             _splitStepsRemaining = 0;
             _splitInitialLateralSign = 0f;
+            SetStopMode(false);
             _guidancePhase = false;
             _guidanceEndTime = 0f;
             _guidanceTarget = Vector3.zero;
@@ -889,6 +900,21 @@ namespace BoatAttack
             float result = Mathf.Clamp(guidanceKp * bearingError + guidanceKd * dError, -1f, 1f);
             _prevBearingError = bearingError;
             return result;
+        }
+
+        /// <summary>
+        /// LOS 타겟 방향 기반 속도 정답지: 선회 각도가 클수록 cos 감쇠로 감속
+        /// ComputeLOSBaselineSteering() 호출 후 _losLookAheadPoint가 설정된 상태에서 호출할 것
+        /// </summary>
+        private float ComputeLOSBaselineThrottle()
+        {
+            Vector3 toTarget = _losLookAheadPoint - transform.position;
+            toTarget.y = 0f;
+            if (toTarget.sqrMagnitude < 0.1f) return 0f;
+
+            float targetAngle = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
+            float absBrg = Mathf.Abs(Mathf.DeltaAngle(transform.eulerAngles.y, targetAngle)) / 180f; // [0, 1]
+            return maxThrottle * Mathf.Cos(absBrg * Mathf.PI * 0.5f);
         }
 
         /// <summary>
@@ -1548,6 +1574,16 @@ namespace BoatAttack
                 return;
             }
 
+            // Phase1 정지 모드: 트랩 설치 후 보상/액션 없이 정지
+            if (_stopMode)
+            {
+                _engine.Accelerate(0f);
+                _engine.Turn(0f);
+                _prevThrottle = 0f;
+                _prevSteering = 0f;
+                return;
+            }
+
             // RL 액션
             float throttleInput = actions.ContinuousActions[0];
             float steeringInput = actions.ContinuousActions[1];
@@ -1555,9 +1591,13 @@ namespace BoatAttack
             if (float.IsNaN(throttleInput) || float.IsInfinity(throttleInput)) throttleInput = 0f;
             if (float.IsNaN(steeringInput) || float.IsInfinity(steeringInput)) steeringInput = 0f;
 
-            // LOS 베이스라인 캐싱 (관측 + LOS 정렬 보상용)
+            // LOS 베이스라인 캐싱 (관측 + 정렬 보상용)
+            // 주의: ComputeLOSBaselineThrottle은 _losLookAheadPoint 의존 → steering 먼저 호출
             if (_clusterTarget != Vector3.zero)
-                _cachedLOSBaseline = ComputeLOSBaselineSteering();
+            {
+                _cachedLOSBaseline         = ComputeLOSBaselineSteering();
+                _cachedLOSThrottleBaseline = ComputeLOSBaselineThrottle();
+            }
 
             // 순수 RL 제어
             // float throttle = Mathf.Clamp((throttleInput + 1f) * 0.25f + 0.1f, 0f, maxThrottle);
@@ -1580,13 +1620,22 @@ namespace BoatAttack
                 }
             }
 
-            // LOS 정렬 보상
+            // LOS 조향 정렬 보상
             float losCoeff = (envController != null && envController.rewardCalculator != null)
                 ? envController.rewardCalculator.losAlignmentRewardCoeff : 0f;
             if (losCoeff > 0f && _clusterTarget != Vector3.zero)
             {
                 float diff = Mathf.Abs(steeringInput - _cachedLOSBaseline);
-                AddReward(losCoeff * Mathf.Max(0f, 1f - diff * 0.5f));
+                AddReward(losCoeff * Mathf.Exp(-diff * diff));
+            }
+
+            // LOS 속도 정렬 보상: 선회 각도에 맞춘 감속 정답지와 비교
+            float losThrottleCoeff = (envController != null && envController.rewardCalculator != null)
+                ? envController.rewardCalculator.losThrottleAlignmentCoeff : 0f;
+            if (losThrottleCoeff > 0f && _clusterTarget != Vector3.zero)
+            {
+                float tDiff = Mathf.Abs(throttleInput - _cachedLOSThrottleBaseline);
+                AddReward(losThrottleCoeff * Mathf.Exp(-tDiff * tDiff));
             }
 
             if (inputSmoothing < 1f)
@@ -1720,7 +1769,11 @@ namespace BoatAttack
             float goalDist = toGoal.magnitude;
             float goalBrg  = goalDist > 0.5f ? ComputeSignedBearing(myFwd, toGoal) : 0f;
 
-            float throttleAction = goalDist > 30f ? 1f : goalDist > 10f ? 0f : -1f;
+            // 선회 각도 기반 감속: goalBrg 클수록 cos 감쇠 (직진=1.0, 90°=0.71, 180°=0)
+            float turnFactor = Mathf.Cos(Mathf.Abs(goalBrg) * Mathf.PI * 0.5f);
+            float throttleAction = goalDist > 30f ? maxThrottle * turnFactor
+                                 : goalDist > 10f ? 0f
+                                 : -1f;
             throttleAction = Mathf.Clamp(throttleAction + ComputeAllyAvoidanceThrottle(myPos, myFwd), -1f, 1f);
 
             float bearingRate = goalBrg - _prevGoalBrg;

@@ -6,6 +6,7 @@ using WaterSystem;
 
 namespace BoatAttack
 {
+    [DefaultExecutionOrder(-50)]   // DefenseAgent(0)보다 먼저 실행 → hardStopped 상태가 항상 선 적용
     public class Engine : MonoBehaviour
     {
         [NonSerialized] public Rigidbody RB; // The rigid body attatched to the boat
@@ -22,6 +23,8 @@ namespace BoatAttack
         //engine stats
         public float steeringTorque = 5f;
         public float horsePower = 1500f;
+
+        [HideInInspector] public bool hardStopped = false;
 
         [Header("Speed Limit")]
         [Tooltip("Max speed in m/s (0 = no limit)")]
@@ -157,6 +160,13 @@ namespace BoatAttack
                 }
                 WaterFactor = Mathf.Clamp01((_yHeight + 1.5f) / 1.0f);
                 return; // 추력/안정화/바람/파도 모두 스킵
+            }
+
+            if (hardStopped)
+            {
+                RB.velocity = Vector3.zero;
+                RB.angularVelocity = Vector3.zero;
+                return;
             }
 
             // 리셋 직후 안정화: y축 속도 제거 + 회전 제거 + 자세 강제 복원

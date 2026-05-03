@@ -31,6 +31,9 @@ namespace BoatAttack
         [Tooltip("RL 조향이 LOS 베이스라인에 가까울수록 보상. 권장: 0.001")]
         public float losAlignmentRewardCoeff = 0.001f;
 
+        [Tooltip("RL 속도가 LOS 선회감속 베이스라인에 가까울수록 보상. 권장: 0.001")]
+        public float losThrottleAlignmentCoeff = 0.001f;
+
         [Header("=== 선회 대형 보상 ===")]
         [Tooltip("그물이 optimalDistance보다 줄어드는 속도에 비례한 페널티 (선회 외곽 선박 가속 유도). 권장: 0.0003")]
         public float webShrinkPenalty = 0.0003f;
@@ -71,6 +74,13 @@ namespace BoatAttack
 
         [Tooltip("아군 간 최소 허용 거리 (m). ONE-attack: 4m")]
         public float minAllyDistance = 4f;
+
+        [Header("=== Phase1 정지 트랩 설치 보상 ===")]
+        [Tooltip("1쌍 트랩 설치 완료 시 보상. 권장: 1.0")]
+        public float trapDeployBonus = 1.0f;
+
+        [Tooltip("모든 쌍 트랩 설치 완료 → 에피소드 종료 보너스. 권장: 2.0")]
+        public float allTrapsDeployedBonus = 2.0f;
 
         [Header("=== 에피소드 종료 보상 ===")]
         [Tooltip("모든 적군 제압 시 보너스")]

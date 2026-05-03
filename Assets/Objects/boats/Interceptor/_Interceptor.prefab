@@ -585,6 +585,16 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
+      propertyPath: maxTiltAngle
+      value: 45
+      objectReference: {fileID: 0}
+    - target: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      propertyPath: steeringTorque
+      value: 10
+      objectReference: {fileID: 0}
+    - target: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
       propertyPath: stabilizationTorque
       value: 10
       objectReference: {fileID: 0}
@@ -602,6 +612,11 @@ PrefabInstance:
         type: 3}
       propertyPath: stabilizationDamping
       value: 5
+      objectReference: {fileID: 0}
+    - target: {fileID: 4301521246144889673, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
+        type: 3}
+      propertyPath: stabilizationDeadZone
+      value: 10
       objectReference: {fileID: 0}
     - target: {fileID: 4399986893398198514, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}

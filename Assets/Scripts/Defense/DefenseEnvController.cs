@@ -125,6 +125,10 @@ namespace BoatAttack
         [Tooltip("아군 페어 소진 시 에피소드 종료 비활성화 (true=페어 소진해도 에피소드 유지)")]
         public bool disableNoPairsEndEpisode = false;
 
+        [Header("=== Phase1: 정지 트랩 설치만 학습 ===")]
+        [Tooltip("true: 트랩 설치 완료 후 아군 정지 + 전체 설치 시 에피소드 종료. 포획 기동 학습 전 1단계 전용.")]
+        public bool phase1TrapOnlyMode = false;
+
         [Header("Agents")]
         [Tooltip("방어 에이전트 1")]
         public DefenseAgent defenseAgent1;
@@ -1447,6 +1451,22 @@ namespace BoatAttack
 
         #region 중앙 허브: 통합 에피소드 재시작 로직
 
+        /// <summary>Phase1: 모든 활성 쌍이 isDisarmed 상태인지 확인</summary>
+        private bool AreAllActivePairsDisarmed()
+        {
+            if (launchZoneManager == null) return false;
+            int cap = launchZoneManager.GetPoolCapacity();
+            int activeCount = 0;
+            for (int i = 0; i < cap; i++)
+            {
+                var p = launchZoneManager.GetPair(i);
+                if (p == null || !p.isActive) continue;
+                activeCount++;
+                if (!p.isDisarmed) return false;
+            }
+            return activeCount > 0;
+        }
+
         /// <summary>
         /// 통합 에피소드 재시작 메서드 (중앙 허브)
         /// 모든 에피소드 재시작 로직을 여기서 처리합니다.
@@ -2524,32 +2544,60 @@ namespace BoatAttack
                         // GetFrozenTrapColliders()가 현재 쌍의 트랩도 포함하도록 보장
                         pair.isDisarmed = true;
 
-                        // 선박 재활성화 + SingleNet 포획 존 가동
-                        pair.agent1.SetNeutralized(false);
-                        pair.agent2.SetNeutralized(false);
-                        pair.agent1.ActivateSingleNet();
-                        pair.agent2.ActivateSingleNet();
-
-                        // agent1/agent2 각각 다른 적 배정 (중복 방지)
+                        Debug.LogWarning($"[Disarm] Pair {pi} phase1TrapOnlyMode={phase1TrapOnlyMode}  step={_resetTimer}");
+                        if (phase1TrapOnlyMode)
                         {
-                            var takenSingle = new System.Collections.Generic.HashSet<int>();
-                            int poolCap2 = launchZoneManager.GetPoolCapacity();
-                            for (int pi2 = 0; pi2 < poolCap2; pi2++)
-                            {
-                                var other = launchZoneManager.GetPair(pi2);
-                                if (other == null || !other.isActive || other == pair) continue;
-                                if (other.agent1 != null && other.agent1.assignedTargetIndex > 0)
-                                    takenSingle.Add(other.agent1.assignedTargetIndex - 1);
-                                if (other.agent2 != null && other.agent2.assignedTargetIndex > 0)
-                                    takenSingle.Add(other.agent2.assignedTargetIndex - 1);
-                            }
-                            int ei1 = FindLiveEnemyInCluster(pair, takenSingle, pair.agent1);
-                            if (ei1 >= 0) { pair.agent1.assignedTargetIndex = ei1 + 1; takenSingle.Add(ei1); }
-                            int ei2 = FindLiveEnemyInCluster(pair, takenSingle, pair.agent2);
-                            if (ei2 >= 0) pair.agent2.assignedTargetIndex = ei2 + 1;
-                        }
+                            // Phase1: 트랩 설치 후 정지 — 포획 기동 없음
+                            pair.agent1.SetStopMode(true);
+                            pair.agent2.SetStopMode(true);
 
-                        Debug.Log($"[Split→Trap] Pair {pi} 정지 트랩 설치 + SingleNet 포획 모드: dist={dist:F1}m, timeout={timeout}, step={_resetTimer}");
+                            float deployBonus = rewardCalculator != null ? rewardCalculator.trapDeployBonus : 1.0f;
+                            if (m_AgentGroup != null)
+                                m_AgentGroup.AddGroupReward(deployBonus);
+                            else
+                            {
+                                pair.agent1.AddReward(deployBonus);
+                                pair.agent2.AddReward(deployBonus);
+                            }
+
+                            Debug.Log($"[Phase1] Pair {pi} 트랩 설치 완료 → 정지. bonus={deployBonus:F2}, step={_resetTimer}");
+
+                            // 모든 활성 쌍 트랩 설치 완료 → 에피소드 종료
+                            if (AreAllActivePairsDisarmed())
+                            {
+                                float bonus = rewardCalculator != null ? rewardCalculator.allTrapsDeployedBonus : 2.0f;
+                                RestartEpisode("AllTrapsDeployed", bonus);
+                            }
+                        }
+                        else
+                        {
+                            // Phase2+: 기존 SingleNet 포획 모드
+                            pair.agent1.SetNeutralized(false);
+                            pair.agent2.SetNeutralized(false);
+                            pair.agent1.ActivateSingleNet();
+                            pair.agent2.ActivateSingleNet();
+
+                            // agent1/agent2 각각 다른 적 배정 (중복 방지)
+                            {
+                                var takenSingle = new System.Collections.Generic.HashSet<int>();
+                                int poolCap2 = launchZoneManager.GetPoolCapacity();
+                                for (int pi2 = 0; pi2 < poolCap2; pi2++)
+                                {
+                                    var other = launchZoneManager.GetPair(pi2);
+                                    if (other == null || !other.isActive || other == pair) continue;
+                                    if (other.agent1 != null && other.agent1.assignedTargetIndex > 0)
+                                        takenSingle.Add(other.agent1.assignedTargetIndex - 1);
+                                    if (other.agent2 != null && other.agent2.assignedTargetIndex > 0)
+                                        takenSingle.Add(other.agent2.assignedTargetIndex - 1);
+                                }
+                                int ei1 = FindLiveEnemyInCluster(pair, takenSingle, pair.agent1);
+                                if (ei1 >= 0) { pair.agent1.assignedTargetIndex = ei1 + 1; takenSingle.Add(ei1); }
+                                int ei2 = FindLiveEnemyInCluster(pair, takenSingle, pair.agent2);
+                                if (ei2 >= 0) pair.agent2.assignedTargetIndex = ei2 + 1;
+                            }
+
+                            Debug.Log($"[Split→Trap] Pair {pi} 정지 트랩 설치 + SingleNet 포획 모드: dist={dist:F1}m, timeout={timeout}, step={_resetTimer}");
+                        }
                     }
                     continue; // 분리 중/전환 완료 모두 이 루프 종료
                 }

@@ -5129,6 +5129,7 @@ MonoBehaviour:
   waterSound: {fileID: 8494342078711061309}
   steeringTorque: 5
   horsePower: 30
+  hardStopped: 0
   maxSpeed: 1000
   stabilizationTorque: 7
   stabilizationDamping: 3
