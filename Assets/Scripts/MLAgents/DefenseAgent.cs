@@ -666,6 +666,15 @@ namespace BoatAttack
             _prevBearingError = 0f;
         }
 
+        public void StartGuidanceForSteps(Vector3 worldTarget, int steps)
+        {
+            if (steps <= 0) return;
+            _guidanceTarget   = worldTarget;
+            _guidanceEndTime  = Time.time + steps * Time.fixedDeltaTime;
+            _guidancePhase    = true;
+            _prevBearingError = 0f;
+        }
+
         /// <summary>
         /// LOS 클러스터 타겟 설정. OnEpisodeBegin에서 Vector3.zero로 초기화됨.
         /// </summary>
@@ -695,6 +704,35 @@ namespace BoatAttack
             _throttleDelta = 0f;
             _steeringDelta = 0f;
             phantomsInitialized = false;
+
+            // chase 모드: Phase2 직접 학습 — SingleNet + 가이던스 복원
+            // isLeftAgent는 OnEpisodeBegin에서 리셋되지 않으므로 그대로 사용
+            if (envController != null && envController.chaseTrainingMode)
+            {
+                ActivateSingleNet();
+                _prevThrottle = 0.5f;
+
+                // isLeftAgent 기반으로 배정 복원 (agent1=left=idx0, agent2=right=idx1)
+                int tgtIdx = isLeftAgent ? 0 : 1;
+                if (!isLeftAgent && (enemyShips == null || enemyShips.Length < 2))
+                    tgtIdx = 0;
+                assignedTargetIndex = tgtIdx + 1;  // 1-based
+
+                // LOS 보상 활성화: _clusterTarget이 non-zero여야 ComputeLOSBaseline이 실행됨
+                // SingleNet 모드에서는 실제 계산 시 GetAssignedEnemy()로 대체되므로 값 자체는 무관
+                if (enemyShips != null && tgtIdx < enemyShips.Length && enemyShips[tgtIdx] != null)
+                    SetClusterTarget(enemyShips[tgtIdx].transform.position);
+
+                // 적 방향으로 가이던스 시작
+                int gSteps = envController.chaseGuidanceSteps;
+                if (gSteps > 0 && enemyShips != null
+                    && tgtIdx < enemyShips.Length
+                    && enemyShips[tgtIdx] != null
+                    && enemyShips[tgtIdx].activeInHierarchy)
+                {
+                    StartGuidanceForSteps(enemyShips[tgtIdx].transform.position, gSteps);
+                }
+            }
         }
 
         /// <summary>
@@ -1168,25 +1206,7 @@ namespace BoatAttack
 
                 if (enemyShips != null)
                 {
-                if (_singleNetMode)
-                {
-                    // SingleNet 포획 모드: 배정된 적 1개만 관측, 나머지 슬롯은 제로패딩
-                    GameObject assignedEnemy = GetAssignedEnemy();
-                    if (assignedEnemy != null && assignedEnemy.activeInHierarchy
-                        && (envController == null || !envController.IsEnemyNeutralized(assignedEnemy)))
-                    {
-                        _heuristicNearestEnemy = assignedEnemy;
-                        Vector3 rel = assignedEnemy.transform.position - webCenter;
-                        float obs0 = NormalizePosition(rel.magnitude, normK) * eDistS;
-                        float obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
-                        float hdg  = NormalizeHeadingDiff(webAngle, assignedEnemy.transform.eulerAngles.y) * eHdgS;
-                        enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, hdg });
-                        lastEnemyBufferObs.Add(obs0); lastEnemyBufferObs.Add(obs1); lastEnemyBufferObs.Add(hdg);
-                    }
-                }
-                else
-                {
-                // 일반 포획 모드 — 거리순 정렬 후 maxEnemyObsNormal개까지 관측
+                // 모드 무관 — 거리순 정렬 후 maxEnemyObsNormal개까지 관측 (Phase1/Phase2 동일 형태)
                 var enemyByDist = new List<(int idx, float dist)>();
                 for (int i = 0; i < enemyShips.Length; i++)
                 {
@@ -1210,7 +1230,6 @@ namespace BoatAttack
                     enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, hdg });
                     lastEnemyBufferObs.Add(obs0); lastEnemyBufferObs.Add(obs1); lastEnemyBufferObs.Add(hdg);
                 }
-                } // else (normal mode)
                 } // if (enemyShips != null)
             } // if (enemyBufferSensor != null)
 

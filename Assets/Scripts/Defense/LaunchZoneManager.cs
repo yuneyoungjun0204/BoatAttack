@@ -1437,12 +1437,18 @@ namespace BoatAttack
             }
             if (pair.webObject != null)
             {
-                pair.webObject.SetActive(active);
-                // 활성화 시 비주얼 누락 검증 (Destroy로 파괴된 경우 재생성)
-                if (active)
+                // 비활성화 시: isDisarmed=true(정지 트랩 설치 완료)이면 web을 유지
+                // → 선박은 HIDDEN_POS로 이동하더라도 설치된 트랩은 에피소드 내내 남아있어야 함
+                // → ResetScene()에서 isDisarmed=false로 클리어된 후 다음 DeployPairs에서 정리됨
+                bool hideWeb = active ? false : !pair.isDisarmed;
+                if (active || hideWeb)
                 {
-                    var dw = pair.webObject.GetComponent<DynamicWeb>();
-                    if (dw != null) dw.EnsureVisualExists();
+                    pair.webObject.SetActive(active);
+                    if (active)
+                    {
+                        var dw = pair.webObject.GetComponent<DynamicWeb>();
+                        if (dw != null) dw.EnsureVisualExists();
+                    }
                 }
             }
             pair.isActive = active;
@@ -2223,6 +2229,108 @@ namespace BoatAttack
         /// DisablePair와 달리 HIDDEN_POS로 이동 + neutralized 해제하여 나중에 재배치 가능.
         /// Web은 즉시 비활성화하지 않고, delayWebDisable=true이면 0.5초 후 비활성화.
         /// </summary>
+        /// <summary>
+        /// 에피소드 리셋 시 모든 활성 쌍을 강제 비활성화 (chase 모드 전환 시 사용)
+        /// pair.isDisarmed는 ResetScene()에서 이미 false로 초기화됐으므로 web도 함께 숨김
+        /// </summary>
+        public void DeactivateAllActivePairs(SimpleMultiAgentGroup agentGroup)
+        {
+            if (_pairPool == null) return;
+            for (int i = 0; i < _pairPool.Count; i++)
+            {
+                DefensePair pair = _pairPool[i];
+                if (pair == null || !pair.isActive) continue;
+                if (agentGroup != null)
+                {
+                    if (pair.agent1 != null) agentGroup.UnregisterAgent(pair.agent1);
+                    if (pair.agent2 != null) agentGroup.UnregisterAgent(pair.agent2);
+                }
+                // isDisarmed는 이미 ResetScene에서 false → webObject도 정상 숨김
+                SetPairActive(i, false);
+            }
+        }
+
+        /// <summary>
+        /// Chase 모드 전용: Phase1 완료 직후 형상으로 한 쌍을 즉시 활성화.
+        /// 웹을 pos1/pos2 위치에 고정(isDisarmed=true)하고 SingleNet 포획 모드 진입.
+        /// </summary>
+        public void SpawnChaseReadyPair(
+            Vector3 pos1, Vector3 pos2, Vector3 webCenter,
+            GameObject[] enemies, Quaternion rotation,
+            SimpleMultiAgentGroup agentGroup, int guidanceSteps,
+            DefenseEnvController envCtrl)
+        {
+            if (!IsInitialized) { Debug.LogError("[SpawnChaseReadyPair] LZM not initialized"); return; }
+
+            int pi = GetOrCreateInactivePair();
+            if (pi < 0) { Debug.LogError("[SpawnChaseReadyPair] 사용 가능한 비활성 쌍 없음"); return; }
+
+            DefensePair pair = _pairPool[pi];
+
+            // Y 좌표를 템플릿 높이로 설정
+            pos1.y = _templateAgent1Y;
+            pos2.y = _templateAgent2Y;
+
+            // 적군 배열 전달 (OnEpisodeBegin에서 guidance 타겟으로 사용)
+            if (enemies != null)
+            {
+                if (pair.agent1 != null) pair.agent1.enemyShips = enemies;
+                if (pair.agent2 != null) pair.agent2.enemyShips = enemies;
+            }
+
+            // 에이전트 위치/회전 리셋
+            ResetAgent(pair.agent1, pos1, rotation);
+            ResetAgent(pair.agent2, pos2, rotation);
+
+            // 상태 플래그
+            pair.isDisarmed   = true;
+            pair.isSplitting  = false;
+            pair.deployStep   = envCtrl != null ? envCtrl.CurrentStep : 0;
+
+            // 쌍 활성화
+            SetPairActive(pi, true);
+
+            // 웹 처리: chase 모드는 정지 트랩 없음(선박 사이 frozen web 제거)
+            // 일반 모드는 물리 동기화 후 현재 위치에 고정
+            bool isChaseMode = envCtrl != null && envCtrl.chaseTrainingMode;
+            if (isChaseMode)
+            {
+                if (pair.webObject != null) pair.webObject.SetActive(false);
+            }
+            else
+            {
+                Physics.SyncTransforms();
+                if (pair.webObject != null)
+                {
+                    var dw = pair.webObject.GetComponent<DynamicWeb>();
+                    if (dw != null) dw.FreezeAtCurrentPositions();
+                }
+            }
+
+            // MA-POCA 등록 → 이 시점에 OnEpisodeBegin 호출됨
+            // OnEpisodeBegin chase 분기에서 ActivateSingleNet + assignedTargetIndex + guidance 설정
+            if (agentGroup != null)
+            {
+                if (pair.agent1 != null) agentGroup.RegisterAgent(pair.agent1);
+                if (pair.agent2 != null) agentGroup.RegisterAgent(pair.agent2);
+            }
+
+            // OnEpisodeBegin 이후 확정: isLeftAgent (OnEpisodeBegin이 리셋 안 함)
+            if (pair.agent1 != null) pair.agent1.isLeftAgent = true;
+            if (pair.agent2 != null) pair.agent2.isLeftAgent = false;
+
+            // assignedTargetIndex 재확인 (OnEpisodeBegin 체이스 분기가 설정했을 것이나 안전하게 덮어씀)
+            if (pair.agent1 != null) pair.agent1.assignedTargetIndex = 1;
+            if (pair.agent2 != null)
+                pair.agent2.assignedTargetIndex = (enemies != null && enemies.Length >= 2) ? 2 : 1;
+
+            // SingleNet 재확인 (OnEpisodeBegin 분기가 호출했을 것이나 안전하게 덮어씀)
+            if (pair.agent1 != null) pair.agent1.ActivateSingleNet();
+            if (pair.agent2 != null) pair.agent2.ActivateSingleNet();
+
+            Debug.Log($"[SpawnChaseReadyPair] pi={pi} pos1={pos1:F1} pos2={pos2:F1} webCenter={webCenter:F1} guidanceSteps={guidanceSteps}");
+        }
+
         public void ReturnPairToPool(int pairIndex, SimpleMultiAgentGroup agentGroup, bool delayWebDisable = true)
         {
             if (_pairPool == null || pairIndex < 0 || pairIndex >= _pairPool.Count)

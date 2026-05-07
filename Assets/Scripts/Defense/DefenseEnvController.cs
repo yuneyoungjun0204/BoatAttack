@@ -129,6 +129,24 @@ namespace BoatAttack
         [Tooltip("true: 트랩 설치 완료 후 아군 정지 + 전체 설치 시 에피소드 종료. 포획 기동 학습 전 1단계 전용.")]
         public bool phase1TrapOnlyMode = false;
 
+        [Header("=== Chase Trap Training (Phase2 직접 학습) ===")]
+        [Tooltip("true: Phase1 생략, 에피소드 시작 시 isDisarmed+singleNet 상태로 직접 스폰")]
+        public bool chaseTrainingMode = false;
+        [Tooltip("아군 쌍(webCenter) ~ 모선 최소 거리 (m)")]
+        public float chaseWebCenterMinDist = 400f;
+        [Tooltip("아군 쌍(webCenter) ~ 모선 최대 거리 (m)")]
+        public float chaseWebCenterMaxDist = 700f;
+        [Tooltip("아군 쌍 좌우 분리 최소 거리 (m)")]
+        public float chaseShipSepMin      = 50f;
+        [Tooltip("아군 쌍 좌우 분리 최대 거리 (m)")]
+        public float chaseShipSepMax      = 100f;
+        [Tooltip("적군 webCenter 기준 전방(적 방향) 최소 거리 (m)")]
+        public float chaseEnemyMinBeyond  = 200f;
+        [Tooltip("적군 webCenter 기준 전방(적 방향) 최대 거리 (m)")]
+        public float chaseEnemyMaxBeyond  = 400f;
+        [Tooltip("스폰 직후 물리 안정화 가이던스 스텝. 권장 20~30")]
+        public int   chaseGuidanceSteps   = 25;
+
         [Header("Agents")]
         [Tooltip("방어 에이전트 1")]
         public DefenseAgent defenseAgent1;
@@ -2496,6 +2514,7 @@ namespace BoatAttack
         /// </summary>
         private void ProcessSplitAndSeparation()
         {
+            if (chaseTrainingMode) return;  // chase 모드: split 없음, isDisarmed에서 시작
             if (launchZoneManager == null) return;
             int poolCap = launchZoneManager.GetPoolCapacity();
 
@@ -2671,6 +2690,9 @@ namespace BoatAttack
             {
                 DefensePair pair = launchZoneManager.GetPair(i);
                 if (pair == null || !pair.isDisarmed) continue;
+
+                // chase 모드: disarmed 쌍을 에피소드 내내 유지 (타임아웃 비활성화 없음)
+                if (chaseTrainingMode) continue;
 
                 // Stage10: isDisarmed = 플랭크 포획 모드 진입 의미 → 타임아웃 비활성화 없음
                 if (currentStage == TrainingStage.Stage10_FlankCapture) continue;
@@ -3623,6 +3645,7 @@ namespace BoatAttack
             if (attackAgent != null)
             {
                 attackAgent.followWaypoints = false;
+                attackAgent.enableRush = false;  // DriveEnemiesForward(currentEnemyRushThrottle)에 위임
                 attackAgent.targetMotherShip = motherShip;
             }
 
@@ -3710,6 +3733,15 @@ namespace BoatAttack
             //     $"useDynamicSpawn={useDynamicSpawn}, motherShip={motherShip != null}, " +
             //     $"launchZoneManager={launchZoneManager != null}, " +
             //     $"lzmInitialized={launchZoneManager?.IsInitialized}");
+
+            // chase 모드: Phase1 없이 Phase2 직접 스폰 (wake 객체 없으므로 DestroyAllWakeObjects 생략)
+            if (chaseTrainingMode && motherShip != null && launchZoneManager != null)
+            {
+                Vector3 motherPos = motherShip.transform.position;
+                yield return StartCoroutine(SpawnChaseTrainingLayout(motherPos, m_AgentGroup));
+                _isResettingPositions = false;
+                yield break;
+            }
 
             // 모든 WAKE 객체 제거 및 WakeGenerator 비활성화
             DestroyAllWakeObjects();
@@ -4015,6 +4047,115 @@ namespace BoatAttack
             {
                 agent._engine.OnEpisodeReset();
             }
+        }
+
+        /// <summary>
+        /// Phase2 chase 학습 전용: Phase1 완료 직후 형상을 직접 랜덤 스폰.
+        /// 적군 2대(webCenter 기준 모선 방향, 좌우 분산)와 아군 쌍 1개(webCenter 좌우)를 배치.
+        /// </summary>
+        private System.Collections.IEnumerator SpawnChaseTrainingLayout(
+            Vector3 motherPos, SimpleMultiAgentGroup agentGroup)
+        {
+            // 0. 이전 에피소드 활성 쌍 강제 비활성화
+            launchZoneManager.DeactivateAllActivePairs(agentGroup);
+
+            // 1. 적군 접근 각도 랜덤
+            float theta = Random.Range(0f, 360f);
+            _currentEnemyApproachAngle = theta;
+            float rad = theta * Mathf.Deg2Rad;
+            Vector3 approachDir = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
+            Vector3 perpDir     = new Vector3(approachDir.z, 0f, -approachDir.x);
+
+            // 2. webCenter 위치
+            float webDist   = Random.Range(chaseWebCenterMinDist, chaseWebCenterMaxDist);
+            Vector3 webCenter = motherPos + approachDir * webDist;
+
+            // 3. 아군 간격
+            float sep = Random.Range(chaseShipSepMin, chaseShipSepMax);
+
+            // 4. 적군 4대 스폰 — 각 독립 전방거리 + 독립 좌우 위치
+            const int CHASE_ENEMY_COUNT = 4;
+            float lateralMax = sep * 2.0f;  // 아군 간격의 2배까지 (내+외곽 폭넓게)
+            float[] eLats = new float[CHASE_ENEMY_COUNT];
+            Vector3[] ePos = new Vector3[CHASE_ENEMY_COUNT];
+
+            for (int i = 0; i < CHASE_ENEMY_COUNT; i++)
+            {
+                float eDist = Random.Range(chaseEnemyMinBeyond, chaseEnemyMaxBeyond);
+                eLats[i]   = Random.Range(-lateralMax, lateralMax);
+                ePos[i]    = webCenter + approachDir * eDist + perpDir * eLats[i];
+                ePos[i].y  = _poolTemplateY;
+            }
+
+            // 최외곽 배정: perpDir 기준 가장 왼쪽(최소 eLat) = agent1, 가장 오른쪽(최대 eLat) = agent2
+            int leftmostIdx = 0, rightmostIdx = 0;
+            for (int i = 1; i < CHASE_ENEMY_COUNT; i++)
+            {
+                if (eLats[i] < eLats[leftmostIdx])  leftmostIdx  = i;
+                if (eLats[i] > eLats[rightmostIdx]) rightmostIdx = i;
+            }
+
+            // pool 순서: [0]=최외곽 왼쪽(→agent1), [1]=최외곽 오른쪽(→agent2), [2][3]=나머지
+            int[] poolOrder = new int[CHASE_ENEMY_COUNT];
+            poolOrder[0] = leftmostIdx;
+            poolOrder[1] = rightmostIdx;
+            int slot = 2;
+            for (int i = 0; i < CHASE_ENEMY_COUNT; i++)
+            {
+                if (i != leftmostIdx && i != rightmostIdx)
+                    poolOrder[slot++] = i;
+            }
+
+            // 적군 스폰
+            if (_enemyPool != null)
+            {
+                for (int ei = 0; ei < _enemyPool.Length; ei++)
+                {
+                    if (_enemyPool[ei] == null) continue;
+                    if (ei < CHASE_ENEMY_COUNT)
+                    {
+                        Vector3 p  = ePos[poolOrder[ei]];
+                        Vector3 ld = motherPos - p; ld.y = 0f;
+                        Quaternion rot = ld.sqrMagnitude > 0.01f
+                            ? Quaternion.LookRotation(ld, Vector3.up) : Quaternion.identity;
+                        ResetPoolObject(ei, p, rot);
+                    }
+                    else
+                        _enemyPool[ei].SetActive(false);
+                }
+                IgnoreCollisionBetweenEnemies();
+            }
+
+            // 5. 아군 쌍 스폰 (webCenter 좌우)
+            Vector3 pos1 = webCenter - perpDir * (sep * 0.5f);
+            Vector3 pos2 = webCenter + perpDir * (sep * 0.5f);
+            // Y 좌표는 SpawnChaseReadyPair 내부에서 _templateAgent1Y/2Y로 덮어씀
+
+            // 방향 : 모선을 바라봄 (-approachDir = 적 → 모선 방향)
+            Quaternion allyRot = Quaternion.LookRotation(-approachDir, Vector3.up);
+
+            GameObject[] enemies = new GameObject[CHASE_ENEMY_COUNT];
+            for (int i = 0; i < CHASE_ENEMY_COUNT && _enemyPool != null && i < _enemyPool.Length; i++)
+                enemies[i] = _enemyPool[i];
+
+            launchZoneManager.SpawnChaseReadyPair(
+                pos1, pos2, webCenter,
+                enemies, allyRot,
+                agentGroup, chaseGuidanceSteps, this);
+
+            // 5. 안정화 대기
+            if (chaseGuidanceSteps > 0)
+            {
+                float endTime = Time.time + chaseGuidanceSteps * Time.fixedDeltaTime;
+                while (Time.time < endTime)
+                    yield return new WaitForFixedUpdate();
+            }
+            else
+            {
+                yield return null;
+            }
+
+            _episodeActive = true;
         }
 
         /// <summary>
