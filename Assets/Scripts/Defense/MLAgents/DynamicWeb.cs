@@ -4,7 +4,7 @@ namespace BoatAttack
 {
     /// <summary>
     /// 두 방어 선박 사이의 차단망.
-    /// 시각화: 단순 Cube 하나 (비용 최소).
+    /// 시각화: catenary + 파도 + 부표 + 대각선 그물코 (SingleNetCapture 동일 스타일).
     /// 충돌: BoxCollider (isTrigger) — 적군 포획 + 아군 충돌 감지.
     /// </summary>
     [RequireComponent(typeof(Rigidbody))]
@@ -60,6 +60,32 @@ namespace BoatAttack
         [Range(1f, 10f)]
         public float barSinkTime = 4f;
 
+        [Header("Fishing Net Visual")]
+        [Tooltip("세로줄 수 (선박 연결선 방향)")]
+        [Range(4, 24)] public int netVerticalLines = 12;
+        [Tooltip("가로줄 수 (수심 방향)")]
+        [Range(3, 12)] public int netHorizontalLines = 8;
+        [Tooltip("메인 밧줄 두께 (m)")]
+        [Range(0.1f, 3f)] public float mainRopeWidth = 0.35f;
+        [Tooltip("그물코 줄 두께 (m)")]
+        [Range(0.02f, 0.5f)] public float netLineWidth = 0.08f;
+        [Tooltip("그물 처짐 (catenary sag)")]
+        [Range(0f, 15f)] public float netSag = 3f;
+        [Tooltip("수면 흔들림 강도")]
+        [Range(0f, 2f)] public float waveAmplitude = 0.3f;
+        [Tooltip("수면 흔들림 속도")]
+        [Range(0f, 3f)] public float waveSpeed = 0.8f;
+        [Tooltip("밧줄 색상")]
+        public Color ropeColor = new Color(0.95f, 0.93f, 0.88f, 1f);
+        [Tooltip("부표 색상")]
+        public Color floatColor = new Color(1f, 0.45f, 0f, 1f);
+        [Tooltip("부표 크기 (m)")]
+        [Range(0.5f, 5f)] public float floatSize = 1.2f;
+        [Tooltip("부표 표시")]
+        public bool showFloats = true;
+        [Tooltip("머티리얼 (null이면 자동 생성)")]
+        public Material netMaterial;
+
         // ── 내부 상태 ──
         private BoxCollider _collider;
         private GameObject _visualObject;
@@ -76,7 +102,26 @@ namespace BoatAttack
         private GameObject _convoyBarObject;
         private bool _convoyBarActive;
 
+        // Fishing net visual
+        private NetVisual _fishingNet;
+        private bool _fishingNetMode = false;
+        private int _netUpdateCounter;
+
         public bool IsFrozen => _isFrozen;
+
+        // ── NetVisual 내부 클래스 ──
+
+        private class NetVisual
+        {
+            public GameObject container;
+            public LineRenderer topRope;
+            public LineRenderer bottomRope;
+            public LineRenderer[] verticals;
+            public LineRenderer[] horizontals;
+            public LineRenderer[] diagonals;
+            public GameObject[] floats;
+            public Vector3[,] nodes;
+        }
 
         // ── 생명주기 ──
 
@@ -88,7 +133,12 @@ namespace BoatAttack
                 Initialize();
                 return;
             }
-            EnsureVisualExists();
+            if (_fishingNetMode)
+            {
+                if (_fishingNet == null) BuildFishingNet();
+            }
+            else
+                EnsureVisualExists();
         }
 
         private void Start()
@@ -100,7 +150,6 @@ namespace BoatAttack
         {
             if (_initialized) return;
 
-            // Rigidbody: 물리 영향 없음, Trigger 작동용
             var rb = GetComponent<Rigidbody>();
             if (rb != null)
             {
@@ -108,12 +157,10 @@ namespace BoatAttack
                 rb.useGravity = false;
             }
 
-            // BoxCollider
             _collider = GetComponent<BoxCollider>();
             if (_collider == null) _collider = gameObject.AddComponent<BoxCollider>();
             _collider.isTrigger = isTrigger;
 
-            // 고아 비주얼 정리
             for (int i = transform.childCount - 1; i >= 0; i--)
             {
                 var child = transform.GetChild(i);
@@ -159,21 +206,35 @@ namespace BoatAttack
             if (_collider != null)
                 _collider.size = new Vector3(webThickness * colliderThicknessMultiplier, webHeight, distance);
 
-            // Convoy 접힘: 일정 간격 미만이면 비활성
             bool webOpen = distance >= minWebActiveDist;
             if (webOpen != _wasWebOpen)
             {
                 if (_collider != null) _collider.enabled = webOpen;
-                if (_visualObject != null) _visualObject.SetActive(webOpen);
+                if (_fishingNetMode)
+                {
+                    if (_fishingNet != null) _fishingNet.container.SetActive(webOpen);
+                }
+                else
+                {
+                    if (_visualObject != null) _visualObject.SetActive(webOpen);
+                }
                 _wasWebOpen = webOpen;
             }
 
-            // 비주얼 크기 (Cube)
-            if (webOpen && _visualObject != null)
-                _visualObject.transform.localScale = new Vector3(webThickness, webHeight, distance);
+            if (webOpen)
+            {
+                if (_fishingNetMode)
+                {
+                    _netUpdateCounter++;
+                    if (_netUpdateCounter % 3 == 0)
+                        UpdateFishingNet(pos1, pos2);
+                }
+                else if (_visualObject != null)
+                    _visualObject.transform.localScale = new Vector3(webThickness, webHeight, distance);
+            }
         }
 
-        // ── 비주얼 ──
+        // ── Cube 비주얼 ──
 
         private void CreateVisual()
         {
@@ -183,9 +244,8 @@ namespace BoatAttack
             _visualObject.name = "WebVisual";
             _visualObject.transform.SetParent(transform);
             _visualObject.transform.localPosition = Vector3.zero;
-            _visualObject.transform.localRotation = Quaternion.identity;
+            _visualObject.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
 
-            // 자체 콜라이더 제거 (부모 BoxCollider만 사용)
             var col = _visualObject.GetComponent<BoxCollider>();
             if (col != null) Destroy(col);
 
@@ -217,8 +277,7 @@ namespace BoatAttack
             Shader s = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
             if (s == null) return null;
             var mat = new Material(s);
-            // 반투명
-            mat.SetFloat("_Surface", 1f);      // Transparent
+            mat.SetFloat("_Surface", 1f);
             mat.SetFloat("_Blend", 0f);
             mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
             mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
@@ -229,22 +288,218 @@ namespace BoatAttack
             return mat;
         }
 
-        /// <summary>색상 변경 (외부 호출용)</summary>
         public void SetColor(Color color)
         {
             webColor = color;
-            if (_renderer != null && _renderer.material != null)
+            if (_fishingNetMode)
+            {
+                if (_fishingNet?.container == null) return;
+                foreach (var lr in _fishingNet.container.GetComponentsInChildren<LineRenderer>())
+                    if (lr != null && lr.material != null) lr.material.color = color;
+            }
+            else if (_renderer != null && _renderer.material != null)
                 _renderer.material.color = color;
         }
 
-        /// <summary>호환성 유지용 stub — 현재는 항상 단순 Cube 사용</summary>
-        public void SetFishingNetVisual(bool enabled) { }
+        // ── 어부 그물 시각화 ──
 
-        /// <summary>
-        /// Instantiate 후 복사된 내부 상태 초기화.
-        /// Instantiate는 _initialized=true, _visualObject=원본참조 등을 그대로 복사하므로
-        /// 클론 오브젝트에서 반드시 호출해야 한다.
-        /// </summary>
+        public void SetFishingNetVisual(bool enabled)
+        {
+            _fishingNetMode = enabled;
+            if (enabled)
+            {
+                if (_visualObject != null) _visualObject.SetActive(false);
+                if (_fishingNet == null) BuildFishingNet();
+                if (_fishingNet != null) _fishingNet.container.SetActive(_wasWebOpen);
+            }
+            else
+            {
+                ClearFishingNet();
+                if (_visualObject != null && _wasWebOpen) _visualObject.SetActive(true);
+            }
+        }
+
+        private void BuildFishingNet()
+        {
+            ClearFishingNet();
+            _fishingNet = CreateNet("FishingNet");
+            _fishingNet.container.SetActive(_wasWebOpen);
+        }
+
+        private void ClearFishingNet()
+        {
+            if (_fishingNet?.container != null)
+            {
+                Destroy(_fishingNet.container);
+            }
+            _fishingNet = null;
+        }
+
+        private NetVisual CreateNet(string containerName)
+        {
+            var net = new NetVisual();
+            net.container = new GameObject(containerName);
+            net.container.transform.SetParent(transform, false);
+
+            Material ropeMat = CreateNetMat(ropeColor);
+            Material lineMat = CreateNetMat(ropeColor);
+
+            net.topRope    = MakeLR(net.container, "TopRope",    ropeMat, mainRopeWidth);
+            net.bottomRope = MakeLR(net.container, "BottomRope", ropeMat, mainRopeWidth * 0.8f);
+
+            net.verticals = new LineRenderer[netVerticalLines];
+            for (int i = 0; i < netVerticalLines; i++)
+                net.verticals[i] = MakeLR(net.container, $"V{i}", lineMat, netLineWidth);
+
+            net.horizontals = new LineRenderer[netHorizontalLines];
+            for (int i = 0; i < netHorizontalLines; i++)
+                net.horizontals[i] = MakeLR(net.container, $"H{i}", lineMat, netLineWidth * 0.7f);
+
+            int diagCount = (netVerticalLines - 1) * (netHorizontalLines - 1) * 2;
+            net.diagonals = new LineRenderer[diagCount];
+            for (int i = 0; i < diagCount; i++)
+                net.diagonals[i] = MakeLR(net.container, $"D{i}", lineMat, netLineWidth * 0.6f);
+
+            if (showFloats) CreateFloats(net);
+
+            net.nodes = new Vector3[netHorizontalLines, netVerticalLines];
+            return net;
+        }
+
+        private void CreateFloats(NetVisual net)
+        {
+            int count = Mathf.Max(1, netVerticalLines / 2);
+            net.floats = new GameObject[count];
+            Material fm = CreateNetMat(floatColor);
+            for (int i = 0; i < count; i++)
+            {
+                var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                go.transform.SetParent(net.container.transform);
+                go.transform.localScale = Vector3.one * floatSize;
+                var r = go.GetComponent<MeshRenderer>(); if (r) r.material = fm;
+                var c = go.GetComponent<Collider>();      if (c) c.enabled  = false;
+                net.floats[i] = go;
+            }
+        }
+
+        private void UpdateFishingNet(Vector3 pos1, Vector3 pos2)
+        {
+            if (_fishingNet == null) return;
+            int nV = netVerticalLines, nH = netHorizontalLines;
+            float baseY   = (pos1.y + pos2.y) * 0.5f;
+            float time    = Time.time * waveSpeed;
+
+            // vi 축: pos1→pos2 (선박 연결 방향)
+            // hi 축: XZ 평면 내 수직 방향 → 그물이 수면에 평행하게 펼쳐짐
+            Vector3 spanDir = (pos2 - pos1).normalized;
+            Vector3 perpDir = new Vector3(spanDir.z, 0f, -spanDir.x);
+            float halfWidth = webHeight * 0.5f;  // 수직 방향 반폭
+
+            for (int vi = 0; vi < nV; vi++)
+            {
+                float t      = (float)vi / (nV - 1);
+                Vector3 bpos = Vector3.Lerp(pos1, pos2, t);
+                // 선박 연결 방향 catenary sag (중간 지점이 수면 아래 가장 낮음)
+                float sagV  = netSag * 4f * t * (1f - t);
+                float phase = vi * 0.7f + time;
+                float wY    = Mathf.Sin(phase) * waveAmplitude;
+
+                for (int hi = 0; hi < nH; hi++)
+                {
+                    float hT         = (float)hi / (nH - 1);
+                    // 수직 방향 오프셋: -halfWidth ~ +halfWidth (XZ 평면)
+                    float perpOffset = Mathf.Lerp(-halfWidth, halfWidth, hT);
+                    // 폭 방향 catenary sag: 가장자리→중심 약간 아래
+                    float sagH       = netSag * 4f * hT * (1f - hT) * 0.3f;
+                    float pWave      = Mathf.Sin(phase * 1.3f + hi * 1.1f) * waveAmplitude * 0.3f;
+
+                    _fishingNet.nodes[hi, vi] = new Vector3(
+                        bpos.x + perpDir.x * perpOffset,
+                        baseY - sagV - sagH + wY + pWave,
+                        bpos.z + perpDir.z * perpOffset);
+                }
+            }
+
+            // topRope/bottomRope: 수직 방향 양 끝 가장자리
+            SetRope(_fishingNet.topRope,    nV, 0,      _fishingNet.nodes);
+            SetRope(_fishingNet.bottomRope, nV, nH - 1, _fishingNet.nodes);
+
+            for (int vi = 0; vi < nV; vi++)
+            {
+                var lr = _fishingNet.verticals[vi]; if (!lr) continue;
+                lr.positionCount = nH;
+                for (int hi = 0; hi < nH; hi++) lr.SetPosition(hi, _fishingNet.nodes[hi, vi]);
+            }
+            for (int hi = 0; hi < nH; hi++)
+            {
+                var lr = _fishingNet.horizontals[hi]; if (!lr) continue;
+                lr.positionCount = nV;
+                for (int vi = 0; vi < nV; vi++) lr.SetPosition(vi, _fishingNet.nodes[hi, vi]);
+            }
+
+            int di = 0;
+            for (int hi = 0; hi < nH - 1; hi++)
+                for (int vi = 0; vi < nV - 1; vi++)
+                {
+                    SetDiag(_fishingNet.diagonals, di++, _fishingNet.nodes[hi, vi],   _fishingNet.nodes[hi+1, vi+1]);
+                    SetDiag(_fishingNet.diagonals, di++, _fishingNet.nodes[hi, vi+1], _fishingNet.nodes[hi+1, vi]);
+                }
+
+            // 부표: 양쪽 가장자리에 번갈아 배치
+            if (_fishingNet.floats != null && showFloats)
+                for (int i = 0; i < _fishingNet.floats.Length; i++)
+                {
+                    int vi     = i * 2;
+                    int hiEdge = (i % 2 == 0) ? 0 : nH - 1;
+                    if (vi < nV && _fishingNet.floats[i] != null)
+                        _fishingNet.floats[i].transform.position =
+                            _fishingNet.nodes[hiEdge, vi] + Vector3.up * floatSize * 0.5f;
+                }
+        }
+
+        private void SetRope(LineRenderer lr, int nV, int hi, Vector3[,] nodes)
+        {
+            if (!lr) return;
+            lr.positionCount = nV;
+            for (int vi = 0; vi < nV; vi++) lr.SetPosition(vi, nodes[hi, vi]);
+        }
+
+        private void SetDiag(LineRenderer[] arr, int idx, Vector3 a, Vector3 b)
+        {
+            if (idx >= arr.Length || !arr[idx]) return;
+            arr[idx].positionCount = 2;
+            arr[idx].SetPosition(0, a);
+            arr[idx].SetPosition(1, b);
+        }
+
+        private Material CreateNetMat(Color color)
+        {
+            if (netMaterial != null) { var m = new Material(netMaterial); m.color = color; return m; }
+            Shader sh = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            if (sh == null) return new Material(Shader.Find("Hidden/InternalErrorShader"));
+            var mat = new Material(sh);
+            mat.color = color;
+            return mat;
+        }
+
+        private LineRenderer MakeLR(GameObject parent, string n, Material mat, float width)
+        {
+            var go = new GameObject(n);
+            go.transform.SetParent(parent.transform, false);
+            var lr = go.AddComponent<LineRenderer>();
+            lr.useWorldSpace     = true;
+            lr.startWidth        = width;
+            lr.endWidth          = width;
+            lr.numCapVertices    = 3;
+            lr.numCornerVertices = 3;
+            lr.material          = mat;
+            lr.startColor        = ropeColor;
+            lr.endColor          = ropeColor;
+            lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            lr.receiveShadows    = false;
+            return lr;
+        }
+
         public void ResetCloneState()
         {
             _initialized = false;
@@ -255,6 +510,9 @@ namespace BoatAttack
             _renderer = null;
             _collider = null;
             _convoyBarObject = null;
+            _fishingNetMode = false;
+            _fishingNet = null;
+            _netUpdateCounter = 0;
         }
 
         private void OnValidate()
@@ -320,9 +578,9 @@ namespace BoatAttack
             float dist = Vector3.Distance(p1, p2);
 
             _convoyBarObject.transform.position = (p1 + p2) * 0.5f;
-            Vector3 dir = (p2 - p1).normalized;
-            if (dir.sqrMagnitude > 0.001f)
-                _convoyBarObject.transform.rotation = Quaternion.FromToRotation(Vector3.up, dir);
+            Vector3 d = (p2 - p1).normalized;
+            if (d.sqrMagnitude > 0.001f)
+                _convoyBarObject.transform.rotation = Quaternion.FromToRotation(Vector3.up, d);
             _convoyBarObject.transform.localScale = new Vector3(convoyBarThickness, dist * 0.5f, convoyBarThickness);
         }
 
@@ -384,7 +642,6 @@ namespace BoatAttack
             if (obj == null) return false;
             DefenseAgent agent = obj.GetComponentInParent<DefenseAgent>();
             if (agent == null) return false;
-            // Transform 비교 대신 DefenseAgent 레퍼런스 비교 (자식 콜라이더/앵커 참조 시 오판 방지)
             if (defenseShip1 != null && defenseShip1.GetComponentInParent<DefenseAgent>() == agent) return false;
             if (defenseShip2 != null && defenseShip2.GetComponentInParent<DefenseAgent>() == agent) return false;
             return true;

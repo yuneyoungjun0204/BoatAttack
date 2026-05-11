@@ -279,7 +279,7 @@ namespace BoatAttack
         [Range(1f, 10f)] public float enemyHeadingScale = 1f;
         [Range(1f, 10f)] public float allyDistScale = 1f;
         [Range(1f, 10f)] public float allyBearingScale = 1f;
-        [Range(1f, 10f)] public float allyWebLengthScale = 1f;
+        [Range(1f, 10f)] public float allyHdgScale = 1f;
 
         [Header("Enemy Rush Movement")]
         [Tooltip("동적 스폰 시 적군 자동 돌진 활성화")]
@@ -2696,6 +2696,10 @@ namespace BoatAttack
 
                 // Stage10: isDisarmed = 플랭크 포획 모드 진입 의미 → 타임아웃 비활성화 없음
                 if (currentStage == TrainingStage.Stage10_FlankCapture) continue;
+
+                // disarmStep < 0: ProcessSplitAndSeparation Phase2 진입 쌍 (추격 모드)
+                // DeactivateAndStraightenPair로 설정된 이탈 쌍이 아니므로 타임아웃 적용 안 함
+                if (pair.disarmStep < 0) continue;
 
                 int elapsed = _resetTimer - pair.disarmStep;
 

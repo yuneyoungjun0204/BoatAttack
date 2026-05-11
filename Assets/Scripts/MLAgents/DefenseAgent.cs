@@ -129,7 +129,7 @@ namespace BoatAttack
         [Header("Ally Observation Scale (아군 관측 계수)")]
         [Range(1f, 10f)] public float allyDistScale = 1f;
         [Range(1f, 10f)] public float allyBearingScale = 1f;
-        [Range(1f, 10f)] public float allyWebLengthScale = 1f;
+        [Range(1f, 10f)] public float allyHdgScale = 1f;
 
         [Header("Self State (자기 기동 상태)")]
         [Range(1f, 50f)] public float speedNormK = 10f;
@@ -138,7 +138,6 @@ namespace BoatAttack
 
         [Header("Ally Pair NormK")]
         [Range(1f, 1000f)] public float allyPairNormK = 100f;
-        [Range(1f, 200f)] public float webLengthNormK = 50f;
 
         [Header("Phantom Neighbors (Stage6: 좌3+우3 = 6쌍)")]
         [Tooltip("가상 아군쌍 간격 (방어선 방향, m)")]
@@ -339,7 +338,7 @@ namespace BoatAttack
             if (allyBufferSensor == null)
                 allyBufferSensor = gameObject.AddComponent<BufferSensorComponent>();
             allyBufferSensor.SensorName = "AllyBufferSensor";
-            allyBufferSensor.ObservableSize = 3;   // dist, bearing, webLength
+            allyBufferSensor.ObservableSize = 3;   // dist, bearing, hdg
             allyBufferSensor.MaxNumObservables = allyMaxObservables;
 
             // 데모 녹화 모드: BehaviorType=HeuristicOnly + DemonstrationRecorder 자동 추가
@@ -1108,7 +1107,7 @@ namespace BoatAttack
         /// <summary>
         /// 관측 수집 (VectorSensor 0개 + AllyBufferSensor 최대10 + EnemyBufferSensor 최대10)
         /// VectorSensor: 없음 (모든 정보가 BufferSensor의 상대값으로 충분)
-        /// AllyBufferSensor: 아군쌍+트랩 최대10개, 각 3개 (dist, bearing, webLength)
+        /// AllyBufferSensor: 아군쌍+트랩 최대10개, 각 3개 (dist, bearing, hdg)
         /// EnemyBufferSensor: 활성 적군 최대10대, 각 3개 (Dist, SignedBrg, Hdg)
         /// </summary>
         public override void CollectObservations(VectorSensor sensor)
@@ -1278,7 +1277,7 @@ namespace BoatAttack
 
         /// <summary>
         /// 아군 쌍 + 트랩 BufferSensor 관측 (거리순 정렬, 가까운 10개)
-        /// 각: dist, bearing, webLength = 3개
+        /// 각: dist, bearing, hdg = 3개
         /// </summary>
         private void CollectAllyPairBufferObs(Vector3 myPos, Vector3 myForward)
         {
@@ -1357,7 +1356,7 @@ namespace BoatAttack
             float dist = rel.magnitude;
             float aDistS = (envController != null) ? envController.allyDistScale : allyDistScale;
             float aBrgS  = (envController != null) ? envController.allyBearingScale : allyBearingScale;
-            float aHdgS  = (envController != null) ? envController.allyWebLengthScale : allyWebLengthScale;
+            float aHdgS  = (envController != null) ? envController.allyHdgScale : allyHdgScale;
             float normDist = NormalizePosition(dist, allyPairNormK) * aDistS;
             float brg = ComputeSignedBearing(myForward, rel) * aBrgS;
             // hdg: 내 헤딩과 아군 쌍 헤딩의 차이 (±180°=반대방향→0, 0°=동방향→±1)
