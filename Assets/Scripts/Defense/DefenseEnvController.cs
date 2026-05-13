@@ -3313,6 +3313,21 @@ namespace BoatAttack
                 return;
             }
 
+            // 트랩 미설치 상태에서 활성 쌍 전부 소진 → 조기 종료
+            // chaseTrainingMode 제외 (chase 모드는 트랩 없이 시작하는 구조)
+            if (!chaseTrainingMode
+                && activePairs == 0
+                && launchZoneManager != null
+                && launchZoneManager.GetTotalPairsDeployed() > 0
+                && launchZoneManager.GetTotalTrapsPlaced() == 0)
+            {
+                float totalPenalty = rewardCalculator.noPairsLeftPenalty
+                                   + activeEnemies * rewardCalculator.remainingEnemyPenalty;
+                Debug.LogWarning($"[DefenseEnv] ✖ NO TRAPS PLACED ✖ step={_resetTimer}, penalty={totalPenalty:F2}");
+                RestartEpisode("NoPairsNoTraps", totalPenalty);
+                return;
+            }
+
             // 아군 쌍이 전부 비활성화 → 실패 종료 (고정 -5 + 남은 적 수 비례 페널티)
             // Stage9/Stage10: 트랩 포획 모드 — NoPairsLeft 비활성화 (AllClear/MaxStep으로만 종료)
             bool skipNoPairs = disableNoPairsEndEpisode

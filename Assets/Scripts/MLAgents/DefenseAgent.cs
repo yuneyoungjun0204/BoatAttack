@@ -1105,8 +1105,8 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 관측 수집 (VectorSensor 0개 + AllyBufferSensor 최대10 + EnemyBufferSensor 최대10)
-        /// VectorSensor: 없음 (모든 정보가 BufferSensor의 상대값으로 충분)
+        /// 관측 수집 (VectorSensor 5개 + AllyBufferSensor 최대10 + EnemyBufferSensor 최대10)
+        /// VectorSensor: isLeft, motherDist, partnerDist, partnerHdg, partnerBrg
         /// AllyBufferSensor: 아군쌍+트랩 최대10개, 각 3개 (dist, bearing, hdg)
         /// EnemyBufferSensor: 활성 적군 최대10대, 각 3개 (Dist, SignedBrg, Hdg)
         /// </summary>
@@ -1120,10 +1120,10 @@ namespace BoatAttack
             //  [2] partner dist     — 파트너 거리 정규화
             //  [3] partner hdg      — 파트너 헤딩차
             //  [4] partner bearing  — 파트너 베어링
-            //  [5] LOSBaseline      — LOS 조향 명령 [-1,1]
+            //  [5] isSingleNetMode (0=트랩 전개 중, 1=포획 모드)
             const int VECTOR_OBS_COUNT = 6;
             if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
-                lastObservations = new float[VECTOR_OBS_COUNT];  // [5] 추가 시 크기 자동 반영
+                lastObservations = new float[VECTOR_OBS_COUNT];
             int oi = 0;
 
             if (_engine == null || _engine.RB == null)
@@ -1172,9 +1172,10 @@ namespace BoatAttack
                 lastObservations[4] = pBrg;
             }
 
-            // [5] LOS 베이스라인 조향 명령 [-1, 1]
-            sensor.AddObservation(_cachedLOSBaseline);
-            if (lastObservations.Length > 5) lastObservations[5] = _cachedLOSBaseline;
+            // [5] 현재 모드: 0=트랩 전개 중(Phase1), 1=포획 모드(Phase2, SingleNet)
+            float modeObs = _singleNetMode ? 1f : 0f;
+            sensor.AddObservation(modeObs);
+            lastObservations[5] = modeObs;
 
             oi = VECTOR_OBS_COUNT;
 

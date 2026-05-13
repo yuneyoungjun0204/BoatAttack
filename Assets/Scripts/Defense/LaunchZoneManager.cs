@@ -205,6 +205,9 @@ namespace BoatAttack
         /// <summary>에피소드 동안 배치된 총 페어 수 (초기 배치 + 추가 배치 누적)</summary>
         [SerializeField] private int _totalPairsDeployed = 0;
 
+        /// <summary>에피소드 동안 정지 트랩(frozen web)을 실제로 설치한 횟수</summary>
+        [SerializeField] private int _totalTrapsPlaced = 0;
+
         // 풀 리스트 (지연 생성: 필요할 때만 추가)
         private List<DefensePair> _pairPool;
         private bool _initialized = false;
@@ -1670,8 +1673,11 @@ namespace BoatAttack
         /// <summary>에피소드 동안 배치된 총 페어 수 반환</summary>
         public int GetTotalPairsDeployed() => _totalPairsDeployed;
 
-        /// <summary>총 배치 카운터 리셋 (에피소드 시작 시 호출)</summary>
-        public void ResetTotalPairsDeployed() => _totalPairsDeployed = 0;
+        /// <summary>에피소드 동안 정지 트랩을 실제로 설치한 횟수 반환</summary>
+        public int GetTotalTrapsPlaced() => _totalTrapsPlaced;
+
+        /// <summary>총 배치/트랩 카운터 리셋 (에피소드 시작 시 호출)</summary>
+        public void ResetTotalPairsDeployed() { _totalPairsDeployed = 0; _totalTrapsPlaced = 0; }
 
         /// <summary>
         /// 풀 초기화 여부
@@ -2204,6 +2210,7 @@ namespace BoatAttack
             // 상태 전환: Active → Disarmed (isActive는 유지 — 관측에 보임)
             pair.isDisarmed = true;
             pair.disarmStep = currentStep;
+            _totalTrapsPlaced++;
 
             _deployedPairCount = Mathf.Max(0, _deployedPairCount - 1);
 
