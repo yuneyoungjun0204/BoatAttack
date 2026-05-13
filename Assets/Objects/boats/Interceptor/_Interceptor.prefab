@@ -521,7 +521,7 @@ PrefabInstance:
     - target: {fileID: 1046895372862771327, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_FollowOffset.y
-      value: -200
+      value: -250
       objectReference: {fileID: 0}
     - target: {fileID: 1046895372862771327, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
@@ -541,37 +541,37 @@ PrefabInstance:
     - target: {fileID: 2901399632790975270, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_LocalPosition.x
-      value: 0.000000078739085
+      value: 113.63638
       objectReference: {fileID: 0}
     - target: {fileID: 2901399632790975270, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_LocalPosition.y
-      value: 0.5666667
+      value: -125
       objectReference: {fileID: 0}
     - target: {fileID: 2901399632790975270, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_LocalPosition.z
-      value: -2.5000017
+      value: -6.666667
       objectReference: {fileID: 0}
     - target: {fileID: 2901399632790975270, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_LocalRotation.w
-      value: 0.9934388
+      value: 0.6659884
       objectReference: {fileID: 0}
     - target: {fileID: 2901399632790975270, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_LocalRotation.x
-      value: 0.11436519
+      value: -0.27648437
       objectReference: {fileID: 0}
     - target: {fileID: 2901399632790975270, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_LocalRotation.y
-      value: -0.00000002564023
+      value: -0.6398814
       objectReference: {fileID: 0}
     - target: {fileID: 2901399632790975270, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0.0000000029517164
+      value: -0.26564607
       objectReference: {fileID: 0}
     - target: {fileID: 3138619813684846845, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
@@ -762,12 +762,11 @@ MonoBehaviour:
   enemyHeadingScale: 1
   allyDistScale: 1
   allyBearingScale: 1
-  allyWebLengthScale: 1
+  allyHdgScale: 1
   speedNormK: 10
   forwardSpeedScale: 1
   driftSpeedScale: 1
   allyPairNormK: 100
-  webLengthNormK: 50
   phantomSpacing: 80
   phantomSpeed: 50
   phantomSpeedMult: 1.5

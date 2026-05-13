@@ -22,7 +22,7 @@ namespace BoatAttack
         [Header("Web Settings")]
         public float webHeight = 40f;
         public float webThickness = 0.5f;
-        public Color webColor = new Color(0.95f, 0.95f, 0.92f, 0.6f);
+        public Color webColor = new Color(1f, 0.85f, 0f, 0.9f);
 
         [Tooltip("충돌 판정용 두께 배율")]
         [Range(1f, 20f)]
@@ -76,7 +76,7 @@ namespace BoatAttack
         [Tooltip("수면 흔들림 속도")]
         [Range(0f, 3f)] public float waveSpeed = 0.8f;
         [Tooltip("밧줄 색상")]
-        public Color ropeColor = new Color(0.95f, 0.93f, 0.88f, 1f);
+        public Color ropeColor = new Color(1f, 0.85f, 0f, 1f);
         [Tooltip("부표 색상")]
         public Color floatColor = new Color(1f, 0.45f, 0f, 1f);
         [Tooltip("부표 크기 (m)")]
@@ -97,6 +97,7 @@ namespace BoatAttack
         private bool _isFrozen;
         private Vector3 _frozenPos1;
         private Vector3 _frozenPos2;
+        private float _freezeTime = -1f;  // 고정된 시각 (3초 면역용)
 
         // Convoy 연결 막대
         private GameObject _convoyBarObject;
@@ -108,6 +109,8 @@ namespace BoatAttack
         private int _netUpdateCounter;
 
         public bool IsFrozen => _isFrozen;
+        /// <summary>고정 후 경과 시간(초). 고정 안 됐으면 float.MaxValue 반환</summary>
+        public float FreezeElapsed => (_isFrozen && _freezeTime >= 0f) ? (Time.time - _freezeTime) : float.MaxValue;
 
         // ── NetVisual 내부 클래스 ──
 
@@ -128,6 +131,7 @@ namespace BoatAttack
         private void OnEnable()
         {
             _isFrozen = false;
+            _freezeTime = -1f;
             if (!_initialized)
             {
                 Initialize();
@@ -529,6 +533,7 @@ namespace BoatAttack
                 : (defenseShip1 != null ? defenseShip1.position : transform.position);
             _frozenPos2 = (webAnchor2 != null) ? webAnchor2.position
                 : (defenseShip2 != null ? defenseShip2.position : transform.position);
+            _freezeTime = Time.time;
             _isFrozen = true;
         }
 

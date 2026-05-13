@@ -1447,7 +1447,11 @@ namespace BoatAttack
                     if (active)
                     {
                         var dw = pair.webObject.GetComponent<DynamicWeb>();
-                        if (dw != null) dw.EnsureVisualExists();
+                        if (dw != null)
+                        {
+                            dw.UnfreezeWeb();         // 이전 에피소드 고정 상태 해제
+                            dw.EnsureVisualExists();
+                        }
                     }
                 }
             }
@@ -2148,8 +2152,20 @@ namespace BoatAttack
             if (pair.agent1 != null) pair.agent1.SetNeutralized(true);
             if (pair.agent2 != null) pair.agent2.SetNeutralized(true);
 
-            // Web 비활성화 + 상태 플래그만 변경
-            if (pair.webObject != null) pair.webObject.SetActive(false);
+            // Web 처리: 배치된 웹은 현재 위치에 고정하여 에피소드 끝까지 유지
+            // (쌍이 비활성화돼도 설치된 그물은 그 자리에 남아 적 포획 계속 가능)
+            if (pair.webObject != null && pair.webObject.activeSelf)
+            {
+                var dw = pair.webObject.GetComponent<DynamicWeb>();
+                if (dw != null)
+                {
+                    if (!dw.IsFrozen)
+                        dw.FreezeAtCurrentPositions();
+                    // SetActive(false) 하지 않음 → 웹은 에피소드 끝까지 유지
+                }
+                else
+                    pair.webObject.SetActive(false);
+            }
             pair.isActive = false;
 
             // Debug.Log($"[LaunchZoneManager] Pair {pairIndex} 무력화 (현재 위치 정지)");

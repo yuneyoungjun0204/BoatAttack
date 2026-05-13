@@ -1079,6 +1079,7 @@ namespace BoatAttack
                     // 모든 쌍 무력화 시 에피소드 종료 (한 번이라도 배치된 적이 있을 때만)
                     if (!disableNoPairsEndEpisode
                         && currentStage != TrainingStage.Stage9_DisarmReform
+                        && currentStage != TrainingStage.Stage10_FlankCapture
                         && launchZoneManager.GetOperationalPairCount() == 0 && launchZoneManager.GetDeployedPairCount() > 0)
                     {
                         CheckEpisodeEndCondition();
@@ -1222,6 +1223,7 @@ namespace BoatAttack
 
                 if (!disableNoPairsEndEpisode
                     && currentStage != TrainingStage.Stage9_DisarmReform
+                    && currentStage != TrainingStage.Stage10_FlankCapture
                     && launchZoneManager.GetOperationalPairCount() == 0 && launchZoneManager.GetDeployedPairCount() > 0)
                 {
                     CheckEpisodeEndCondition();
@@ -1779,6 +1781,9 @@ namespace BoatAttack
 
             enemyBoat = ResolveToPoolEntry(enemyBoat);
 
+            // 이미 무력화된 적은 중복 카운트 방지
+            if (IsEnemyNeutralized(enemyBoat)) return;
+
             float currentTime = Time.time;
             if (_collisionCooldownTimes.ContainsKey(enemyBoat))
             {
@@ -1837,6 +1842,9 @@ namespace BoatAttack
 
             // 풀 엔트리로 해석 (자식 콜라이더 참조 문제 방지)
             enemyBoat = ResolveToPoolEntry(enemyBoat);
+
+            // 이미 무력화된 적은 중복 카운트 방지
+            if (IsEnemyNeutralized(enemyBoat)) return;
 
             // 중복 충돌 방지
             float currentTime = Time.time;
@@ -3306,9 +3314,10 @@ namespace BoatAttack
             }
 
             // 아군 쌍이 전부 비활성화 → 실패 종료 (고정 -5 + 남은 적 수 비례 페널티)
-            // Stage9: 트랩 포획 모드 — NoPairsLeft 완전 비활성화 (MaxStep/AllClear로만 종료)
+            // Stage9/Stage10: 트랩 포획 모드 — NoPairsLeft 비활성화 (AllClear/MaxStep으로만 종료)
             bool skipNoPairs = disableNoPairsEndEpisode
-                               || currentStage == TrainingStage.Stage9_DisarmReform;
+                               || currentStage == TrainingStage.Stage9_DisarmReform
+                               || currentStage == TrainingStage.Stage10_FlankCapture;
             if (!skipNoPairs && activePairs == 0 && activeEnemies > 0)
             {
                 float totalPenalty = rewardCalculator.noPairsLeftPenalty
