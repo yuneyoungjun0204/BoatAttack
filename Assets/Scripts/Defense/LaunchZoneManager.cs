@@ -198,6 +198,13 @@ namespace BoatAttack
         [Tooltip("Web 시각화 활성화")]
         public bool webShowVisual = true;
 
+        [Header("Island Avoidance (아군 스폰 위치 섬 회피)")]
+        [Tooltip("섬 레이어 마스크. 0이면 회피 비활성화")]
+        public LayerMask islandLayerMask = 0;
+        [Tooltip("스폰 위치 섬 겹침 체크 반경 (m)")]
+        [Range(5f, 60f)]
+        public float islandCheckRadius = 20f;
+
         [Header("Debug")]
         [SerializeField] private int _deployedPairCount = 0;
         [SerializeField] private string _lastDeploymentInfo = "";
@@ -756,6 +763,7 @@ namespace BoatAttack
                 pos1.y = _templateAgent1Y;
                 Vector3 pos2 = pairCenter + perpRight * (spawnWidth * 0.5f);
                 pos2.y = _templateAgent2Y;
+                (pos1, pos2) = ClearIslandPosPair(pos1, pos2, pairCenter, perpRight, spawnWidth * 0.5f);
 
                 // 에이전트 위치/회전 설정 (ResetForDeployment 내부에서 assignedTargetIndex=-1 됨)
                 ResetAgent(pair.agent1, pos1, rot);
@@ -972,6 +980,7 @@ namespace BoatAttack
             pos1.y = _templateAgent1Y;
             Vector3 pos2 = info.pairCenter + perpRightSeq * (spawnWidth * 0.5f);
             pos2.y = _templateAgent2Y;
+            (pos1, pos2) = ClearIslandPosPair(pos1, pos2, info.pairCenter, perpRightSeq, spawnWidth * 0.5f);
 
             ResetAgent(pair.agent1, pos1, rot);
             ResetAgent(pair.agent2, pos2, rot);
@@ -1194,6 +1203,39 @@ namespace BoatAttack
         /// 클러스터 목록에서 쌍 방향(zoneDirAngleDeg)에 가장 가까운 클러스터 인덱스 반환
         /// assignedClusters: 이미 다른 쌍에 배정된 클러스터 인덱스 집합 (중복 방지)
         /// </summary>
+        /// <summary>
+        /// 아군 스폰 쌍(pos1, pos2)이 섬과 겹치면 pairCenter를 반경 방향으로 밀어내 빈 위치 반환.
+        /// islandLayerMask == 0이면 즉시 원본 반환.
+        /// </summary>
+        private (Vector3 p1, Vector3 p2) ClearIslandPosPair(
+            Vector3 pos1, Vector3 pos2, Vector3 pairCenter, Vector3 perpRight, float halfWidth)
+        {
+            if (islandLayerMask == 0) return (pos1, pos2);
+
+            float y1 = pos1.y, y2 = pos2.y;
+
+            // pairCenter를 중심에서 바깥으로 밀어내는 방향 = pairCenter - motherShip 위치
+            Vector3 origin = motherShip != null ? motherShip.transform.position : Vector3.zero;
+            Vector3 pushDir = (pairCenter - origin);
+            pushDir.y = 0f;
+            if (pushDir.sqrMagnitude < 0.01f) pushDir = Vector3.forward;
+            pushDir.Normalize();
+
+            float[] nudges = { 30f, -30f, 60f, -60f, 100f, -100f, 150f, -150f };
+            foreach (float nudge in nudges)
+            {
+                Vector3 newCenter = pairCenter + pushDir * nudge;
+                Vector3 np1 = newCenter - perpRight * halfWidth; np1.y = y1;
+                Vector3 np2 = newCenter + perpRight * halfWidth; np2.y = y2;
+                Vector3 c1 = np1; c1.y = 1f;
+                Vector3 c2 = np2; c2.y = 1f;
+                if (!Physics.CheckSphere(c1, islandCheckRadius, islandLayerMask) &&
+                    !Physics.CheckSphere(c2, islandCheckRadius, islandLayerMask))
+                    return (np1, np2);
+            }
+            return (pos1, pos2);
+        }
+
         private int FindBestClusterForPair(Vector3 pairCenter,
             List<EnemyCluster> clusters, HashSet<int> assignedClusters)
         {
@@ -1800,6 +1842,7 @@ namespace BoatAttack
             pos1.y = _templateAgent1Y;
             Vector3 pos2 = pairCenter + singlePerp * (singleSpawnWidth * 0.5f);
             pos2.y = _templateAgent2Y;
+            (pos1, pos2) = ClearIslandPosPair(pos1, pos2, pairCenter, singlePerp, singleSpawnWidth * 0.5f);
 
             // 2. 기존 비활성 쌍 재사용 또는 프리팹에서 새로 생성
             int pairIdx;

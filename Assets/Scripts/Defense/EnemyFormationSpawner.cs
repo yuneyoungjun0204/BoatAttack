@@ -86,6 +86,16 @@ namespace BoatAttack
         [Tooltip("양동 파라미터를 에피소드마다 랜덤화")]
         public bool randomizeDiversionaryParams = true;
 
+        [Header("Island Avoidance (스폰 위치 섬 회피)")]
+        [Tooltip("섬 레이어 마스크. 0이면 회피 비활성화")]
+        public LayerMask islandLayerMask = 0;
+        [Tooltip("스폰 위치 섬 겹침 체크 반경 (m)")]
+        [Range(10f, 100f)]
+        public float islandCheckRadius = 30f;
+        [Tooltip("섬 회피 시 각도 조정 단계 (도)")]
+        [Range(5f, 30f)]
+        public float islandAvoidAngleStep = 15f;
+
         // 마지막으로 사용된 포메이션 (디버그용)
         private FormationType _lastFormationType;
 
@@ -109,6 +119,39 @@ namespace BoatAttack
         /// 양동 포메이션의 각 방향 접근 각도 (라디안) — 다방향 아군 배치에 사용
         /// </summary>
         public float[] GetLastDiversionaryAngles() => _lastDiversionaryAngles;
+
+        /// <summary>
+        /// 후보 스폰 위치가 섬과 겹치면 각도를 조정해 빈 위치 반환.
+        /// islandLayerMask == 0이면 즉시 candidate 반환.
+        /// </summary>
+        private Vector3 ClearIslandPos(Vector3 candidate, Vector3 origin, float dist, float angleRad)
+        {
+            if (islandLayerMask == 0) return candidate;
+
+            float y = candidate.y;
+            Vector3 checkPos = candidate;
+            checkPos.y = 1f;
+            if (!Physics.CheckSphere(checkPos, islandCheckRadius, islandLayerMask))
+                return candidate;
+
+            // 각도를 ±step씩 늘리며 비어있는 위치 탐색
+            float[] deltas = { islandAvoidAngleStep, -islandAvoidAngleStep,
+                               islandAvoidAngleStep * 2f, -islandAvoidAngleStep * 2f,
+                               islandAvoidAngleStep * 3f, -islandAvoidAngleStep * 3f,
+                               180f };
+            foreach (float deg in deltas)
+            {
+                float a = angleRad + deg * Mathf.Deg2Rad;
+                Vector3 alt = origin + new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * dist;
+                alt.y = y;
+                Vector3 altCheck = alt; altCheck.y = 1f;
+                if (!Physics.CheckSphere(altCheck, islandCheckRadius, islandLayerMask))
+                    return alt;
+            }
+
+            // 모든 시도 실패 시 원래 후보 반환 (매우 드문 케이스)
+            return candidate;
+        }
 
         /// <summary>
         /// 포메이션에 따른 적군 스폰 데이터 생성
@@ -176,6 +219,7 @@ namespace BoatAttack
                 Vector3 offset = new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle)) * dist;
                 Vector3 spawnPos = motherPos + offset;
                 spawnPos.y = templateY;
+                spawnPos = ClearIslandPos(spawnPos, motherPos, dist, angle);
 
                 // 모선을 바라보는 회전
                 Vector3 lookDir = motherPos - spawnPos;
@@ -245,6 +289,7 @@ namespace BoatAttack
                     Vector3 offset = new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle)) * dist;
                     Vector3 spawnPos = motherPos + offset;
                     spawnPos.y = templateY;
+                    spawnPos = ClearIslandPos(spawnPos, motherPos, dist, angle);
 
                     Vector3 lookDir = motherPos - spawnPos;
                     lookDir.y = 0f;
@@ -321,6 +366,7 @@ namespace BoatAttack
                     Vector3 offset = new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle)) * dist;
                     Vector3 spawnPos = motherPos + offset;
                     spawnPos.y = templateY;
+                    spawnPos = ClearIslandPos(spawnPos, motherPos, dist, angle);
 
                     Vector3 lookDir = motherPos - spawnPos;
                     lookDir.y = 0f;

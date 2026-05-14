@@ -127,6 +127,16 @@ namespace BoatAttack
         [Tooltip("노이즈 변화 속도 (초당)")]
         public float noiseSpeed = 2f;
 
+        [Header("Island Avoidance")]
+        [Tooltip("섬 감지 레이어 마스크 (Inspector에서 Island 레이어 선택)")]
+        public LayerMask islandLayerMask = 0;
+        [Tooltip("섬 감지 전방 거리 (m)")]
+        [Range(20f, 200f)]
+        public float islandDetectRange = 80f;
+        [Tooltip("회피 조향 강도 (1=완전 덮어씀)")]
+        [Range(0f, 1f)]
+        public float islandAvoidStrength = 0.9f;
+
         // 각 적군마다 다른 노이즈 시드
         private float _noiseSeed;
 
@@ -589,6 +599,11 @@ namespace BoatAttack
             float finalThrottle = Mathf.Clamp(baseThrottle + throttleOffset, 0.5f, 1.0f);
             float finalSteering = Mathf.Clamp(baseSteering + steeringOffset, -1f, 1f);
 
+            // 섬 회피: 감지 시 조향값 강제 덮어씀
+            float islandAvoid = ComputeIslandAvoidanceSteering();
+            if (Mathf.Abs(islandAvoid) > 0.01f)
+                finalSteering = Mathf.Lerp(finalSteering, islandAvoid, islandAvoidStrength);
+
             _engine.Accelerate(finalThrottle);
             _engine.Turn(finalSteering);
 
@@ -1000,6 +1015,50 @@ namespace BoatAttack
             }
         }
 
+        /// <summary>
+        /// 섬 장애물 회피 조향값 계산.
+        /// 전방/좌전방/우전방 Raycast로 Island 레이어 감지 → [-1, 1] 조향 보정값 반환.
+        /// 감지 없으면 0f.
+        /// </summary>
+        private float ComputeIslandAvoidanceSteering()
+        {
+            if (islandLayerMask == 0) return 0f;
+
+            float avoidSteering = 0f;
+            Vector3 origin = transform.position + Vector3.up * 2f;
+
+            // 전방, 좌45°, 우45° 세 방향 체크
+            (Vector3 dir, float sign)[] rays = {
+                (transform.forward,                                   0f),  // 정면 → 좌우 판단 별도
+                (Quaternion.Euler(0, -45f, 0) * transform.forward,  1f),  // 좌전방 → 우측 회피
+                (Quaternion.Euler(0,  45f, 0) * transform.forward, -1f),  // 우전방 → 좌측 회피
+            };
+
+            for (int i = 0; i < rays.Length; i++)
+            {
+                RaycastHit hit;
+                if (!Physics.Raycast(origin, rays[i].dir, out hit, islandDetectRange, islandLayerMask))
+                    continue;
+
+                float urgency = 1f - (hit.distance / islandDetectRange);  // 가까울수록 1
+
+                if (i == 0)
+                {
+                    // 정면 감지: 좌/우 중 빈 쪽으로
+                    bool leftClear = !Physics.Raycast(origin,
+                        Quaternion.Euler(0, -90f, 0) * transform.forward,
+                        islandDetectRange * 0.5f, islandLayerMask);
+                    avoidSteering += urgency * (leftClear ? -1f : 1f);
+                }
+                else
+                {
+                    avoidSteering += urgency * rays[i].sign;
+                }
+            }
+
+            return Mathf.Clamp(avoidSteering, -1f, 1f);
+        }
+
         private void FixedUpdate()
         {
             // 진단 로그 (첫 5프레임만)
@@ -1022,6 +1081,11 @@ namespace BoatAttack
                 float noise = (Mathf.PerlinNoise(_noiseSeed, Time.time * noiseSpeed) - 0.5f) * 2f * steeringNoise;
 
                 float steering = Mathf.Clamp(baseSteering + noise, -1f, 1f);
+
+                // 섬 회피
+                float islandAvoid = ComputeIslandAvoidanceSteering();
+                if (Mathf.Abs(islandAvoid) > 0.01f)
+                    steering = Mathf.Lerp(steering, islandAvoid, islandAvoidStrength);
 
                 _engine.Accelerate(rushThrottle);
                 _engine.Turn(steering * steeringSensitivity);

@@ -20,17 +20,23 @@ namespace BoatAttack
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoAttachToMainCamera()
         {
-            // 방어 훈련 씬이 아니면 무시
             if (Object.FindObjectOfType<DefenseEnvController>() == null) return;
 
             var cam = Camera.main;
             if (cam == null) return;
 
-            // 이미 붙어있으면 무시
+            // 씬 뷰 에디터 카메라 제외 (___LINK__SCENE__VIEW__CAMERA___ 등)
+            string camName = cam.gameObject.name;
+            if (camName.Contains("LINK__SCENE") || camName.Contains("SceneCamera") || camName.StartsWith("___"))
+            {
+                Debug.LogWarning($"[FollowCam] 씬뷰 카메라 감지 — 자동 부착 건너뜀: {camName}");
+                return;
+            }
+
             if (cam.GetComponent<DefenseFollowCamera>() != null) return;
 
-            var followCam = cam.gameObject.AddComponent<DefenseFollowCamera>();
-            Debug.LogWarning($"[FollowCam] Main Camera '{cam.name}'에 자동 부착 완료");
+            cam.gameObject.AddComponent<DefenseFollowCamera>();
+            Debug.LogWarning($"[FollowCam] Main Camera '{camName}'에 자동 부착 완료");
         }
 
         [Header("References")]
@@ -46,10 +52,10 @@ namespace BoatAttack
 
         [Header("Camera Settings")]
         [Tooltip("카메라 오프셋 (타겟 로컬 좌표)")]
-        public Vector3 offset = new Vector3(0f, 5f, -10f);
+        public Vector3 offset = new Vector3(0f, 250f, -400f);
 
         [Tooltip("카메라 회전 오프셋 (Euler)")]
-        public Vector3 rotationOffset = new Vector3(25f, 0f, 0f);
+        public Vector3 rotationOffset = new Vector3(5f, 0f, 0f);
 
         [Tooltip("위치 추적 속도")]
         public float followSpeed = 8f;

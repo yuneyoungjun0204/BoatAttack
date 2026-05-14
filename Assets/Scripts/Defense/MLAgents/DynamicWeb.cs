@@ -75,10 +75,12 @@ namespace BoatAttack
         [Range(0f, 2f)] public float waveAmplitude = 0.3f;
         [Tooltip("수면 흔들림 속도")]
         [Range(0f, 3f)] public float waveSpeed = 0.8f;
+        [Tooltip("그물 수면 위 높이 오프셋 (m). 수면에 가려지지 않도록 위로 올림")]
+        [Range(0f, 5f)] public float netYOffset = 1.5f;
         [Tooltip("밧줄 색상")]
-        public Color ropeColor = new Color(1f, 0.85f, 0f, 1f);
+        public Color ropeColor = new Color(0f, 1f, 0.45f, 1f);
         [Tooltip("부표 색상")]
-        public Color floatColor = new Color(1f, 0.45f, 0f, 1f);
+        public Color floatColor = new Color(1f, 0.15f, 0f, 1f);
         [Tooltip("부표 크기 (m)")]
         [Range(0.5f, 5f)] public float floatSize = 1.2f;
         [Tooltip("부표 표시")]
@@ -390,7 +392,7 @@ namespace BoatAttack
         {
             if (_fishingNet == null) return;
             int nV = netVerticalLines, nH = netHorizontalLines;
-            float baseY   = (pos1.y + pos2.y) * 0.5f;
+            float baseY   = (pos1.y + pos2.y) * 0.5f + netYOffset;
             float time    = Time.time * waveSpeed;
 
             // vi 축: pos1→pos2 (선박 연결 방향)

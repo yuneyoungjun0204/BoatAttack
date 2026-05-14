@@ -63,6 +63,10 @@ namespace BoatAttack
         public int ringCount = 4;
 
         [Header("=== Island ===")]
+        [Tooltip("씬에 배치한 섬 루트 오브젝트들을 직접 할당. 설정 시 Tag/Layer 탐색보다 우선")]
+        public GameObject[] islandObjects;
+        [Tooltip("섬 레이어 마스크. islandObjects 미설정 시 Layer로 탐색")]
+        public LayerMask islandLayerMask = 0;
         [Tooltip("지형 샘플 해상도 (낮을수록 가벼움)")]
         public int terrainSamples = 6;
         [Tooltip("섬 메시 최대 삼각형 수 (개별)")]
@@ -101,6 +105,7 @@ namespace BoatAttack
         Vector3 _radarWorldCenter;
         float _pixelRadius;
         bool _islandsCached;
+        float _nextIslandRetryTime = 0f;
         bool _hasWebLine;
         Vector2 _webP1, _webP2;
 
@@ -130,7 +135,9 @@ namespace BoatAttack
                 return;
             }
 
-            if (!_islandsCached) CacheIslands();
+            // 섬을 못 찾은 경우 2초마다 재시도 (씬 로드 타이밍 대응, 찾을 때까지 반복)
+            if (!_islandsCached || (_islandCache.Count == 0 && Time.unscaledTime >= _nextIslandRetryTime))
+                CacheIslands();
             CollectShipData();
             SetVerticesDirty();
         }
@@ -494,20 +501,56 @@ namespace BoatAttack
 
         #region Island Cache
 
+        /// <summary>
+        /// 우선순위: 1) islandObjects 직접 참조 → 2) islandLayerMask Layer 탐색 → 3) "Island" 태그
+        /// </summary>
+        GameObject[] FindIslandGameObjects()
+        {
+            // 1순위: Inspector에서 직접 할당한 오브젝트
+            if (islandObjects != null && islandObjects.Length > 0)
+            {
+                var valid = new List<GameObject>();
+                foreach (var go in islandObjects)
+                    if (go != null) valid.Add(go);
+                if (valid.Count > 0) return valid.ToArray();
+            }
+
+            // 2순위: Layer 기반
+            if (islandLayerMask != 0)
+            {
+                var renderers = FindObjectsOfType<Renderer>();
+                var roots = new System.Collections.Generic.HashSet<GameObject>();
+                foreach (var r in renderers)
+                    if (((1 << r.gameObject.layer) & (int)islandLayerMask) != 0)
+                        roots.Add(r.transform.root.gameObject);
+                var arr = new GameObject[roots.Count];
+                roots.CopyTo(arr);
+                return arr;
+            }
+
+            // 3순위: "Island" 태그 fallback
+            try { return GameObject.FindGameObjectsWithTag("Island"); }
+            catch (UnityException) { return null; }
+        }
+
         void CacheIslands()
         {
             _islandCache.Clear();
             _islandsCached = true;
             _totalIslandVerts = 0;
 
-            GameObject[] islands = null;
-            try { islands = GameObject.FindGameObjectsWithTag("Island"); }
-            catch (UnityException) { return; }
-            if (islands == null || islands.Length == 0) return;
+            GameObject[] islands = FindIslandGameObjects();
+            if (islands == null || islands.Length == 0)
+            {
+                Debug.LogWarning("[RadarDisplay] 섬 오브젝트 없음 — islandObjects 배열에 직접 할당하거나 islandLayerMask를 설정하세요.");
+                _islandsCached = false;
+                _nextIslandRetryTime = Time.unscaledTime + 2f;
+                return;
+            }
 
             foreach (var island in islands)
             {
-                if (_totalIslandVerts >= maxTotalIslandVerts) break;
+                if (island == null || _totalIslandVerts >= maxTotalIslandVerts) break;
 
                 var terrain = island.GetComponent<Terrain>();
                 if (terrain != null)
@@ -519,21 +562,33 @@ namespace BoatAttack
                 var meshFilters = island.GetComponentsInChildren<MeshFilter>();
                 if (meshFilters.Length > 0)
                 {
+                    int cachedBefore = _islandCache.Count;
                     foreach (var mf in meshFilters)
                     {
                         if (_totalIslandVerts >= maxTotalIslandVerts) break;
                         if (mf.sharedMesh != null) CacheMeshIsland(mf);
                     }
+                    // MeshFilter는 있는데 readable이 아니어서 모두 bounds fallback → 없으면 전체 bounds 사용
+                    if (_islandCache.Count == cachedBefore)
+                    {
+                        var r = island.GetComponentInChildren<Renderer>();
+                        if (r != null)
+                        {
+                            Bounds combined = r.bounds;
+                            foreach (var mr in island.GetComponentsInChildren<Renderer>())
+                                combined.Encapsulate(mr.bounds);
+                            CacheBoundsIsland(combined);
+                        }
+                    }
                 }
                 else
                 {
-                    // MeshFilter도 Terrain도 없으면 Renderer bounds 사용
                     var renderer = island.GetComponentInChildren<Renderer>();
                     if (renderer != null)
                         CacheBoundsIsland(renderer.bounds);
                 }
             }
-            Debug.Log($"[RadarDisplay] 섬 {_islandCache.Count}개 캐시됨 (총 버텍스: {_totalIslandVerts})");
+            Debug.LogWarning($"[RadarDisplay] 섬 {_islandCache.Count}개 캐시됨 (오브젝트: {islands.Length}개, 총 버텍스: {_totalIslandVerts})");
         }
 
         void CacheMeshIsland(MeshFilter mf)
