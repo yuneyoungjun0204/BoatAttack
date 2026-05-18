@@ -66,9 +66,9 @@ namespace BoatAttack
         [Tooltip("가로줄 수 (수심 방향)")]
         [Range(3, 12)] public int netHorizontalLines = 8;
         [Tooltip("메인 밧줄 두께 (m)")]
-        [Range(0.1f, 3f)] public float mainRopeWidth = 0.35f;
+        [Range(0.1f, 3f)] public float mainRopeWidth = 0.7f;
         [Tooltip("그물코 줄 두께 (m)")]
-        [Range(0.02f, 0.5f)] public float netLineWidth = 0.08f;
+        [Range(0.02f, 0.5f)] public float netLineWidth = 0.18f;
         [Tooltip("그물 처짐 (catenary sag)")]
         [Range(0f, 15f)] public float netSag = 3f;
         [Tooltip("수면 흔들림 강도")]
@@ -76,13 +76,15 @@ namespace BoatAttack
         [Tooltip("수면 흔들림 속도")]
         [Range(0f, 3f)] public float waveSpeed = 0.8f;
         [Tooltip("밧줄 색상")]
-        public Color ropeColor = new Color(1f, 0.85f, 0f, 1f);
+        public Color ropeColor = new Color(1f, 0.05f, 0.0f, 1f);
         [Tooltip("부표 색상")]
         public Color floatColor = new Color(1f, 0.45f, 0f, 1f);
         [Tooltip("부표 크기 (m)")]
         [Range(0.5f, 5f)] public float floatSize = 1.2f;
         [Tooltip("부표 표시")]
         public bool showFloats = true;
+        [Tooltip("그물 수면 위 높이 오프셋 (m). 수면에 잠기지 않도록 위로 올림")]
+        [Range(0f, 10f)] public float netYOffset = 1f;
         [Tooltip("머티리얼 (null이면 자동 생성)")]
         public Material netMaterial;
 
@@ -278,18 +280,21 @@ namespace BoatAttack
 
         private Material CreateSimpleMaterial()
         {
-            Shader s = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            Shader s = Shader.Find("Universal Render Pipeline/Unlit")
+                    ?? Shader.Find("Sprites/Default")
+                    ?? Shader.Find("Unlit/Color")
+                    ?? Shader.Find("Standard");
             if (s == null) return null;
             var mat = new Material(s);
-            mat.SetFloat("_Surface", 1f);
-            mat.SetFloat("_Blend", 0f);
-            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            mat.SetInt("_ZWrite", 0);
-            mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
-            mat.renderQueue = 3000;
-            mat.color = webColor;
+            SetMatColor(mat, webColor);
             return mat;
+        }
+
+        private static void SetMatColor(Material mat, Color color)
+        {
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
+            if (mat.HasProperty("_Color"))     mat.SetColor("_Color", color);
+            mat.color = color;
         }
 
         public void SetColor(Color color)
@@ -299,10 +304,10 @@ namespace BoatAttack
             {
                 if (_fishingNet?.container == null) return;
                 foreach (var lr in _fishingNet.container.GetComponentsInChildren<LineRenderer>())
-                    if (lr != null && lr.material != null) lr.material.color = color;
+                    if (lr != null && lr.material != null) SetMatColor(lr.material, color);
             }
             else if (_renderer != null && _renderer.material != null)
-                _renderer.material.color = color;
+                SetMatColor(_renderer.material, color);
         }
 
         // ── 어부 그물 시각화 ──
@@ -390,7 +395,7 @@ namespace BoatAttack
         {
             if (_fishingNet == null) return;
             int nV = netVerticalLines, nH = netHorizontalLines;
-            float baseY   = (pos1.y + pos2.y) * 0.5f;
+            float baseY   = (pos1.y + pos2.y) * 0.5f + netYOffset;
             float time    = Time.time * waveSpeed;
 
             // vi 축: pos1→pos2 (선박 연결 방향)
@@ -478,11 +483,14 @@ namespace BoatAttack
 
         private Material CreateNetMat(Color color)
         {
-            if (netMaterial != null) { var m = new Material(netMaterial); m.color = color; return m; }
-            Shader sh = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            if (netMaterial != null) { var m = new Material(netMaterial); SetMatColor(m, color); return m; }
+            Shader sh = Shader.Find("Universal Render Pipeline/Unlit")
+                     ?? Shader.Find("Sprites/Default")
+                     ?? Shader.Find("Unlit/Color")
+                     ?? Shader.Find("Standard");
             if (sh == null) return new Material(Shader.Find("Hidden/InternalErrorShader"));
             var mat = new Material(sh);
-            mat.color = color;
+            SetMatColor(mat, color);
             return mat;
         }
 
@@ -497,8 +505,8 @@ namespace BoatAttack
             lr.numCapVertices    = 3;
             lr.numCornerVertices = 3;
             lr.material          = mat;
-            lr.startColor        = ropeColor;
-            lr.endColor          = ropeColor;
+            lr.startColor        = mat.color;
+            lr.endColor          = mat.color;
             lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             lr.receiveShadows    = false;
             return lr;
@@ -522,7 +530,7 @@ namespace BoatAttack
         private void OnValidate()
         {
             if (Application.isPlaying && _renderer != null && _renderer.material != null)
-                _renderer.material.color = webColor;
+                SetMatColor(_renderer.material, webColor);
         }
 
         // ── 고정 (정지 트랩) ──
@@ -560,13 +568,14 @@ namespace BoatAttack
             var rend = _convoyBarObject.GetComponent<MeshRenderer>();
             if (rend != null)
             {
-                Shader s = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+                Shader s = Shader.Find("Universal Render Pipeline/Unlit")
+                        ?? Shader.Find("Sprites/Default")
+                        ?? Shader.Find("Unlit/Color")
+                        ?? Shader.Find("Standard");
                 if (s != null)
                 {
                     var mat = new Material(s);
-                    mat.color = convoyBarColor;
-                    mat.SetFloat("_Smoothness", 0.75f);
-                    mat.SetFloat("_Metallic", 0.85f);
+                    SetMatColor(mat, convoyBarColor);
                     rend.material = mat;
                 }
             }

@@ -221,7 +221,7 @@ namespace BoatAttack
 
             if (autoFitRange) CalculateAutoRange();
 
-            // 8. 섬 지형
+            // 8. 섬 지형 — 먼저 그려야 vertex budget 보장 + 다른 요소 위에 덮히지 않음
             DrawIslands(vh, cx, cy);
 
             // 9. 웹 라인 (글로우 효과)
@@ -849,8 +849,14 @@ namespace BoatAttack
             if (_islandCache.Count == 0) return;
 
             float scale = _pixelRadius / radarRange;
-            // 레이더 원 밖 판정 마진: 픽셀 반지름의 50% 여유 → 경계 섬 깜빡임 방지
-            float clipRadius = _pixelRadius * 1.5f;
+            // 월드 좌표 기반 클리핑: 픽셀 변환 오차 없이 안정적
+            float radarCenter2DX = _radarWorldCenter.x;
+            float radarCenter2DZ = _radarWorldCenter.z;
+            // 레이더 범위의 150% 까지 표시 (경계 섬 깜빡임 방지를 위한 여유)
+            float worldClipDist = radarRange * 1.5f;
+            // polygon 표시 최소 월드 크기 — scale 변동에 무관한 안정적 임계값
+            float minWorldRadius = islandMinPixelRadius / Mathf.Max(scale, 0.00001f);
+
             int vertBudget = 64000 - vh.currentVertCount;
             int drawn = 0;
 
@@ -858,16 +864,20 @@ namespace BoatAttack
             {
                 if (island.vertices.Length < 3) continue;
 
-                // 캐시된 무게중심·반지름 사용 (매 프레임 재계산 없음)
+                // 월드 거리로 클리핑 — _radarWorldCenter 미세 이동에도 안정적
+                float wdx = island.centroid.x - radarCenter2DX;
+                float wdz = island.centroid.y - radarCenter2DZ;
+                float worldDist = Mathf.Sqrt(wdx * wdx + wdz * wdz);
+                if (worldDist - island.maxRadius > worldClipDist) continue;
+
                 Vector2 centerPx = XZToLocal(island.centroid, cx, cy);
                 float pixelR = Mathf.Max(islandMinPixelRadius, island.maxRadius * scale);
 
-                // 레이더 원에서 50% 마진 밖 섬만 스킵 (안정적 클리핑)
-                float dx = centerPx.x - cx, dy = centerPx.y - cy;
-                if (dx * dx + dy * dy > (clipRadius + pixelR) * (clipRadius + pixelR)) continue;
-
-                // 충분한 픽셀 크기면 원본 폴리곤, 아니면 최소 크기 원
-                if (island.maxRadius * scale >= islandMinPixelRadius && island.vertices.Length <= vertBudget)
+                // polygon/circle 전환에 hysteresis 적용 (scale 흔들림에 의한 깜빡임 방지)
+                // polygon: maxRadius > minWorldRadius * 0.75 (낮은 임계로 polygon 우선)
+                bool drawPolygon = island.maxRadius > minWorldRadius * 0.75f
+                                   && island.vertices.Length <= vertBudget;
+                if (drawPolygon)
                 {
                     int baseIdx = vh.currentVertCount;
                     foreach (var v in island.vertices)
