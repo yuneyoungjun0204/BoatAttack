@@ -78,7 +78,7 @@ namespace BoatAttack
         [Tooltip("그물 수면 위 높이 오프셋 (m). 수면에 가려지지 않도록 위로 올림")]
         [Range(0f, 5f)] public float netYOffset = 1.5f;
         [Tooltip("밧줄 색상")]
-        public Color ropeColor = new Color(0f, 1f, 0.45f, 1f);
+        public Color ropeColor = new Color(0.9f, 0.15f, 0.05f, 1f);
         [Tooltip("부표 색상")]
         public Color floatColor = new Color(1f, 0.15f, 0f, 1f);
         [Tooltip("부표 크기 (m)")]
@@ -280,17 +280,13 @@ namespace BoatAttack
 
         private Material CreateSimpleMaterial()
         {
-            Shader s = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            Shader s = Shader.Find("Universal Render Pipeline/Unlit")
+                    ?? Shader.Find("Sprites/Default")
+                    ?? Shader.Find("Unlit/Color")
+                    ?? Shader.Find("Standard");
             if (s == null) return null;
             var mat = new Material(s);
-            mat.SetFloat("_Surface", 1f);
-            mat.SetFloat("_Blend", 0f);
-            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            mat.SetInt("_ZWrite", 0);
-            mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
-            mat.renderQueue = 3000;
-            mat.color = webColor;
+            SetMatColor(mat, webColor);
             return mat;
         }
 
@@ -301,10 +297,10 @@ namespace BoatAttack
             {
                 if (_fishingNet?.container == null) return;
                 foreach (var lr in _fishingNet.container.GetComponentsInChildren<LineRenderer>())
-                    if (lr != null && lr.material != null) lr.material.color = color;
+                    if (lr != null && lr.material != null) SetMatColor(lr.material, color);
             }
             else if (_renderer != null && _renderer.material != null)
-                _renderer.material.color = color;
+                SetMatColor(_renderer.material, color);
         }
 
         // ── 어부 그물 시각화 ──
@@ -480,12 +476,22 @@ namespace BoatAttack
 
         private Material CreateNetMat(Color color)
         {
-            if (netMaterial != null) { var m = new Material(netMaterial); m.color = color; return m; }
-            Shader sh = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            if (netMaterial != null) { var m = new Material(netMaterial); SetMatColor(m, color); return m; }
+            Shader sh = Shader.Find("Universal Render Pipeline/Unlit")
+                     ?? Shader.Find("Sprites/Default")
+                     ?? Shader.Find("Unlit/Color")
+                     ?? Shader.Find("Standard");
             if (sh == null) return new Material(Shader.Find("Hidden/InternalErrorShader"));
             var mat = new Material(sh);
-            mat.color = color;
+            SetMatColor(mat, color);
             return mat;
+        }
+
+        private static void SetMatColor(Material mat, Color color)
+        {
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
+            if (mat.HasProperty("_Color"))     mat.SetColor("_Color", color);
+            mat.color = color;
         }
 
         private LineRenderer MakeLR(GameObject parent, string n, Material mat, float width)
@@ -499,8 +505,9 @@ namespace BoatAttack
             lr.numCapVertices    = 3;
             lr.numCornerVertices = 3;
             lr.material          = mat;
-            lr.startColor        = ropeColor;
-            lr.endColor          = ropeColor;
+            // Unlit 셰이더는 vertexColorMode를 지원하므로 startColor/endColor도 동기화
+            lr.startColor        = mat.color;
+            lr.endColor          = mat.color;
             lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             lr.receiveShadows    = false;
             return lr;
@@ -524,7 +531,7 @@ namespace BoatAttack
         private void OnValidate()
         {
             if (Application.isPlaying && _renderer != null && _renderer.material != null)
-                _renderer.material.color = webColor;
+                SetMatColor(_renderer.material, webColor);
         }
 
         // ── 고정 (정지 트랩) ──
@@ -562,13 +569,14 @@ namespace BoatAttack
             var rend = _convoyBarObject.GetComponent<MeshRenderer>();
             if (rend != null)
             {
-                Shader s = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+                Shader s = Shader.Find("Universal Render Pipeline/Unlit")
+                        ?? Shader.Find("Sprites/Default")
+                        ?? Shader.Find("Unlit/Color")
+                        ?? Shader.Find("Standard");
                 if (s != null)
                 {
                     var mat = new Material(s);
-                    mat.color = convoyBarColor;
-                    mat.SetFloat("_Smoothness", 0.75f);
-                    mat.SetFloat("_Metallic", 0.85f);
+                    SetMatColor(mat, convoyBarColor);
                     rend.material = mat;
                 }
             }

@@ -48,7 +48,7 @@ namespace BoatAttack
         public Color sweepColor = new Color(0.2f, 1f, 0.3f, 0.5f);
         public Color gridColor = new Color(0.1f, 0.3f, 0.12f, 0.4f);
         public Color bgCircleColor = new Color(0.01f, 0.03f, 0.01f, 0.97f);
-        public Color islandColor = new Color(0.12f, 0.25f, 0.1f, 0.7f);
+        public Color islandColor = new Color(0.22f, 0.72f, 0.28f, 0.92f);
         public Color bearingTickColor = new Color(0.3f, 0.8f, 0.4f, 0.85f);
         public Color outerGlowColor = new Color(0.1f, 0.6f, 0.2f, 0.5f);
 
@@ -73,12 +73,16 @@ namespace BoatAttack
         public int maxIslandTriangles = 15;
         [Tooltip("전체 섬 최대 버텍스 수")]
         public int maxTotalIslandVerts = 5000;
+        [Tooltip("레이더에 표시할 섬 최소 픽셀 반지름 (range가 크면 섬이 너무 작아짐 방지)")]
+        [Range(2f, 30f)] public float islandMinPixelRadius = 8f;
 
         // 공유 버텍스 기반 섬 데이터
         struct IslandMeshData
         {
             public Vector2[] vertices;  // XZ 월드좌표
             public int[] triangles;
+            public Vector2 centroid;    // 무게중심 (캐시 시점 계산)
+            public float maxRadius;     // 무게중심 기준 최대 반지름m (캐시 시점 계산)
         }
 
         struct ShipRenderData
@@ -106,6 +110,7 @@ namespace BoatAttack
         float _pixelRadius;
         bool _islandsCached;
         float _nextIslandRetryTime = 0f;
+        bool _islandDebugLogged = false;
         bool _hasWebLine;
         Vector2 _webP1, _webP2;
 
@@ -120,6 +125,13 @@ namespace BoatAttack
 
             if (rangeMultiplier > 0f && !Mathf.Approximately(rangeMultiplier, 1f))
                 radarRange *= rangeMultiplier;
+
+            // Infinity / NaN / 0 방어 — Inspector에 Infinity 입력 시 6000으로 고정
+            if (!float.IsFinite(radarRange) || radarRange <= 0f)
+            {
+                Debug.LogWarning($"[RadarDisplay] Radar Range={radarRange} 비정상 → 6000으로 자동 보정");
+                radarRange = 6000f;
+            }
 
             CacheIslands();
         }
@@ -512,25 +524,63 @@ namespace BoatAttack
                 var valid = new List<GameObject>();
                 foreach (var go in islandObjects)
                     if (go != null) valid.Add(go);
-                if (valid.Count > 0) return valid.ToArray();
+                if (valid.Count > 0)
+                {
+                    Debug.Log($"[RadarDisplay] 직접할당 섬 {valid.Count}개 사용");
+                    return valid.ToArray();
+                }
             }
 
-            // 2순위: Layer 기반
+            // 2순위: Layer 기반 — 렌더러 자체 또는 최대 3단계 상위 부모 레이어 탐색
+            // (섬 루트에 Island 레이어, 자식 Renderer는 Default인 경우도 포착)
             if (islandLayerMask != 0)
             {
-                var renderers = FindObjectsOfType<Renderer>();
-                var roots = new System.Collections.Generic.HashSet<GameObject>();
-                foreach (var r in renderers)
-                    if (((1 << r.gameObject.layer) & (int)islandLayerMask) != 0)
-                        roots.Add(r.transform.root.gameObject);
-                var arr = new GameObject[roots.Count];
-                roots.CopyTo(arr);
-                return arr;
+                var found = new System.Collections.Generic.HashSet<GameObject>();
+                foreach (var r in FindObjectsOfType<Renderer>())
+                {
+                    Transform t = r.transform;
+                    for (int depth = 0; depth < 4 && t != null; depth++, t = t.parent)
+                    {
+                        if (((1 << t.gameObject.layer) & (int)islandLayerMask) != 0)
+                        {
+                            found.Add(t.gameObject);
+                            break;
+                        }
+                    }
+                }
+                if (found.Count > 0)
+                {
+                    var arr = new GameObject[found.Count];
+                    found.CopyTo(arr);
+                    Debug.Log($"[RadarDisplay] Layer로 섬 {arr.Length}개 발견");
+                    return arr;
+                }
+                Debug.LogWarning($"[RadarDisplay] islandLayerMask={islandLayerMask.value} 설정됐지만 해당 레이어 오브젝트 없음. 섬 오브젝트 Inspector에서 레이어 확인 필요.");
             }
 
             // 3순위: "Island" 태그 fallback
-            try { return GameObject.FindGameObjectsWithTag("Island"); }
-            catch (UnityException) { return null; }
+            try
+            {
+                var tagged = GameObject.FindGameObjectsWithTag("Island");
+                if (tagged != null && tagged.Length > 0)
+                {
+                    Debug.Log($"[RadarDisplay] 태그로 섬 {tagged.Length}개 발견");
+                    return tagged;
+                }
+            }
+            catch (UnityException) { }
+
+            // 4순위: Terrain 컴포넌트 자동 탐색 (레이어/태그 설정 없어도 지형 섬 검출)
+            var terrains = FindObjectsOfType<Terrain>();
+            if (terrains.Length > 0)
+            {
+                var result = new List<GameObject>();
+                foreach (var terrain in terrains) result.Add(terrain.gameObject);
+                Debug.Log($"[RadarDisplay] Terrain 자동탐색 섬 {result.Count}개 발견");
+                return result.ToArray();
+            }
+
+            return null;
         }
 
         void CacheIslands()
@@ -588,7 +638,15 @@ namespace BoatAttack
                         CacheBoundsIsland(renderer.bounds);
                 }
             }
-            Debug.LogWarning($"[RadarDisplay] 섬 {_islandCache.Count}개 캐시됨 (오브젝트: {islands.Length}개, 총 버텍스: {_totalIslandVerts})");
+            if (_islandCache.Count > 0 && _islandCache[0].vertices.Length > 0)
+            {
+                var v0 = _islandCache[0].vertices[0];
+                Debug.Log($"[RadarDisplay] 섬 {_islandCache.Count}개 캐시됨 (오브젝트: {islands.Length}개, 버텍스: {_totalIslandVerts}) 첫섬위치≈({v0.x:F0},{v0.y:F0})");
+            }
+            else
+            {
+                Debug.LogWarning($"[RadarDisplay] FindIsland 오브젝트 {islands.Length}개 발견했으나 캐시 0개 — 모든 메시 읽기불가(isReadable=false) 또는 bounds<1m");
+            }
         }
 
         void CacheMeshIsland(MeshFilter mf)
@@ -629,56 +687,85 @@ namespace BoatAttack
 
             if (xzList.Count > 0)
             {
-                _islandCache.Add(new IslandMeshData { vertices = xzList.ToArray(), triangles = triList.ToArray() });
+                _islandCache.Add(BuildIslandMeshData(xzList.ToArray(), triList.ToArray()));
                 _totalIslandVerts += xzList.Count;
             }
         }
 
         /// <summary>
-        /// 메시 읽기 불가능 시 Renderer bounds로 불규칙 타원 생성
-        /// 자연스러운 섬 형태 (10 segments, sin 변조로 울퉁불퉁)
+        /// 메시 읽기 불가능 시 Renderer bounds로 불규칙 해안선 폴리곤 생성.
+        /// 다중 하모닉(Fourier) 변조로 섬마다 다른 형태 보장.
         /// </summary>
         void CacheBoundsIsland(Bounds b)
         {
-            const int seg = 10;
-            if (_totalIslandVerts + seg + 1 > maxTotalIslandVerts) return;
-
             float cx = (b.min.x + b.max.x) * 0.5f;
             float cz = (b.min.z + b.max.z) * 0.5f;
             float rx = (b.max.x - b.min.x) * 0.5f;
             float rz = (b.max.z - b.min.z) * 0.5f;
 
-            // 너무 작은 바운드는 무시
             if (rx < 1f && rz < 1f) return;
 
-            var verts = new Vector2[seg + 1];
-            verts[0] = new Vector2(cx, cz); // 중심점
+            // 위치 기반 결정론적 시드 — 같은 섬은 항상 같은 모양
+            float seed1 = (cx * 0.137f + cz * 0.073f);
+            float seed2 = (cx * 0.053f + cz * 0.179f);
+            float seed3 = (cx * 0.211f + cz * 0.041f);
 
-            // bounds 크기 기반 시드 → 섬마다 다른 형태
-            float seed = (cx * 0.13f + cz * 0.07f) % 6.28f;
+            // 섬 크기·위치에 따라 세그먼트 수 변화 (10~16)
+            int seg = 10 + (int)(Mathf.Abs(seed1 * 0.3f) % 7);
+            if (_totalIslandVerts + seg + 1 > maxTotalIslandVerts) return;
+
+            var verts = new Vector2[seg + 1];
+            verts[0] = new Vector2(cx, cz);
 
             for (int i = 0; i < seg; i++)
             {
-                float angle = i * Mathf.PI * 2f / seg;
-                // 불규칙 변조: 0.8 ~ 1.0 범위로 들쭉날쭉
-                float wobble = 0.82f + 0.18f * Mathf.Sin(angle * 3f + seed)
-                                      + 0.08f * Mathf.Cos(angle * 5f + seed * 1.7f);
+                float a = i * Mathf.PI * 2f / seg;
+
+                // 5중 하모닉: 각 섬마다 위상·주파수·진폭이 달라 다양한 해안선 형성
+                float w = 1f
+                    + 0.28f * Mathf.Sin(a * 2f + seed1)          // 큰 돌출
+                    + 0.18f * Mathf.Cos(a * 3f + seed2 * 1.4f)   // 중간 굴곡
+                    + 0.13f * Mathf.Sin(a * 5f + seed1 * 0.6f)   // 작은 톱니
+                    + 0.09f * Mathf.Cos(a * 7f + seed3 * 2.1f)   // 세밀한 요철
+                    + 0.05f * Mathf.Sin(a * 11f + seed2 * 0.9f); // 미세 잡음
+
+                w = Mathf.Clamp(w, 0.35f, 1.5f);
+
+                // rx·rz 비율도 angle별로 살짝 틀어 기형적 타원 방지
+                float aspectWobble = 1f + 0.12f * Mathf.Sin(a * 2f + seed3);
                 verts[i + 1] = new Vector2(
-                    cx + Mathf.Cos(angle) * rx * wobble,
-                    cz + Mathf.Sin(angle) * rz * wobble);
+                    cx + Mathf.Cos(a) * rx * w,
+                    cz + Mathf.Sin(a) * rz * w * aspectWobble);
             }
 
-            // Fan triangulation (중심 → 둘레)
             var tris = new int[seg * 3];
             for (int i = 0; i < seg; i++)
             {
-                tris[i * 3] = 0;
+                tris[i * 3]     = 0;
                 tris[i * 3 + 1] = i + 1;
                 tris[i * 3 + 2] = (i + 1) % seg + 1;
             }
 
-            _islandCache.Add(new IslandMeshData { vertices = verts, triangles = tris });
+            var data = BuildIslandMeshData(verts, tris);
+            _islandCache.Add(data);
             _totalIslandVerts += verts.Length;
+        }
+
+        /// <summary>vertices/triangles 배열로 IslandMeshData 구성. centroid·maxRadius를 이 시점에 계산.</summary>
+        static IslandMeshData BuildIslandMeshData(Vector2[] verts, int[] tris)
+        {
+            float sx = 0f, sz = 0f;
+            foreach (var v in verts) { sx += v.x; sz += v.y; }
+            Vector2 c = new Vector2(sx / verts.Length, sz / verts.Length);
+
+            float maxR = 0f;
+            foreach (var v in verts)
+            {
+                float dx = v.x - c.x, dz = v.y - c.y;
+                float d = dx * dx + dz * dz;
+                if (d > maxR) maxR = d;
+            }
+            return new IslandMeshData { vertices = verts, triangles = tris, centroid = c, maxRadius = Mathf.Sqrt(maxR) };
         }
 
         int MapVert(int idx, Vector3[] verts, Transform tf, List<Vector2> list, Dictionary<int, int> map)
@@ -748,7 +835,7 @@ namespace BoatAttack
 
             if (tris.Count > 0)
             {
-                _islandCache.Add(new IslandMeshData { vertices = gridVerts, triangles = tris.ToArray() });
+                _islandCache.Add(BuildIslandMeshData(gridVerts, tris.ToArray()));
                 _totalIslandVerts += gridVerts.Length;
             }
         }
@@ -759,27 +846,65 @@ namespace BoatAttack
 
         void DrawIslands(VertexHelper vh, float cx, float cy)
         {
+            if (_islandCache.Count == 0) return;
+
+            float scale = _pixelRadius / radarRange;
+            // 레이더 원 밖 판정 마진: 픽셀 반지름의 50% 여유 → 경계 섬 깜빡임 방지
+            float clipRadius = _pixelRadius * 1.5f;
             int vertBudget = 64000 - vh.currentVertCount;
+            int drawn = 0;
 
             foreach (var island in _islandCache)
             {
-                if (island.vertices.Length > vertBudget) break;
+                if (island.vertices.Length < 3) continue;
 
-                int baseIdx = vh.currentVertCount;
-                foreach (var v in island.vertices)
-                {
-                    Vector2 rp = XZToLocal(v, cx, cy);
-                    AddVert(vh, rp.x, rp.y, islandColor);
-                }
-                for (int i = 0; i < island.triangles.Length; i += 3)
-                {
-                    vh.AddTriangle(
-                        baseIdx + island.triangles[i],
-                        baseIdx + island.triangles[i + 1],
-                        baseIdx + island.triangles[i + 2]);
-                }
+                // 캐시된 무게중심·반지름 사용 (매 프레임 재계산 없음)
+                Vector2 centerPx = XZToLocal(island.centroid, cx, cy);
+                float pixelR = Mathf.Max(islandMinPixelRadius, island.maxRadius * scale);
 
-                vertBudget -= island.vertices.Length;
+                // 레이더 원에서 50% 마진 밖 섬만 스킵 (안정적 클리핑)
+                float dx = centerPx.x - cx, dy = centerPx.y - cy;
+                if (dx * dx + dy * dy > (clipRadius + pixelR) * (clipRadius + pixelR)) continue;
+
+                // 충분한 픽셀 크기면 원본 폴리곤, 아니면 최소 크기 원
+                if (island.maxRadius * scale >= islandMinPixelRadius && island.vertices.Length <= vertBudget)
+                {
+                    int baseIdx = vh.currentVertCount;
+                    foreach (var v in island.vertices)
+                    {
+                        Vector2 rp = XZToLocal(v, cx, cy);
+                        AddVert(vh, rp.x, rp.y, islandColor);
+                    }
+                    for (int i = 0; i < island.triangles.Length; i += 3)
+                    {
+                        vh.AddTriangle(
+                            baseIdx + island.triangles[i],
+                            baseIdx + island.triangles[i + 1],
+                            baseIdx + island.triangles[i + 2]);
+                    }
+                    vertBudget -= island.vertices.Length;
+                }
+                else
+                {
+                    const int DOT_SEG = 6;
+                    if (DOT_SEG + 2 <= vertBudget)
+                    {
+                        DrawFilledCircle(vh, centerPx.x, centerPx.y, pixelR, islandColor, DOT_SEG);
+                        vertBudget -= DOT_SEG + 2;
+                    }
+                }
+                drawn++;
+            }
+
+            if (!_islandDebugLogged)
+            {
+                _islandDebugLogged = true;
+                var v0 = _islandCache[0].vertices[0];
+                Vector2 rp0 = XZToLocal(v0, cx, cy);
+                Debug.Log($"[RadarDisplay-DrawIslands] drawn={drawn}/{_islandCache.Count}" +
+                    $" | scale={scale:F5} (pixR={_pixelRadius:F1}/range={radarRange:F0})" +
+                    $" | worldCenter=({_radarWorldCenter.x:F0},{_radarWorldCenter.z:F0})" +
+                    $" | island0=({v0.x:F0},{v0.y:F0})→pixel({rp0.x:F1},{rp0.y:F1})");
             }
         }
 
