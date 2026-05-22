@@ -23,7 +23,8 @@ namespace BoatAttack
             // 방어 훈련 씬이 아니면 무시
             if (Object.FindObjectOfType<DefenseEnvController>() == null) return;
 
-            var cam = Camera.main;
+            // Camera.main은 "MainCamera" 태그만 검색 → 씬 카메라가 Untagged면 null
+            var cam = Camera.main ?? Object.FindObjectOfType<UnityEngine.Camera>();
             if (cam == null) return;
 
             // 이미 붙어있으면 무시
@@ -46,10 +47,10 @@ namespace BoatAttack
 
         [Header("Camera Settings")]
         [Tooltip("카메라 오프셋 (타겟 로컬 좌표)")]
-        public Vector3 offset = new Vector3(0f, 5f, -10f);
+        public Vector3 offset = new Vector3(0f, 5f, 15f);
 
         [Tooltip("카메라 회전 오프셋 (Euler)")]
-        public Vector3 rotationOffset = new Vector3(25f, 0f, 0f);
+        public Vector3 rotationOffset = new Vector3(10f, 0f, 0f);
 
         [Tooltip("위치 추적 속도")]
         public float followSpeed = 8f;
@@ -135,6 +136,9 @@ namespace BoatAttack
                 launchZoneManager = FindObjectOfType<LaunchZoneManager>();
             _allBrains = FindObjectsOfType<Cinemachine.CinemachineBrain>();
             _thisCam = GetComponent<UnityEngine.Camera>();  // 이 오브젝트의 카메라 고정 참조
+
+            // 씬의 Cinemachine Virtual Camera가 Main Camera를 덮어쓰지 못하도록 시작 시 비활성화
+            SetAllBrains(false);
 
             // extraCameraObjects가 비어있으면 "Camera Drone" 이름으로 자동 탐색
             if (extraCameraObjects == null || extraCameraObjects.Length == 0)
@@ -239,7 +243,7 @@ namespace BoatAttack
                 }
                 else
                 {
-                    SetAllBrains(true);
+                    // Cinemachine 재활성화 없음 — DefenseFollowCamera가 계속 제어
                 }
             }
 

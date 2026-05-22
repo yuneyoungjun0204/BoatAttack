@@ -245,6 +245,8 @@ namespace BoatAttack
         private SingleNetCapture _singleNetCapture;  // Disarm 후 소형 포획 존
         private bool _singleNetMode = false;          // SingleNet 포획 모드 (LOS 방향 반전)
         private bool _stopMode = false;               // Phase1: 트랩 설치 후 정지 (RL 액션 무시)
+        private bool _towMode = false;                // ONE-WAY TOWING: LOS 수직 방향 직진
+        private Vector3 _towWorldDir = Vector3.right; // 횡단 방향 (world)
 
         // PD LOS 가이던스 (배치 후 일정 시간 동안 클러스터 방향으로 직진)
         [Header("=== Formation Spread (LOS offset, 0=RL 대형학습) ===")]
@@ -560,6 +562,18 @@ namespace BoatAttack
         {
             _stopMode = active;
             if (_engine != null) _engine.hardStopped = active;
+            if (active) _towMode = false;  // stop 진입 시 tow 해제
+        }
+
+        /// <summary>ONE-WAY TOWING: LOS 수직 world 방향으로 직진. false 전달 시 해제.</summary>
+        public void SetTowMode(bool active, Vector3 towWorldDir = default)
+        {
+            _towMode = active;
+            if (active)
+            {
+                _towWorldDir = towWorldDir.sqrMagnitude > 0.001f ? towWorldDir.normalized : Vector3.right;
+                _splitMode = false;  // split 모드와 충돌 방지
+            }
         }
 
         /// <summary>
@@ -640,6 +654,7 @@ namespace BoatAttack
             _splitMode = false;
             _splitSteer = 0f;
             _splitStepsRemaining = 0;
+            _towMode = false;
             SetStopMode(false);
             _guidancePhase = false;
             _guidanceEndTime = 0f;
@@ -689,6 +704,7 @@ namespace BoatAttack
             _splitSteer = 0f;
             _splitStepsRemaining = 0;
             _splitInitialLateralSign = 0f;
+            _towMode = false;
             SetStopMode(false);
             _guidancePhase = false;
             _guidanceEndTime = 0f;
@@ -1589,6 +1605,20 @@ namespace BoatAttack
                 _engine.Turn(0f);
                 _prevThrottle = maxThrottle;
                 _prevSteering = 0f;
+                return;
+            }
+
+            // ONE-WAY TOWING: LOS 수직 world 방향으로 full throttle 직진
+            if (_towMode)
+            {
+                float towYaw   = Mathf.Atan2(_towWorldDir.x, _towWorldDir.z) * Mathf.Rad2Deg;
+                float myYaw    = transform.eulerAngles.y;
+                float bearing  = Mathf.DeltaAngle(myYaw, towYaw);   // -180 ~ +180
+                float steer    = Mathf.Clamp(bearing / 25f, -1f, 1f); // ±25° → full steer
+                _engine.Accelerate(maxThrottle);
+                _engine.Turn(steer);
+                _prevThrottle = maxThrottle;
+                _prevSteering = steer;
                 return;
             }
 

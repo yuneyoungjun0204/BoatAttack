@@ -45,14 +45,22 @@ namespace BoatAttack
     [System.Serializable]
     public class DefensePair
     {
-        [Tooltip("에이전트 1")]
+        [Tooltip("에이전트 1 (단일 이동 선박)")]
         public DefenseAgent agent1;
 
-        [Tooltip("에이전트 2")]
-        public DefenseAgent agent2;
+        [Tooltip("앵커 오브젝트 (Empty GameObject — DynamicWeb 두 번째 앵커, 선박 없음)")]
+        public GameObject anchorObject;
+
+        // 하위 호환 — null 고정. 직접 접근 금지.
+        [System.NonSerialized] public DefenseAgent agent2 = null;
 
         [Tooltip("Web 오브젝트")]
         public GameObject webObject;
+
+        /// <summary>앵커 위치 헬퍼. anchorObject 없으면 agent1 위치 반환</summary>
+        public Vector3 AnchorPos => anchorObject != null
+            ? anchorObject.transform.position
+            : (agent1 != null ? agent1.transform.position : Vector3.zero);
 
         [HideInInspector] public int assignedZoneIndex = -1;
         [HideInInspector] public bool isActive = false;
@@ -252,7 +260,7 @@ namespace BoatAttack
             GenerateLaunchZones();
 
             // templatePair가 없으면 프리팹에서 자동 생성
-            if (templatePair == null || templatePair.agent1 == null || templatePair.agent2 == null)
+            if (templatePair == null || templatePair.agent1 == null || templatePair.anchorObject == null)
             {
                 if (defenseBoatPrefab != null)
                 {
@@ -266,7 +274,7 @@ namespace BoatAttack
                 }
             }
 
-            if (templatePair == null || templatePair.agent1 == null || templatePair.agent2 == null)
+            if (templatePair == null || templatePair.agent1 == null || templatePair.anchorObject == null)
             {
                 // Debug.LogError("[LaunchZoneManager] InitializeAllyPool: 템플릿 생성 실패!");
                 return;
@@ -281,7 +289,7 @@ namespace BoatAttack
 
             // 템플릿 오브젝트 비활성화 (더 이상 사용 안 함, 충돌 방지)
             if (templatePair.agent1 != null) templatePair.agent1.gameObject.SetActive(false);
-            if (templatePair.agent2 != null) templatePair.agent2.gameObject.SetActive(false);
+            if (templatePair.anchorObject != null) templatePair.anchorObject.SetActive(false);
             if (templatePair.webObject != null) templatePair.webObject.SetActive(false);
 
             _initialized = true;
@@ -303,76 +311,43 @@ namespace BoatAttack
             agent1Obj.name = "DefenseAgent1_template";
             agent1Obj.transform.position = HIDDEN_POS;
 
-            // Agent2
-            GameObject agent2Obj = Instantiate(defenseBoatPrefab, poolParent);
-            agent2Obj.name = "DefenseAgent2_template";
-            agent2Obj.transform.position = HIDDEN_POS + Vector3.right * 50f;
-
             var da1 = agent1Obj.GetComponent<DefenseAgent>();
-            var da2 = agent2Obj.GetComponent<DefenseAgent>();
+            if (da1 == null) { Destroy(agent1Obj); return; }
 
-            if (da1 == null || da2 == null)
-            {
-                // Debug.LogError("[LaunchZoneManager] defenseBoatPrefab에 DefenseAgent 컴포넌트가 없습니다!");
-                if (da1 == null) Destroy(agent1Obj);
-                if (da2 == null) Destroy(agent2Obj);
-                return;
-            }
+            // ONE-WAY TOWING: agent2 선박 없음 — empty anchor GameObject만 생성
+            GameObject anchorObj = new GameObject("Anchor_template");
+            anchorObj.transform.SetParent(poolParent);
+            anchorObj.transform.position = HIDDEN_POS + Vector3.right * 50f;
 
             // Web 생성
             GameObject webObj = CreateWebObject(poolParent);
 
-            // 교차 참조 설정
-            da1.partnerAgent = da2;
-            da2.partnerAgent = da1;
             da1.webObject = webObj;
-            da2.webObject = webObj;
+            if (motherShip != null) da1.motherShip = motherShip;
+            if (envController != null) da1.envController = envController;
 
-            if (motherShip != null)
-            {
-                da1.motherShip = motherShip;
-                da2.motherShip = motherShip;
-            }
-            if (envController != null)
-            {
-                da1.envController = envController;
-                da2.envController = envController;
-            }
-
-            // DynamicWeb 설정 (없으면 추가 — 그물 누락 절대 방지)
+            // DynamicWeb: ship1=agent1, ship2=anchor (empty Transform)
             var dw = webObj.GetComponent<DynamicWeb>();
-            if (dw == null)
-            {
-                Debug.LogWarning("[CreateTemplateFromPrefab] DynamicWeb 컴포넌트 없음 → 추가");
-                dw = webObj.AddComponent<DynamicWeb>();
-            }
+            if (dw == null) dw = webObj.AddComponent<DynamicWeb>();
             dw.defenseShip1 = agent1Obj.transform;
-            dw.defenseShip2 = agent2Obj.transform;
-            if (envController != null)
-                dw.envController = envController;
+            dw.defenseShip2 = anchorObj.transform;
+            if (envController != null) dw.envController = envController;
 
             var wd = webObj.GetComponent<WebCollisionDetector>();
             if (wd == null) wd = webObj.AddComponent<WebCollisionDetector>();
             if (envController != null) wd.envController = envController;
 
-            // BufferSensor 크기 보정
             NormalizeBufferSensor(da1);
-            NormalizeBufferSensor(da2);
 
-            // templatePair 설정
-            if (templatePair == null)
-                templatePair = new DefensePair();
+            if (templatePair == null) templatePair = new DefensePair();
             templatePair.agent1 = da1;
-            templatePair.agent2 = da2;
+            templatePair.anchorObject = anchorObj;
             templatePair.webObject = webObj;
             da1.useArrowKeys = true;
-            da2.useArrowKeys = false;
 
-            // DefenseEnvController에도 참조 설정
             if (envController != null)
             {
                 envController.defenseAgent1 = da1;
-                envController.defenseAgent2 = da2;
                 envController.webObject = webObj;
             }
 
@@ -430,10 +405,11 @@ namespace BoatAttack
             agent1Clone.name = $"DefenseAgent1_pair{index}";
             pair.agent1 = agent1Clone.GetComponent<DefenseAgent>();
 
-            // Agent2 복제
-            GameObject agent2Clone = Instantiate(templatePair.agent2.gameObject, poolParent);
-            agent2Clone.name = $"DefenseAgent2_pair{index}";
-            pair.agent2 = agent2Clone.GetComponent<DefenseAgent>();
+            // Anchor: 선박 없음 — 빈 GameObject만 생성 (DynamicWeb 두 번째 앵커)
+            GameObject anchorClone = new GameObject($"Anchor_pair{index}");
+            anchorClone.transform.SetParent(poolParent);
+            anchorClone.transform.position = HIDDEN_POS + Vector3.right * (index * 100f + 50f);
+            pair.anchorObject = anchorClone;
 
             // Web 복제 (템플릿 web이 없으면 새로 생성 — 그물 누락 절대 방지)
             if (templatePair.webObject != null)
@@ -442,7 +418,6 @@ namespace BoatAttack
                 webClone.name = $"Web_pair{index}";
 
                 // Instantiate 시 복제된 비주얼 자식 즉시 제거 (Start()에서 새로 생성됨)
-                // DestroyImmediate 사용: Destroy()는 프레임 끝에 실행되어 DynamicWeb.Start()와 경합
                 for (int ci = webClone.transform.childCount - 1; ci >= 0; ci--)
                 {
                     GameObject child = webClone.transform.GetChild(ci).gameObject;
@@ -461,44 +436,29 @@ namespace BoatAttack
 
             // Engine.RB 안전 초기화 (Boat.Awake 타이밍 이슈 방지)
             EnsureEngineRB(agent1Clone);
-            EnsureEngineRB(agent2Clone);
 
-            // BufferSensor 크기 보정 (inactive 클론은 Awake 미호출이므로 여기서 강제)
+            // BufferSensor 크기 보정
             NormalizeBufferSensor(pair.agent1);
-            NormalizeBufferSensor(pair.agent2);
 
-            // 파트너/Web 교차 참조 설정
-            pair.agent1.partnerAgent = pair.agent2;
-            pair.agent2.partnerAgent = pair.agent1;
+            // Web 교차 참조 설정
+            pair.agent1.partnerAgent = null;
             pair.agent1.webObject = pair.webObject;
-            pair.agent2.webObject = pair.webObject;
-
-            // Heuristic 키 분리: agent1=화살표, agent2=WASD
             pair.agent1.useArrowKeys = true;
-            pair.agent2.useArrowKeys = false;
 
             // 모선 참조
             if (motherShip != null)
-            {
                 pair.agent1.motherShip = motherShip;
-                pair.agent2.motherShip = motherShip;
-            }
 
             // envController 참조
             if (envController != null)
             {
                 pair.agent1.envController = envController;
-                pair.agent2.envController = envController;
 
-                // Stage4: OnEnable 전 InferenceOnly 사전 설정
                 if (envController.IsCommanderStage() && envController.defenseOnnxModel != null)
-                {
                     SetAgentInferenceOnly(pair.agent1, envController.defenseOnnxModel);
-                    SetAgentInferenceOnly(pair.agent2, envController.defenseOnnxModel);
-                }
             }
 
-            // WebCollisionDetector/DynamicWeb 설정 (envController 유무와 무관하게 ship 참조는 반드시 설정)
+            // WebCollisionDetector/DynamicWeb 설정
             if (pair.webObject != null)
             {
                 var webDetector = pair.webObject.GetComponent<WebCollisionDetector>();
@@ -513,21 +473,16 @@ namespace BoatAttack
                     Debug.LogWarning($"[CreatePairClone] DynamicWeb 컴포넌트 없음 → 추가 (pair{index})");
                     dynamicWeb = pair.webObject.AddComponent<DynamicWeb>();
                 }
-                // Instantiate가 원본의 _initialized=true, _netContainer=원본참조를 복사하므로 리셋
                 dynamicWeb.ResetCloneState();
                 dynamicWeb.defenseShip1 = pair.agent1.transform;
-                dynamicWeb.defenseShip2 = pair.agent2.transform;
+                dynamicWeb.defenseShip2 = anchorClone.transform;  // empty anchor as second point
                 if (envController != null)
                     dynamicWeb.envController = envController;
 
-                // parentDynamicWeb 명시 설정 (auto-detection 타이밍 문제 방지 — DynamicWeb 초기화 후)
                 webDetector.parentDynamicWeb = dynamicWeb;
-
-                // 복제된 Web의 webAnchor가 원본 선박을 가리키므로 복제 선박의 자식으로 재할당
-                RemapWebAnchor(dynamicWeb, templatePair, pair);
             }
 
-            Debug.LogWarning($"[CreatePairClone] index={index}, a1={agent1Clone.name}, a2={agent2Clone.name}, " +
+            Debug.LogWarning($"[CreatePairClone] index={index}, a1={agent1Clone.name}, anchor={anchorClone.name}, " +
                 $"web={pair.webObject?.name}, a1Engine={pair.agent1?._engine != null}, " +
                 $"a1RB={pair.agent1?._engine?.RB != null}");
 
@@ -725,10 +680,7 @@ namespace BoatAttack
 
                 // 적군 배열 전달
                 if (enemies != null)
-                {
                     pair.agent1.enemyShips = enemies;
-                    pair.agent2.enemyShips = enemies;
-                }
 
                 // 클러스터 배정: pairCenter에서 가장 가까운 미배정 클러스터 선택
                 int clusterIdx = enemyClusters.Count > 0
@@ -746,54 +698,47 @@ namespace BoatAttack
                 Quaternion rot = Quaternion.Euler(0f, rearDeg, 0f);
                 Vector3 perpRight = new Vector3(zoneDir.z, 0f, -zoneDir.x);
 
-                float spawnWidth = 30f;
-
-                // agent1 = 왼쪽(-perpRight), agent2 = 오른쪽(+perpRight)
-                Vector3 pos1 = pairCenter + (-perpRight) * (spawnWidth * 0.5f);
+                // 단일 선박 spawn: agent1만 이동, anchorObject는 agent1과 동일 위치에 배치
+                // UpdateKinematicAnchors()가 매 FixedUpdate마다 anchorObject를 agent1 위치로 추종
+                Vector3 pos1 = pairCenter;
                 pos1.y = _templateAgent1Y;
-                Vector3 pos2 = pairCenter + perpRight * (spawnWidth * 0.5f);
-                pos2.y = _templateAgent2Y;
 
-                // 에이전트 위치/회전 설정 (ResetForDeployment 내부에서 assignedTargetIndex=-1 됨)
                 ResetAgent(pair.agent1, pos1, rot);
-                ResetAgent(pair.agent2, pos2, rot);
+
+                // anchorObject: agent1과 동일 위치 (그물 dist=0 → 자동 숨김)
+                if (pair.anchorObject != null)
+                    pair.anchorObject.transform.position = pos1;
 
                 pair.deployLateralDir = perpRight;
                 pair.prevLateralDir = Vector3.zero;
                 pair.agent1StartsOnLeft = true;
-                Vector3 initWeb = pos2 - pos1; initWeb.y = 0f;
-                pair.initialWebDir = initWeb.sqrMagnitude > 0.01f ? initWeb.normalized : perpRight;
-                pair.initialPartnerBearingSign = 0f; // DefenseEnvController에서 첫 체크 시 lazy 초기화
+                pair.initialWebDir = perpRight;
+                pair.initialPartnerBearingSign = 0f;
+                pair.isSplitting = false;       // 명시적 초기화 — 이전 에피소드 잔류 방지
+                pair.isDisarmed  = false;
 
                 int currentStep = envController != null ? envController.CurrentStep : 0;
                 pair.deployStep = currentStep;
+                pair.splitStartStep = -1;       // 앵커 드롭 전 초기화
                 // 활성화
                 SetPairActive(pi, true);
                 _totalPairsDeployed++;
 
-                // MA-POCA 등록
+                // MA-POCA 등록 (agent1만)
                 if (agentGroup != null)
-                {
                     agentGroup.RegisterAgent(pair.agent1);
-                    agentGroup.RegisterAgent(pair.agent2);
-                }
 
-                // agent1 = 왼쪽, agent2 = 오른쪽 (하드코딩 — 물리 위치와 항상 일치)
                 if (pair.agent1 != null) pair.agent1.isLeftAgent = true;
-                if (pair.agent2 != null) pair.agent2.isLeftAgent = false;
 
-                // 클러스터 타겟 배정 (ResetForDeployment가 -1로 초기화하므로 ResetAgent 후에 설정)
+                // 클러스터 타겟 배정
                 if (clusterIdx >= 0)
                 {
                     int repIdx    = enemyClusters[clusterIdx].representativeIdx;
                     int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
                     if (pair.agent1 != null) pair.agent1.assignedTargetIndex = initTarget;
-                    if (pair.agent2 != null) pair.agent2.assignedTargetIndex = initTarget;
 
-                    // Residual policy용 클러스터 타겟 (OnEpisodeBegin 이후에도 유지)
                     Vector3 centroid = pair.clusterCentroid;
                     if (pair.agent1 != null) pair.agent1.SetClusterTarget(centroid);
-                    if (pair.agent2 != null) pair.agent2.SetClusterTarget(centroid);
                 }
             }
 
@@ -931,7 +876,6 @@ namespace BoatAttack
             if (_seqEnemies != null)
             {
                 if (pair.agent1 != null) pair.agent1.enemyShips = _seqEnemies;
-                if (pair.agent2 != null) pair.agent2.enemyShips = _seqEnemies;
             }
 
             // 클러스터 배정: pairCenter에서 가장 가까운 미배정 클러스터
@@ -944,18 +888,16 @@ namespace BoatAttack
             pair.clusterCentroid     = clusterIdx >= 0 ? _seqClusters[clusterIdx].centroidWorld : Vector3.zero;
             pair.clusterEnemyIndices = clusterIdx >= 0 ? new List<int>(_seqClusters[clusterIdx].enemyIndices) : null;
 
-            // 클러스터 representative를 초기 타겟으로 배정 (배정 고정 — 적 사망 전까지 유지)
+            // 클러스터 representative를 초기 타겟으로 배정
             int repIdx = clusterIdx >= 0 ? _seqClusters[clusterIdx].representativeIdx : -1;
             int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
-            if (pair.agent1 is not null) pair.agent1.assignedTargetIndex = initTarget;
-            if (pair.agent2 is not null) pair.agent2.assignedTargetIndex = initTarget;
+            if (pair.agent1 != null) pair.agent1.assignedTargetIndex = initTarget;
 
             // Residual policy용 클러스터 타겟
             if (clusterIdx >= 0)
             {
                 Vector3 centroid = pair.clusterCentroid;
                 if (pair.agent1 != null) pair.agent1.SetClusterTarget(centroid);
-                if (pair.agent2 != null) pair.agent2.SetClusterTarget(centroid);
             }
 
             // 스폰 방향 = 모선 후미 방향
@@ -963,36 +905,34 @@ namespace BoatAttack
             Quaternion rot = Quaternion.Euler(0f, seqRearDeg, 0f);
             Vector3 perpRightSeq = new Vector3(info.zoneDir.z, 0f, -info.zoneDir.x);
 
-            const float spawnWidth = 30f;
-            // agent1 = 왼쪽(-perpRight), agent2 = 오른쪽(+perpRight)
-            Vector3 pos1 = info.pairCenter + (-perpRightSeq) * (spawnWidth * 0.5f);
+            // 단일 선박 spawn: agent1만 배치, anchorObject는 agent1 위치에 고정
+            Vector3 pos1 = info.pairCenter;
             pos1.y = _templateAgent1Y;
-            Vector3 pos2 = info.pairCenter + perpRightSeq * (spawnWidth * 0.5f);
-            pos2.y = _templateAgent2Y;
 
             ResetAgent(pair.agent1, pos1, rot);
-            ResetAgent(pair.agent2, pos2, rot);
+
+            // anchorObject: agent1과 동일 위치 (그물 dist=0 → 자동 숨김)
+            if (pair.anchorObject != null)
+                pair.anchorObject.transform.position = pos1;
 
             pair.deployLateralDir = perpRightSeq;
             pair.prevLateralDir   = Vector3.zero;
             pair.agent1StartsOnLeft = true;
-            Vector3 initWeb2 = pos2 - pos1; initWeb2.y = 0f;
-            pair.initialWebDir = initWeb2.sqrMagnitude > 0.01f ? initWeb2.normalized : perpRightSeq;
-            pair.initialPartnerBearingSign = 0f; // DefenseEnvController에서 첫 체크 시 lazy 초기화
+            pair.initialWebDir = perpRightSeq;
+            pair.initialPartnerBearingSign = 0f;
+            pair.isSplitting = false;
+            pair.isDisarmed  = false;
 
             int currentStep = envController != null ? envController.CurrentStep : 0;
-            pair.deployStep         = currentStep;
+            pair.deployStep     = currentStep;
+            pair.splitStartStep = -1;
 
             // 예비 페어: Neutralized 상태로 배치, MA-POCA 미등록
             if (asStandby)
             {
                 pair.isStandby = true;
-                if (pair.agent1 is not null) pair.agent1.SetNeutralized(true);
-                if (pair.agent2 is not null) pair.agent2.SetNeutralized(true);
-                // agent1 = 왼쪽, agent2 = 오른쪽 (하드코딩)
+                if (pair.agent1 != null) pair.agent1.SetNeutralized(true);
                 if (pair.agent1 != null) pair.agent1.isLeftAgent = true;
-                if (pair.agent2 != null) pair.agent2.isLeftAgent = false;
-                // SetPairActive만 호출 (위치 확정 + 그물 활성화), MA-POCA 등록 없음
                 SetPairActive(pi, true);
                 _totalPairsDeployed++;
                 Debug.LogWarning($"[DeployNextSequentialPair] #{_seqDeployNext-1}/{_seqSpawnInfos.Count} STANDBY, pi={pi}");
@@ -1006,12 +946,9 @@ namespace BoatAttack
             if (_seqAgentGroup != null)
             {
                 if (pair.agent1 != null) _seqAgentGroup.RegisterAgent(pair.agent1);
-                if (pair.agent2 != null) _seqAgentGroup.RegisterAgent(pair.agent2);
             }
 
-            // agent1 = 왼쪽, agent2 = 오른쪽 (하드코딩 — 물리 위치와 항상 일치)
             if (pair.agent1 != null) pair.agent1.isLeftAgent = true;
-            if (pair.agent2 != null) pair.agent2.isLeftAgent = false;
 
             Debug.LogWarning($"[DeployNextSequentialPair] #{_seqDeployNext-1}/{_seqSpawnInfos.Count}, pi={pi}, cluster={clusterIdx}");
             return true;
@@ -1394,38 +1331,21 @@ namespace BoatAttack
                     {
                         rb1.velocity = Vector3.zero;
                         rb1.angularVelocity = Vector3.zero;
-                        rb1.isKinematic = true; // 물리 시뮬레이션 중단
+                        rb1.isKinematic = true;
                     }
                 }
-                if (pair.agent2 != null)
-                {
-                    pair.agent2.transform.position = HIDDEN_POS + Vector3.right * (index * 100f + 50f);
-                    if (pair.agent2.TryGetComponent<Rigidbody>(out var rb2))
-                    {
-                        rb2.velocity = Vector3.zero;
-                        rb2.angularVelocity = Vector3.zero;
-                        rb2.isKinematic = true;
-                    }
-                }
+                if (pair.anchorObject != null)
+                    pair.anchorObject.transform.position = HIDDEN_POS + Vector3.right * (index * 100f + 50f);
             }
             else
             {
-                // "활성화": GameObject 활성화 (inactive 클론 대응) + kinematic 해제
-                // 주의: convoy 모드에서 Agent2는 kinematic 유지해야 하므로
-                //       CreateConvoyJoint에서 다시 설정함 (이 메서드는 convoy 전에 호출됨)
+                // "활성화": agent1 kinematic 해제
                 if (pair.agent1 != null)
                 {
                     if (!pair.agent1.gameObject.activeSelf)
                         pair.agent1.gameObject.SetActive(true);
                     if (pair.agent1.TryGetComponent<Rigidbody>(out var rb1))
                         rb1.isKinematic = false;
-                }
-                if (pair.agent2 != null)
-                {
-                    if (!pair.agent2.gameObject.activeSelf)
-                        pair.agent2.gameObject.SetActive(true);
-                    if (pair.agent2.TryGetComponent<Rigidbody>(out var rb2))
-                        rb2.isKinematic = false;
                 }
             }
 
@@ -1499,8 +1419,8 @@ namespace BoatAttack
             // 3. defenseShip 참조 확인 및 복구
             if (pair.agent1 != null && dynamicWeb.defenseShip1 != pair.agent1.transform)
                 dynamicWeb.defenseShip1 = pair.agent1.transform;
-            if (pair.agent2 != null && dynamicWeb.defenseShip2 != pair.agent2.transform)
-                dynamicWeb.defenseShip2 = pair.agent2.transform;
+            if (pair.anchorObject != null && dynamicWeb.defenseShip2 != pair.anchorObject.transform)
+                dynamicWeb.defenseShip2 = pair.anchorObject.transform;
 
             // 4. envController 참조 확인
             if (envController != null && dynamicWeb.envController == null)
@@ -1604,14 +1524,12 @@ namespace BoatAttack
             if (pair == null || !pair.isActive || !pair.isStandby) return false;
 
             pair.isStandby = false;
-            if (pair.agent1 is not null) pair.agent1.SetNeutralized(false);
-            if (pair.agent2 is not null) pair.agent2.SetNeutralized(false);
+            if (pair.agent1 != null) pair.agent1.SetNeutralized(false);
 
             // MA-POCA 등록
             if (agentGroup != null)
             {
-                if (pair.agent1 is not null) agentGroup.RegisterAgent(pair.agent1);
-                if (pair.agent2 is not null) agentGroup.RegisterAgent(pair.agent2);
+                if (pair.agent1 != null) agentGroup.RegisterAgent(pair.agent1);
             }
 
             // 클러스터 배정 + 가이던스
@@ -1622,13 +1540,10 @@ namespace BoatAttack
                     ? new System.Collections.Generic.List<int>(cluster.Value.enemyIndices) : null;
                 int repIdx     = cluster.Value.representativeIdx;
                 int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
-                if (pair.agent1 is not null) pair.agent1.assignedTargetIndex = initTarget;
-                if (pair.agent2 is not null) pair.agent2.assignedTargetIndex = initTarget;
+                if (pair.agent1 != null) pair.agent1.assignedTargetIndex = initTarget;
 
-                // Residual policy용 클러스터 타겟
                 Vector3 centroid = pair.clusterCentroid;
                 pair.agent1?.SetClusterTarget(centroid);
-                pair.agent2?.SetClusterTarget(centroid);
             }
 
             _deployedPairCount++;
@@ -1642,8 +1557,7 @@ namespace BoatAttack
         private bool IsPairNeutralized(DefensePair pair)
         {
             if (pair == null) return false;
-            return pair.agent1 != null && pair.agent1.IsNeutralized
-                && pair.agent2 != null && pair.agent2.IsNeutralized;
+            return pair.agent1 != null && pair.agent1.IsNeutralized;
         }
 
         /// <summary>
@@ -1830,12 +1744,12 @@ namespace BoatAttack
             if (enemies != null)
             {
                 pair.agent1.enemyShips = enemies;
-                pair.agent2.enemyShips = enemies;
+                if (pair.agent2 != null) pair.agent2.enemyShips = enemies;
             }
 
             // ResetAgent (ResetForDeployment에서 assignedTargetIndex=-1)
             ResetAgent(pair.agent1, pos1, rot);
-            ResetAgent(pair.agent2, pos2, rot);
+            ResetAgent(pair.agent2, pos2, rot);  // agent2 null이면 내부에서 return
 
             pair.deployLateralDir = singlePerp;
             pair.prevLateralDir = Vector3.zero;
@@ -1849,7 +1763,7 @@ namespace BoatAttack
             if (agentGroup != null)
             {
                 agentGroup.RegisterAgent(pair.agent1);
-                agentGroup.RegisterAgent(pair.agent2);
+                if (pair.agent2 != null) agentGroup.RegisterAgent(pair.agent2);
             }
 
             _deployedPairCount++;
@@ -1885,54 +1799,43 @@ namespace BoatAttack
         {
             Transform parent = transform;
 
-            // Agent1: 프리팹에서 pos1 위치에 직접 생성
+            // Agent1: 프리팹에서 pos1 위치에 직접 생성 (단일 선박)
             GameObject a1Obj = Instantiate(defenseBoatPrefab, pos1, rot, parent);
             a1Obj.name = $"DefenseAgent1_pair{index}";
             var a1 = a1Obj.GetComponent<DefenseAgent>();
 
-            // Agent2: 프리팹에서 pos2 위치에 직접 생성
-            GameObject a2Obj = Instantiate(defenseBoatPrefab, pos2, rot, parent);
-            a2Obj.name = $"DefenseAgent2_pair{index}";
-            var a2 = a2Obj.GetComponent<DefenseAgent>();
-
-            if (a1 == null || a2 == null)
+            if (a1 == null)
             {
                 Debug.LogError($"[SpawnPairFromPrefab] DefenseAgent 컴포넌트 없음! prefab={defenseBoatPrefab.name}");
-                if (a1 == null) Destroy(a1Obj);
-                if (a2 == null) Destroy(a2Obj);
+                Destroy(a1Obj);
                 return null;
             }
+
+            // Anchor: empty GameObject (DynamicWeb 두 번째 앵커, 선박 없음)
+            GameObject anchorObj = new GameObject($"Anchor_pair{index}");
+            anchorObj.transform.SetParent(parent);
+            anchorObj.transform.position = pos1;  // 초기에는 agent1과 동일 위치
 
             // Web 생성
             GameObject webObj = CreateWebObject(parent);
             webObj.name = $"Web_pair{index}";
-            webObj.transform.position = (pos1 + pos2) * 0.5f;
+            webObj.transform.position = pos1;
 
-            // 교차 참조 설정
             DefensePair pair = new DefensePair();
             pair.agent1 = a1;
-            pair.agent2 = a2;
+            pair.anchorObject = anchorObj;
             pair.webObject = webObj;
 
-            a1.partnerAgent = a2;
-            a2.partnerAgent = a1;
+            a1.partnerAgent = null;
             a1.webObject = webObj;
-            a2.webObject = webObj;
             a1.useArrowKeys = true;
-            a2.useArrowKeys = false;
 
             if (motherShip != null)
-            {
                 a1.motherShip = motherShip;
-                a2.motherShip = motherShip;
-            }
             if (envController != null)
-            {
                 a1.envController = envController;
-                a2.envController = envController;
-            }
 
-            // Web 컴포넌트 설정 (envController 유무와 무관하게 ship 참조는 반드시 설정)
+            // Web 컴포넌트 설정
             {
                 var webDetector = webObj.GetComponent<WebCollisionDetector>();
                 if (webDetector == null) webDetector = webObj.AddComponent<WebCollisionDetector>();
@@ -1945,26 +1848,19 @@ namespace BoatAttack
                     Debug.LogWarning($"[SpawnPairFromPrefab] DynamicWeb 컴포넌트 없음 → 추가 (pair{index})");
                     dynamicWeb = webObj.AddComponent<DynamicWeb>();
                 }
-                // Instantiate가 원본의 _initialized=true, _netContainer=원본참조를 복사하므로 리셋
                 dynamicWeb.ResetCloneState();
                 dynamicWeb.defenseShip1 = a1.transform;
-                dynamicWeb.defenseShip2 = a2.transform;
+                dynamicWeb.defenseShip2 = anchorObj.transform;
                 dynamicWeb.webAnchor1 = null;
                 dynamicWeb.webAnchor2 = null;
                 if (envController != null)
                     dynamicWeb.envController = envController;
 
-                // parentDynamicWeb 명시 설정 (auto-detection 타이밍 문제 방지 — DynamicWeb 초기화 후)
                 webDetector.parentDynamicWeb = dynamicWeb;
             }
 
-            // Engine.RB 확인
             EnsureEngineRB(a1Obj);
-            EnsureEngineRB(a2Obj);
-
-            // BufferSensor 크기 보정 (프리팹 Inspector 불일치 방지)
             NormalizeBufferSensor(a1);
-            NormalizeBufferSensor(a2);
 
             pair.isActive = false; // SetPairActive에서 true로 변경됨
             return pair;
@@ -2296,7 +2192,11 @@ namespace BoatAttack
 
             // 에이전트 위치/회전 리셋
             ResetAgent(pair.agent1, pos1, rotation);
-            ResetAgent(pair.agent2, pos2, rotation);
+            ResetAgent(pair.agent2, pos2, rotation);  // agent2 null → ResetAgent 내부에서 return
+
+            // anchorObject: pos2 위치에 배치 (chase: 웹 초기 폭 설정)
+            if (pair.anchorObject != null)
+                pair.anchorObject.transform.position = pos2;
 
             // 상태 플래그
             pair.isDisarmed   = true;
