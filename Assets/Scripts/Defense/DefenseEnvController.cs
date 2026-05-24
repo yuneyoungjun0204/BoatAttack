@@ -93,15 +93,18 @@ namespace BoatAttack
 
         [Header("=== Split & Separation ===")]
         [Tooltip("적이 이 거리 이하로 접근하면 앵커 드롭 시작 (m). 권장: 100~200m")]
-        [Range(50f, 500f)]
-        public float splitTriggerDistance = 150f;
+        [Range(1000f, 10000f)]
+        public float splitTriggerDistance = 1000f;
         [Tooltip("분리 시 좌/우 조향 강도 (0~3, IST: 3)")]
         [Range(0f, 3f)]
         public float splitSteerStrength = 3f;
+        [Tooltip("선박-앵커 거리가 이 이상이면 그물이 화면에 등장 (m). DynamicWeb.minWebActiveDist를 에피소드마다 이 값으로 동기화. IST: 20m")]
+        [Range(1f, 200f)]
+        public float webAppearDist = 20f;
         [Tooltip("선박 간격이 이 이상이면 그물 고정 + 선박 정지 (m). IST: 100m")]
         public float webDeployedThreshold = 100f;
-        [Tooltip("분리 시작 후 최대 허용 스텝. 타임아웃 시 강제 정지 (IST: 200)")]
-        public int deployMaxSteps = 200;
+        [Tooltip("분리 시작 후 최대 허용 스텝. 타임아웃 시 강제 정지 — webDeployedThreshold에 도달하지 못했을 때만 발동하는 안전망. (5m/s × 2000step×0.02s = 200m)")]
+        public int deployMaxSteps = 2000;
         [Tooltip("파트너 선박과 이 거리 이상 멀어지면 해당 페어 비활성화 (m). 분리 전에만 적용")]
         public float maxPairSeparation = 200f;
         [Tooltip("포획 후 그물+선박 유지 (다중 포획 허용). IST: true")]
@@ -1265,12 +1268,24 @@ namespace BoatAttack
                         pair.agent1.AddReward(pairReward);
                     totalStepReward += pairReward;
 
-                    // 개별 헤딩 정렬 보상
-                    if (rewardCalculator.headingAlignmentReward > 0f && activeEnemyArray != null)
+                    // 개별 헤딩 정렬 보상 (그물 전개 중에는 스킵 — RL이 방향 제어 안 함)
+                    if (rewardCalculator.headingAlignmentReward > 0f && activeEnemyArray != null && !pair.isSplitting)
                     {
                         float h1 = rewardCalculator.CalculateIndividualHeadingReward(a1State, activeEnemyArray);
                         if (h1 != 0f) pair.agent1.AddReward(h1);
                         totalStepReward += h1;
+                    }
+
+                    // 그물 전개 중 앵커 거리 증가 보상 (One-Way Towing)
+                    if (pair.isSplitting && pair.anchorObject != null && pair.agent1 != null)
+                    {
+                        float anchorDist = Vector3.Distance(pair.agent1.transform.position, pair.anchorObject.transform.position);
+                        float growthReward = rewardCalculator.CalculateWebGrowthReward(pi, anchorDist);
+                        if (growthReward != 0f)
+                        {
+                            pair.agent1.AddReward(growthReward);
+                            totalStepReward += growthReward;
+                        }
                     }
                 }
             }
@@ -2549,7 +2564,7 @@ namespace BoatAttack
                 // ── ONE-WAY TOWING: 적 근접 시 앵커 드롭 + 횡단 시작 (한 번만) ──
                 {
                     float nearestEnemy = GetNearestActiveEnemyDistToPair(pair);
-                    float effectiveTrigger = Mathf.Clamp(splitTriggerDistance, 50f, 500f);
+                    float effectiveTrigger = Mathf.Max(splitTriggerDistance, 1f);
                     if (nearestEnemy < effectiveTrigger)
                     {
                         // anchorObject를 현재 위치에 고정 (UpdateKinematicAnchors가 이미 동기화 중)
@@ -4687,14 +4702,20 @@ namespace BoatAttack
                 if (pair?.webObject == null) continue;
                 var dw = pair.webObject.GetComponent<DynamicWeb>();
                 if (dw != null)
+                {
                     dw.SetFishingNetVisual(!lightweightMode);
+                    dw.minWebActiveDist = webAppearDist;  // Inspector 값 → 그물 등장 거리 동기화
+                }
             }
             // 단독 웹 오브젝트도 처리
             if (webObject != null)
             {
                 var dw = webObject.GetComponent<DynamicWeb>();
                 if (dw != null)
+                {
                     dw.SetFishingNetVisual(!lightweightMode);
+                    dw.minWebActiveDist = webAppearDist;
+                }
             }
         }
 

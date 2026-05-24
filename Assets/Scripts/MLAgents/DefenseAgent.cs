@@ -50,7 +50,10 @@ namespace BoatAttack
         public int maxEnemyCount = 5;
 
         [Header("Target Settings")]
-        public DefenseAgent partnerAgent;        public GameObject motherShip;
+        public DefenseAgent partnerAgent;
+        [Tooltip("One-Way Towing 앵커 Transform (LaunchZoneManager에서 자동 할당)")]
+        [HideInInspector] public Transform anchorTransform;
+        public GameObject motherShip;
         public string motherShipTag = "MotherShip";
         public GameObject webObject;
 
@@ -1149,10 +1152,10 @@ namespace BoatAttack
                 return;
             }
 
-            // [0] isLeftAgent: 좌측 선박=1, 우측=0 (RL 대형 대칭 파괴)
-            float isLeftObs = isLeftAgent ? 1f : 0f;
-            sensor.AddObservation(isLeftObs);
-            lastObservations[0] = isLeftObs;
+            // [0] 그물 전개 중 여부 (One-Way Towing: _towMode=true이면 횡단 스윕 중)
+            float isTowObs = _towMode ? 1f : 0f;
+            sensor.AddObservation(isTowObs);
+            lastObservations[0] = isTowObs;
 
             // [1] 모선 거리
             float motherDistNorm = 0f;
@@ -1166,26 +1169,54 @@ namespace BoatAttack
             sensor.AddObservation(motherDistNorm);
             lastObservations[1] = motherDistNorm;
 
-            // [2][3][4] 파트너 관측 (dist, hdgDiff, bearing)
+            // [2][3][4] One-Way Towing 앵커 관측
             {
-                float myAngle = transform.eulerAngles.y;
-                float pDist = 0f, pHdg = 0f, pBrg = 0f;
-                if (partnerAgent != null)
+                float webProgress = 0f;  // 전개 진행률 (anchorDist / webDeployedThreshold)
+                float anchorBrg   = 0f;  // 앵커 베어링 (agent1 전방 기준 signed -1~1)
+                float webOrtho    = 0f;  // 그물⊥적진로 정렬도 (sin, 1=수직, 0=평행)
+
+                if (anchorTransform != null)
                 {
-                    Vector3 rel = partnerAgent.transform.position - transform.position;
-                    rel.y = 0f;
-                    pDist = NormalizePosition(rel.magnitude, allyPairNormK);
-                    // sin(δ/2): 동일 방향=0, 반대 방향=±1 (적군과 반대 기준)
-                    float pDelta = Mathf.DeltaAngle(myAngle, partnerAgent.transform.eulerAngles.y);
-                    pHdg  = Mathf.Sin(pDelta * 0.5f * Mathf.Deg2Rad);
-                    pBrg  = ComputeSignedBearing(transform.forward, rel);
+                    Vector3 toAnchor = anchorTransform.position - transform.position;
+                    toAnchor.y = 0f;
+                    float anchorDist = toAnchor.magnitude;
+
+                    // [2] 전개 진행률
+                    float threshold = (envController != null) ? envController.webDeployedThreshold : 100f;
+                    webProgress = threshold > 0f ? Mathf.Clamp(anchorDist / threshold, 0f, 2f) : 0f;
+
+                    // [3] 앵커 베어링 (전방=0, 우=+1, 좌=-1)
+                    if (anchorDist > 0.5f)
+                        anchorBrg = ComputeSignedBearing(transform.forward, toAnchor);
+
+                    // [4] 그물-적 수직 정렬도: sin(그물방향 ∠ 적접근방향)
+                    // _towMode 중에만 의미있음 (anchorDist 충분할 때)
+                    if (_towMode && anchorDist > 1f && enemyShips != null)
+                    {
+                        Vector3 webDir = toAnchor.normalized;
+                        float minDist = float.MaxValue;
+                        Vector3 nearestEnemyPos = Vector3.zero;
+                        for (int ei = 0; ei < enemyShips.Length; ei++)
+                        {
+                            if (enemyShips[ei] == null || !enemyShips[ei].activeInHierarchy) continue;
+                            float ed = Vector3.Distance(transform.position, enemyShips[ei].transform.position);
+                            if (ed < minDist) { minDist = ed; nearestEnemyPos = enemyShips[ei].transform.position; }
+                        }
+                        if (minDist < float.MaxValue)
+                        {
+                            Vector3 toEnemy = (nearestEnemyPos - transform.position); toEnemy.y = 0f;
+                            if (toEnemy.sqrMagnitude > 0.01f)
+                                webOrtho = Vector3.Cross(webDir, toEnemy.normalized).y; // sin값, ±1
+                        }
+                    }
                 }
-                sensor.AddObservation(pDist);
-                sensor.AddObservation(pHdg);
-                sensor.AddObservation(pBrg);
-                lastObservations[2] = pDist;
-                lastObservations[3] = pHdg;
-                lastObservations[4] = pBrg;
+
+                sensor.AddObservation(webProgress);
+                sensor.AddObservation(anchorBrg);
+                sensor.AddObservation(webOrtho);
+                lastObservations[2] = webProgress;
+                lastObservations[3] = anchorBrg;
+                lastObservations[4] = webOrtho;
             }
 
             // [5] LOS 베이스라인 조향 명령 [-1, 1]

@@ -443,6 +443,7 @@ namespace BoatAttack
             // Web 교차 참조 설정
             pair.agent1.partnerAgent = null;
             pair.agent1.webObject = pair.webObject;
+            pair.agent1.anchorTransform = anchorClone.transform;  // One-Way Towing 앵커
             pair.agent1.useArrowKeys = true;
 
             // 모선 참조
@@ -728,7 +729,11 @@ namespace BoatAttack
                 if (agentGroup != null)
                     agentGroup.RegisterAgent(pair.agent1);
 
-                if (pair.agent1 != null) pair.agent1.isLeftAgent = true;
+                if (pair.agent1 != null)
+                {
+                    pair.agent1.isLeftAgent = true;
+                    pair.agent1.anchorTransform = pair.anchorObject?.transform;
+                }
 
                 // 클러스터 타겟 배정
                 if (clusterIdx >= 0)
@@ -1828,6 +1833,7 @@ namespace BoatAttack
 
             a1.partnerAgent = null;
             a1.webObject = webObj;
+            a1.anchorTransform = anchorObj.transform;  // One-Way Towing 앵커
             a1.useArrowKeys = true;
 
             if (motherShip != null)
@@ -2243,6 +2249,9 @@ namespace BoatAttack
             // SingleNet 재확인 (OnEpisodeBegin 분기가 호출했을 것이나 안전하게 덮어씀)
             if (pair.agent1 != null) pair.agent1.ActivateSingleNet();
             if (pair.agent2 != null) pair.agent2.ActivateSingleNet();
+
+            // One-Way Towing 앵커 할당
+            if (pair.agent1 != null) pair.agent1.anchorTransform = pair.anchorObject?.transform;
 
             Debug.Log($"[SpawnChaseReadyPair] pi={pi} pos1={pos1:F1} pos2={pos2:F1} webCenter={webCenter:F1} guidanceSteps={guidanceSteps}");
         }

@@ -10,7 +10,7 @@ namespace BoatAttack
     public class DefenseRewardCalculator : MonoBehaviour
     {
         [Header("=== 매 스텝 보상 ===")]
-        [Tooltip("LOS 수직 방향 대형 보상 (두 선박이 LOS 기준 수직으로 벌어질수록). 권장: 0.002")]
+        [Tooltip("LOS 수직 방향 대형 보상 (두 선박이 LOS 기준 수직으로 벌어질수록). 권장: 0.002\n[One-Way Towing에서는 0 권장 — 파트너 없어 자동 0이지만 명시적으로 0 설정]")]
         public float formationReward = 0.002f;
 
         [Tooltip("LOS 수직 방향 최적 간격 (m). 두 선박이 이 간격이 될 때 최대 보상. 권장: 100m")]
@@ -35,11 +35,15 @@ namespace BoatAttack
         public float losThrottleAlignmentCoeff = 0.001f;
 
         [Header("=== 선회 대형 보상 ===")]
-        [Tooltip("그물이 optimalDistance보다 줄어드는 속도에 비례한 페널티 (선회 외곽 선박 가속 유도). 권장: 0.0003")]
+        [Tooltip("그물이 optimalDistance보다 줄어드는 속도에 비례한 페널티 (선회 외곽 선박 가속 유도). 권장: 0.0003\n[One-Way Towing에서는 0 권장 — 그물 전개(증가)를 방해]")]
         public float webShrinkPenalty = 0.0003f;
 
-        [Tooltip("그물이 optimalDistance보다 짧을 때 개별 속도 비례 보상 — 외곽 선박이 더 빠를수록 유리. 권장: 0.0002")]
+        [Tooltip("그물이 optimalDistance보다 짧을 때 개별 속도 비례 보상 — 외곽 선박이 더 빠를수록 유리. 권장: 0.0002\n[One-Way Towing에서는 0 권장]")]
         public float webSpeedBonus = 0.0002f;
+
+        [Header("=== One-Way Towing 전개 보상 ===")]
+        [Tooltip("그물 전개 중(isSplitting) anchorDist 1m 증가당 보상. 권장: 0.002")]
+        public float webGrowthRewardCoeff = 0.002f;
 
         [Header("=== Raycast 차단 보상 ===")]
         [Tooltip("적→모선 Ray가 Web에 닿을 때 해당 쌍에 매 스텝 보상. 권장: 0.002")]
@@ -101,6 +105,10 @@ namespace BoatAttack
 
         // 쌍별 이전 스텝 그물 길이 (선회 대형 보상용)
         private readonly System.Collections.Generic.Dictionary<int, float> _prevWebLength
+            = new System.Collections.Generic.Dictionary<int, float>();
+
+        // 쌍별 이전 스텝 앵커 거리 (One-Way Towing 전개 보상용)
+        private readonly System.Collections.Generic.Dictionary<int, float> _prevAnchorDist
             = new System.Collections.Generic.Dictionary<int, float>();
 
         /// <summary>에이전트 상태</summary>
@@ -242,11 +250,29 @@ namespace BoatAttack
             return minDist;
         }
 
+        /// <summary>
+        /// One-Way Towing: 그물 전개 중 anchorDist 증가분에 비례한 보상.
+        /// isSplitting=true인 스텝에서만 호출할 것.
+        /// </summary>
+        public float CalculateWebGrowthReward(int pairIdx, float anchorDist)
+        {
+            if (webGrowthRewardCoeff <= 0f) return 0f;
+            if (!_prevAnchorDist.TryGetValue(pairIdx, out float prevDist))
+            {
+                _prevAnchorDist[pairIdx] = anchorDist;
+                return 0f;
+            }
+            float delta = anchorDist - prevDist;
+            _prevAnchorDist[pairIdx] = anchorDist;
+            return delta > 0f ? webGrowthRewardCoeff * delta : 0f;
+        }
+
         /// <summary>에피소드 시작 시 리셋</summary>
         public void Reset()
         {
             _prevWebToEnemyDist.Clear();
             _prevWebLength.Clear();
+            _prevAnchorDist.Clear();
         }
     }
 }
