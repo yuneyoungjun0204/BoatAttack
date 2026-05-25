@@ -129,6 +129,13 @@ namespace BoatAttack
         [Tooltip("같은 구역에서 다수 쌍 생성 시 전후 간격 (m) — 겹침 방지")]
         public float pairDepthStagger = 20f;
 
+        /// <summary>
+        /// DefenseEnvController가 DeployPairs 직전에 설정하는 횡 오프셋.
+        /// towDir 반대 방향으로 스폰 위치를 밀어 스윕 공간을 확보한다.
+        /// </summary>
+        [HideInInspector] public float additionalLateralOffset = 0f;
+        [HideInInspector] public Vector3 additionalLateralDir   = Vector3.right;
+
         [HideInInspector]
         public LaunchZone[] launchZones;
 
@@ -661,7 +668,11 @@ namespace BoatAttack
                     float depthOffset   = j * effectiveStagger - totalDepth * 0.5f;
                     Vector3 pairCenter  = basePos + headingDir * depthOffset + lateralDir * lateralOffset;
 
-                    Debug.LogWarning($"[DeployPairs] j={j} pairCenter={pairCenter} zoneAngle={zone.angleDeg:F1}° lat={lateralOffset:F1} depth={depthOffset:F1}");
+                    // One-Way Towing: towDir 반대 방향으로 스폰 오프셋 (스윕 공간 확보)
+                    if (Mathf.Abs(additionalLateralOffset) > 0.1f)
+                        pairCenter += additionalLateralDir * additionalLateralOffset;
+
+                    Debug.LogWarning($"[DeployPairs] j={j} pairCenter={pairCenter} zoneAngle={zone.angleDeg:F1}° lat={lateralOffset:F1} depth={depthOffset:F1} towOffset={additionalLateralOffset:F1}");
                     spawnInfos.Add((pi, pairCenter, headingDir, zoneIdx, zone.angleDeg));
                 }
             }
@@ -840,6 +851,10 @@ namespace BoatAttack
                     float totalDepth       = (pairIndices.Count - 1) * effectiveStagger;
                     float depthOffset      = j * effectiveStagger - totalDepth * 0.5f;
                     Vector3 pairCenter     = basePos + seqHDir * depthOffset + seqLateral * lateralOffset;
+
+                    // One-Way Towing: towDir 반대 방향으로 스폰 오프셋
+                    if (Mathf.Abs(additionalLateralOffset) > 0.1f)
+                        pairCenter += additionalLateralDir * additionalLateralOffset;
 
                     _seqSpawnInfos.Add(new SeqSpawnInfo
                     {

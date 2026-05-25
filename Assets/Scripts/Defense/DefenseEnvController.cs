@@ -9,6 +9,8 @@ namespace BoatAttack
     /// <summary>
     /// 커리큘럼 학습 단계
     /// </summary>
+    public enum TowDirOverride { Auto, ForceLeft, ForceRight }
+
     public enum TrainingStage
     {
         Stage1_Formation,   // 대형 유지 학습
@@ -98,6 +100,22 @@ namespace BoatAttack
         [Tooltip("분리 시 좌/우 조향 강도 (0~3, IST: 3)")]
         [Range(0f, 3f)]
         public float splitSteerStrength = 3f;
+
+        [Header("=== One-Way Towing 방향 판단 ===")]
+        [Tooltip("Auto=기하학 자동 결정 / ForceLeft=항상 왼쪽 / ForceRight=항상 오른쪽 (디버깅용)")]
+        public TowDirOverride towDirectionOverride = TowDirOverride.Auto;
+        [Tooltip("적 예측 시간(초). 클수록 미래 진로 기준으로 스윕 방향 결정. 권장: 3~8")]
+        [Range(0f, 15f)]
+        public float towSweepLookahead = 5f;
+        [Tooltip("적 속도 근사값(m/s). 0이면 enemyRushThrottle × 10 자동 계산")]
+        [Range(0f, 30f)]
+        public float enemyApproachSpeed = 0f;
+        [Tooltip("스윕 시작 전 선박을 반대 방향으로 오프셋(m). 스윕 공간 확보. 권장: 200~400m")]
+        [Range(0f, 1000f)]
+        public float towLateralSpawnOffset = 300f;
+        [Tooltip("towLateralSpawnOffset에 더해지는 ±jitter(m). 과적합 방지. 권장: 10~20m")]
+        [Range(0f, 50f)]
+        public float towLateralJitter = 15f;
         [Tooltip("선박-앵커 거리가 이 이상이면 그물이 화면에 등장 (m). DynamicWeb.minWebActiveDist를 에피소드마다 이 값으로 동기화. IST: 20m")]
         [Range(1f, 200f)]
         public float webAppearDist = 20f;
@@ -1249,8 +1267,25 @@ namespace BoatAttack
                     if (pair == null || !pair.isActive || pair.isDisarmed) continue;
                     if (pair.agent1 == null) continue;
                     if (pair.agent1.IsNeutralized) continue;
-                    if (pair.isSplitting) continue; // 분리 전개 중 — 보상 스킵
 
+                    // 분리 전개 중(isSplitting): 그물 성장 보상만 지급 후 일반 보상 스킵
+                    if (pair.isSplitting)
+                    {
+                        if (pair.anchorObject != null)
+                        {
+                            float anchorDist = Vector3.Distance(
+                                pair.agent1.transform.position, pair.anchorObject.transform.position);
+                            float growthReward = rewardCalculator.CalculateWebGrowthReward(pi, anchorDist);
+                            if (growthReward != 0f)
+                            {
+                                pair.agent1.AddReward(growthReward);
+                                totalStepReward += growthReward;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // ── 이하: 접근 단계(isSplitting=false)의 일반 보상 ──
                     var a1State = rewardCalculator.GetAgentState(pair.agent1);
 
                     // 클러스터→모선 LOS 방향 계산 (대형 보상 수직 성분용)
@@ -1268,24 +1303,12 @@ namespace BoatAttack
                         pair.agent1.AddReward(pairReward);
                     totalStepReward += pairReward;
 
-                    // 개별 헤딩 정렬 보상 (그물 전개 중에는 스킵 — RL이 방향 제어 안 함)
-                    if (rewardCalculator.headingAlignmentReward > 0f && activeEnemyArray != null && !pair.isSplitting)
+                    // 헤딩 정렬 보상 (접근 단계에서만 — RL이 방향 제어)
+                    if (rewardCalculator.headingAlignmentReward > 0f && activeEnemyArray != null)
                     {
                         float h1 = rewardCalculator.CalculateIndividualHeadingReward(a1State, activeEnemyArray);
                         if (h1 != 0f) pair.agent1.AddReward(h1);
                         totalStepReward += h1;
-                    }
-
-                    // 그물 전개 중 앵커 거리 증가 보상 (One-Way Towing)
-                    if (pair.isSplitting && pair.anchorObject != null && pair.agent1 != null)
-                    {
-                        float anchorDist = Vector3.Distance(pair.agent1.transform.position, pair.anchorObject.transform.position);
-                        float growthReward = rewardCalculator.CalculateWebGrowthReward(pi, anchorDist);
-                        if (growthReward != 0f)
-                        {
-                            pair.agent1.AddReward(growthReward);
-                            totalStepReward += growthReward;
-                        }
                     }
                 }
             }
@@ -2477,6 +2500,54 @@ namespace BoatAttack
         /// 쌍의 중심에서 가장 가까운 활성 적까지의 거리
         /// </summary>
         /// <summary>
+        /// One-Way Towing 스윕 방향 결정.
+        /// 적의 예측 위치가 선박 forward 기준 어느 쪽인지 cross product로 판단.
+        /// towDirectionOverride가 Auto가 아니면 강제 방향 반환.
+        /// </summary>
+        private Vector3 ComputeTowDir(Vector3 anchorPos, Vector3 fwd)
+        {
+            Vector3 rightPerp = new Vector3(fwd.z, 0f, -fwd.x);
+            Vector3 leftPerp  = new Vector3(-fwd.z, 0f, fwd.x);
+
+            if (towDirectionOverride == TowDirOverride.ForceRight) return rightPerp;
+            if (towDirectionOverride == TowDirOverride.ForceLeft)  return leftPerp;
+
+            // 가장 가까운 활성 적 탐색
+            GameObject nearestEnemyObj = null;
+            float minDist = float.MaxValue;
+            if (enemyShips != null)
+            {
+                foreach (var e in enemyShips)
+                {
+                    if (e == null || !e.activeInHierarchy) continue;
+                    float d = Vector3.Distance(anchorPos, e.transform.position);
+                    if (d < minDist) { minDist = d; nearestEnemyObj = e; }
+                }
+            }
+
+            if (nearestEnemyObj == null) return rightPerp; // fallback
+
+            // 적 예측 위치: 적→모선 방향으로 lookahead초 후 위치
+            float speed = enemyApproachSpeed > 0f
+                ? enemyApproachSpeed
+                : enemyRushThrottle * 10f; // 엔진 최대속도 근사
+            Vector3 enemyPos = nearestEnemyObj.transform.position;
+            Vector3 enemyDir = motherShip != null
+                ? (motherShip.transform.position - enemyPos).normalized
+                : -fwd;
+            Vector3 predictedPos = enemyPos + enemyDir * (speed * towSweepLookahead);
+            predictedPos.y = anchorPos.y;
+
+            // cross product: fwd × toEnemy → y > 0이면 오른쪽
+            Vector3 toEnemy = predictedPos - anchorPos;
+            toEnemy.y = 0f;
+            if (toEnemy.sqrMagnitude < 0.01f) return rightPerp;
+
+            float side = Vector3.Cross(fwd, toEnemy.normalized).y;
+            return side >= 0f ? rightPerp : leftPerp;
+        }
+
+        /// <summary>
         /// 매 스텝: 쌍별 자동 분리(split) 트리거 + 파트너 과분리 비활성화
         /// </summary>
         private void ProcessSplitAndSeparation()
@@ -2575,16 +2646,17 @@ namespace BoatAttack
                             Physics.SyncTransforms();
                         }
 
-                        // towDir: agent1.forward 기준 오른쪽 수직 방향
+                        // towDir: 기하학적으로 최적 방향 결정 (ComputeTowDir)
                         Vector3 fwd = pair.agent1.transform.forward; fwd.y = 0f;
                         if (fwd.sqrMagnitude < 0.01f) fwd = Vector3.forward; else fwd.Normalize();
-                        Vector3 towDir = new Vector3(fwd.z, 0f, -fwd.x);
+                        Vector3 towDir = ComputeTowDir(anchorPos, fwd);
 
                         pair.agent1.SetTowMode(true, towDir);
 
                         pair.isSplitting = true;
                         pair.splitStartStep = _resetTimer;
-                        Debug.Log($"[AnchorDrop] Pair {pi}: anchorPos={anchorPos:F0}, towDir={towDir:F2}, nearestEnemy={nearestEnemy:F1}m, step={_resetTimer}");
+                        string dirLabel = (towDir == new Vector3(fwd.z, 0f, -fwd.x)) ? "RIGHT" : "LEFT";
+                        Debug.Log($"[AnchorDrop] Pair {pi}: dir={dirLabel}, anchorPos={anchorPos:F0}, towDir={towDir:F2}, nearestEnemy={nearestEnemy:F1}m, step={_resetTimer}");
                     }
                 }
             }
@@ -4867,6 +4939,22 @@ namespace BoatAttack
             FormationType formation, float approachAngle, float[] divAngles,
             int totalCount, Vector3 motherPos, SimpleMultiAgentGroup group)
         {
+            // One-Way Towing 스폰 오프셋: 적 접근방향 기준 towDir 미리 계산 → 반대 방향으로 스폰
+            if (launchZoneManager != null && towLateralSpawnOffset > 0.1f)
+            {
+                float approachRad = approachAngle * Mathf.Deg2Rad;
+                Vector3 approachFwd = new Vector3(Mathf.Sin(approachRad), 0f, Mathf.Cos(approachRad));
+                Vector3 previewTowDir = ComputeTowDir(motherPos, approachFwd);
+                // 스폰은 towDir 반대 방향 (스윕 공간 확보)
+                launchZoneManager.additionalLateralDir   = -previewTowDir;
+                launchZoneManager.additionalLateralOffset = towLateralSpawnOffset
+                    + Random.Range(-towLateralJitter, towLateralJitter);
+            }
+            else
+            {
+                if (launchZoneManager != null) launchZoneManager.additionalLateralOffset = 0f;
+            }
+
             launchZoneManager.PrepareSequentialDeploy(
                 formation, approachAngle, divAngles, totalCount, motherPos, group);
 
