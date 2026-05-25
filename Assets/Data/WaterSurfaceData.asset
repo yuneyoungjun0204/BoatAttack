@@ -74,44 +74,44 @@ MonoBehaviour:
     m_NumColorKeys: 3
     m_NumAlphaKeys: 2
   _waves:
-  - amplitude: 4.9
+  - amplitude: 2.5
     direction: -6.03
-    wavelength: 5.09
+    wavelength: 80
     origin:
       x: -53.403767
       y: 105.14393
     onmiDir: 1
-  - amplitude: 1.82
+  - amplitude: 1.2
     direction: 178
-    wavelength: 3.3500388
+    wavelength: 50
     origin:
       x: 0
       y: 0
     onmiDir: 0
-  - amplitude: 0.5
+  - amplitude: 0.8
     direction: 6.532788
-    wavelength: 7.455916
+    wavelength: 40
     origin:
       x: 0
       y: 0
     onmiDir: 1
-  - amplitude: 0.7
+  - amplitude: 0.8
     direction: 4.051435
-    wavelength: 4.6626315
+    wavelength: 35
     origin:
       x: 0
       y: 0
     onmiDir: 1
-  - amplitude: 0.5
+  - amplitude: 0.6
     direction: 2.0216856
-    wavelength: 2.6733496
+    wavelength: 30
     origin:
       x: 0
       y: 0
     onmiDir: 1
-  - amplitude: 0.5
+  - amplitude: 0.6
     direction: -39
-    wavelength: 2.9848163
+    wavelength: 28
     origin:
       x: 0
       y: 0
@@ -120,9 +120,9 @@ MonoBehaviour:
   randomSeed: 98505
   _basicWaveSettings:
     numWaves: 6
-    amplitude: 18
+    amplitude: 3.5
     direction: -68
-    wavelength: 67.9
+    wavelength: 100
   _foamSettings:
     foamType: 0
     basicFoam:

@@ -45,6 +45,9 @@ namespace BoatAttack
         [Tooltip("그물 전개 중(isSplitting) anchorDist 1m 증가당 보상. 권장: 0.002")]
         public float webGrowthRewardCoeff = 0.002f;
 
+        [Tooltip("앵커드롭 시점 즉각 보상 계수. 그물 스윕방향 ⊥ 적 진로일수록 최대(1.0). 권장: 0.3~0.6")]
+        public float anchorDropQualityReward = 0.4f;
+
         [Header("=== Raycast 차단 보상 ===")]
         [Tooltip("적→모선 Ray가 Web에 닿을 때 해당 쌍에 매 스텝 보상. 권장: 0.002")]
         public float raycastInterceptReward = 0.002f;

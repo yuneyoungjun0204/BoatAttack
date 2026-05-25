@@ -94,9 +94,9 @@ namespace BoatAttack
         public int disarmDurationSteps = 50;
 
         [Header("=== Split & Separation ===")]
-        [Tooltip("적이 이 거리 이하로 접근하면 앵커 드롭 시작 (m). 권장: 100~200m")]
-        [Range(1000f, 10000f)]
-        public float splitTriggerDistance = 1000f;
+        [Tooltip("적이 이 거리 이하로 접근하면 앵커 드롭 시작 (m). 권장: 100~300m. enemySpawnDistance보다 충분히 작아야 함")]
+        [Range(10f, 10000f)]
+        public float splitTriggerDistance = 150f;
         [Tooltip("분리 시 좌/우 조향 강도 (0~3, IST: 3)")]
         [Range(0f, 3f)]
         public float splitSteerStrength = 3f;
@@ -2634,7 +2634,7 @@ namespace BoatAttack
 
                 // ── ONE-WAY TOWING: 적 근접 시 앵커 드롭 + 횡단 시작 (한 번만) ──
                 {
-                    float nearestEnemy = GetNearestActiveEnemyDistToPair(pair);
+                    float nearestEnemy = GetNearestActiveEnemyDistToPair(pair, out Vector3 nearestEnemyPos);
                     float effectiveTrigger = Mathf.Max(splitTriggerDistance, 1f);
                     if (nearestEnemy < effectiveTrigger)
                     {
@@ -2655,6 +2655,22 @@ namespace BoatAttack
 
                         pair.isSplitting = true;
                         pair.splitStartStep = _resetTimer;
+
+                        // 앵커드롭 즉각 보상: towDir ⊥ 적 진로일수록 최대 (그물이 진로를 잘 가로막음)
+                        if (rewardCalculator != null && rewardCalculator.anchorDropQualityReward > 0f
+                            && nearestEnemyPos != Vector3.zero && motherShip != null)
+                        {
+                            Vector3 enemyDir = (motherShip.transform.position - nearestEnemyPos);
+                            enemyDir.y = 0f;
+                            if (enemyDir.sqrMagnitude > 0.01f)
+                            {
+                                float interceptQuality = Mathf.Abs(Vector3.Cross(towDir, enemyDir.normalized).y);
+                                float dropReward = interceptQuality * rewardCalculator.anchorDropQualityReward;
+                                pair.agent1.AddReward(dropReward);
+                                Debug.Log($"[AnchorDrop] Pair {pi}: interceptQuality={interceptQuality:F2}, dropReward={dropReward:F3}");
+                            }
+                        }
+
                         string dirLabel = (towDir == new Vector3(fwd.z, 0f, -fwd.x)) ? "RIGHT" : "LEFT";
                         Debug.Log($"[AnchorDrop] Pair {pi}: dir={dirLabel}, anchorPos={anchorPos:F0}, towDir={towDir:F2}, nearestEnemy={nearestEnemy:F1}m, step={_resetTimer}");
                     }
@@ -2664,6 +2680,12 @@ namespace BoatAttack
 
         private float GetNearestActiveEnemyDistToPair(DefensePair pair)
         {
+            return GetNearestActiveEnemyDistToPair(pair, out _);
+        }
+
+        private float GetNearestActiveEnemyDistToPair(DefensePair pair, out Vector3 nearestPos)
+        {
+            nearestPos = Vector3.zero;
             if (_enemyPool == null || pair.agent1 == null) return float.MaxValue;
             Vector3 center = pair.agent1.transform.position;
 
@@ -2673,7 +2695,7 @@ namespace BoatAttack
                 if (_enemyPool[e] == null || !_enemyPool[e].activeInHierarchy) continue;
                 if (IsEnemyNeutralized(_enemyPool[e])) continue;
                 float d = Vector3.Distance(center, _enemyPool[e].transform.position);
-                if (d < minDist) minDist = d;
+                if (d < minDist) { minDist = d; nearestPos = _enemyPool[e].transform.position; }
             }
             return minDist;
         }
