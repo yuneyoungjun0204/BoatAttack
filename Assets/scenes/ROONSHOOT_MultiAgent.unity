@@ -1,4 +1,4 @@
-﻿%YAML 1.1
+%YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
 --- !u!29 &1
 OcclusionCullingSettings:
@@ -26,7 +26,7 @@ RenderSettings:
   m_AmbientIntensity: 1.2
   m_AmbientMode: 3
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
-  m_SkyboxMaterial: {fileID: 2100000, guid: e14f29569c2db49fdb0a5fd5b3e95b86, type: 2}
+  m_SkyboxMaterial: {fileID: 10304, guid: 0000000000000000f000000000000000, type: 0}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
   m_FlareFadeSpeed: 3
@@ -37,7 +37,7 @@ RenderSettings:
   m_ReflectionBounces: 1
   m_ReflectionIntensity: 1
   m_CustomReflection: {fileID: 0}
-  m_Sun: {fileID: 1099422557}
+  m_Sun: {fileID: 0}
   m_UseRadianceAmbientProbe: 0
 --- !u!157 &3
 LightmapSettings:
@@ -55066,8 +55066,8 @@ MonoBehaviour:
     m_Bits: 1
   m_VolumeTrigger: {fileID: 0}
   m_VolumeFrameworkUpdateModeOption: 2
-  m_RenderPostProcessing: 1
-  m_Antialiasing: 1
+  m_RenderPostProcessing: 0
+  m_Antialiasing: 0
   m_AntialiasingQuality: 2
   m_StopNaN: 0
   m_Dithering: 0
@@ -148744,8 +148744,8 @@ MonoBehaviour:
     m_Bits: 1
   m_VolumeTrigger: {fileID: 0}
   m_VolumeFrameworkUpdateModeOption: 2
-  m_RenderPostProcessing: 1
-  m_Antialiasing: 1
+  m_RenderPostProcessing: 0
+  m_Antialiasing: 0
   m_AntialiasingQuality: 2
   m_StopNaN: 0
   m_Dithering: 0
@@ -171727,12 +171727,12 @@ PrefabInstance:
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.size
-      value: 4
+      value: 6
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[0].amplitude
-      value: 2.8
+      value: 8.010918
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
@@ -171742,7 +171742,7 @@ PrefabInstance:
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[1].amplitude
-      value: 2.1
+      value: 13.582686
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
@@ -171752,7 +171752,7 @@ PrefabInstance:
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[2].amplitude
-      value: 1.6
+      value: 13.829472
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
@@ -171762,7 +171762,7 @@ PrefabInstance:
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[3].amplitude
-      value: 1.2
+      value: 21.39278
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
@@ -171772,7 +171772,7 @@ PrefabInstance:
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[4].amplitude
-      value: 0.9
+      value: 21.616922
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
@@ -171782,7 +171782,7 @@ PrefabInstance:
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[5].amplitude
-      value: 0.7
+      value: 19.693464
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
@@ -171792,32 +171792,32 @@ PrefabInstance:
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[0].wavelength
-      value: 420
+      value: 47.366188
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[1].wavelength
-      value: 260
+      value: 46.62446
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[2].wavelength
-      value: 180
+      value: 41.58998
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[3].wavelength
-      value: 130
+      value: 94.97823
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[4].wavelength
-      value: 100
+      value: 91.5707
       objectReference: {fileID: 0}
     - target: {fileID: 7121332023826027706, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}
       propertyPath: _waves.Array.data[5].wavelength
-      value: 80
+      value: 71.30506
       objectReference: {fileID: 0}
     - target: {fileID: 7532958370797222331, guid: e70416e3bc35d4004a9981d0ac102ba5,
         type: 3}

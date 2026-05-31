@@ -179,7 +179,7 @@ namespace WaterSystem
                     ////////////////////////////////wave value calculations//////////////////////////
                     var w = 6.28318f / wavelength; // 2pi over wavelength(hardcoded)
                     var wSpeed = math.sqrt(9.8f * w); // frequency of the wave based off wavelength
-                    const float peak = 0.35f; // peak value (0.35 = gentle ocean swell)
+                    const float peak = 0.8f; // peak value, 1 is the sharpest peaks
                     var qi = peak / (amplitude * w * WaveData.Length);
 
                     var windDir = new float2(0f, 0f);

@@ -12,20 +12,20 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b17284ebf5e80436eb6089f8c7459dab, type: 3}
   m_Name: WaterSurfaceData
   m_EditorClassIdentifier: 
-  _waterMaxVisibility: 18
+  _waterMaxVisibility: 4.5
   _absorptionRamp:
     serializedVersion: 2
-    key0: {r: 0.005, g: 0.16, b: 0.38, a: 1}
-    key1: {r: 0.002, g: 0.03, b: 0.18, a: 1}
-    key2: {r: 0.02, g: 0.28, b: 0.45, a: 0}
-    key3: {r: 0, g: 0.04, b: 0.22, a: 0}
-    key4: {r: 0, g: 0.05, b: 0.3, a: 0}
-    key5: {r: 0, g: 0.02, b: 0.48, a: 0}
+    key0: {r: 0.13510147, g: 0.8679245, b: 0.8679245, a: 1}
+    key1: {r: 0.021626905, g: 0.49048996, b: 0.509434, a: 1}
+    key2: {r: 0.05304379, g: 0.06483533, b: 0.0754717, a: 0}
+    key3: {r: 0, g: 0.275, b: 0.44, a: 0}
+    key4: {r: 0.0034180656, g: 0.2614573, b: 0.4165103, a: 0}
+    key5: {r: 0.10346207, g: 0.22408374, b: 0.8773585, a: 0}
     key6: {r: 0, g: 0, b: 0, a: 0}
     key7: {r: 0, g: 0, b: 0, a: 0}
-    ctime0: 2891
-    ctime1: 12914
-    ctime2: 15613
+    ctime0: 2338
+    ctime1: 2891
+    ctime2: 12914
     ctime3: 34547
     ctime4: 47802
     ctime5: 65535
@@ -45,15 +45,15 @@ MonoBehaviour:
     m_NumAlphaKeys: 2
   _scatterRamp:
     serializedVersion: 2
-    key0: {r: 0.01, g: 0.06, b: 0.22, a: 1}
-    key1: {r: 0.01, g: 0.14, b: 0.48, a: 1}
-    key2: {r: 0.01, g: 0.32, b: 0.65, a: 0}
-    key3: {r: 0.01, g: 0.32, b: 0.65, a: 0}
-    key4: {r: 0, g: 0.55, b: 0.78, a: 0}
+    key0: {r: 0.18356179, g: 0.23584908, b: 0.21841997, a: 1}
+    key1: {r: 0.23375759, g: 0.4811321, b: 0.47868282, a: 1}
+    key2: {r: 0.11574403, g: 0.41769665, b: 0.4811321, a: 0}
+    key3: {r: 0.11574403, g: 0.41769665, b: 0.4811321, a: 0}
+    key4: {r: 0.01176471, g: 0.90588236, b: 0.84650886, a: 0}
     key5: {r: 0, g: 0, b: 0, a: 0}
     key6: {r: 0, g: 0, b: 0, a: 0}
     key7: {r: 0, g: 0, b: 0, a: 0}
-    ctime0: 14264
+    ctime0: 0
     ctime1: 21566
     ctime2: 65535
     ctime3: 65535
@@ -70,45 +70,59 @@ MonoBehaviour:
     atime6: 0
     atime7: 0
     m_Mode: 0
-    m_ColorSpace: 0
+    m_ColorSpace: -1
     m_NumColorKeys: 3
     m_NumAlphaKeys: 2
   _waves:
-  - amplitude: 3.8
-    direction: -8
-    wavelength: 200
+  - amplitude: 2.5
+    direction: -6.03
+    wavelength: 80
     origin:
-      x: 0
-      y: 0
-    onmiDir: 0
-  - amplitude: 2.2
-    direction: 162
-    wavelength: 200
-    origin:
-      x: 0
-      y: 0
-    onmiDir: 0
-  - amplitude: 1.4
-    direction: 18
-    wavelength: 160
+      x: -53.403767
+      y: 105.14393
+    onmiDir: 1
+  - amplitude: 1.2
+    direction: 178
+    wavelength: 50
     origin:
       x: 0
       y: 0
     onmiDir: 0
   - amplitude: 0.8
-    direction: -42
-    wavelength: 90
+    direction: 6.532788
+    wavelength: 40
     origin:
       x: 0
       y: 0
-    onmiDir: 0
+    onmiDir: 1
+  - amplitude: 0.8
+    direction: 4.051435
+    wavelength: 35
+    origin:
+      x: 0
+      y: 0
+    onmiDir: 1
+  - amplitude: 0.6
+    direction: 2.0216856
+    wavelength: 30
+    origin:
+      x: 0
+      y: 0
+    onmiDir: 1
+  - amplitude: 0.6
+    direction: -39
+    wavelength: 28
+    origin:
+      x: 0
+      y: 0
+    onmiDir: 1
   _customWaves: 0
-  randomSeed: 9207
+  randomSeed: 98505
   _basicWaveSettings:
-    numWaves: 2
-    amplitude: 4.7
-    direction: 76
-    wavelength: 103.6
+    numWaves: 6
+    amplitude: 3.5
+    direction: -68
+    wavelength: 100
   _foamSettings:
     foamType: 0
     basicFoam:
