@@ -134,6 +134,14 @@ namespace BoatAttack
         public float windSpeedMin = 3f;
         [Tooltip("바람 최대 속도 (m/s)")]
         public float windSpeedMax = 10f;
+        [Tooltip("에피소드마다 파도 랜덤화 (체크 해제 시 WaterSurfaceData 설정 고정 유지)")]
+        public bool randomizeWavesOnEpisode = false;
+        [Tooltip("파도 진폭 랜덤 범위 (m). 너울: 1.5~3.5")]
+        public float waveAmplitudeMin = 1.5f;
+        public float waveAmplitudeMax = 3.5f;
+        [Tooltip("파도 파장 랜덤 범위 (m). 클수록 느린 너울. 권장: 180~450")]
+        public float waveWavelengthMin = 180f;
+        public float waveWavelengthMax = 450f;
 
         [Header("Settings")]
         [Tooltip("보상 계산 주기 (프레임 단위, 1 = 매 프레임)")]
@@ -1256,6 +1264,11 @@ namespace BoatAttack
 
             // 바람 방향/세기 랜덤화 (도메인 랜덤화)
             WindzoneExtended.RandomizeWind(windSpeedMin, windSpeedMax);
+
+            // 파도 랜덤화 (Inspector 토글) — 끄면 WaterSurfaceData 고정값 유지
+            if (randomizeWavesOnEpisode)
+                WindzoneExtended.RandomizeWaves(
+                    waveAmplitudeMin, waveAmplitudeMax, waveWavelengthMin, waveWavelengthMax);
 
             // 적군 경로 웨이포인트 랜덤화 (선박 리셋 전에 호출)
             RandomizeEnemyWaypoints();

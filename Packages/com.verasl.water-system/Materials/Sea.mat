@@ -8,9 +8,8 @@ Material:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: Sea
-  m_Shader: {fileID: 4800000, guid: a94edd303261140cf9e6ce8c90d7a99a, type: 3}
-  m_ShaderKeywords: _DEBUG_DIFFUSE _DEBUG_OFF _GLOSSINESS_FROM_BASE_ALPHA _REFLECTION_PLANARREFLECTION
-    _SPECULAR_COLOR _STATIC_WATER
+  m_Shader: {fileID: 4800000, guid: 4d4deeba0d8a64503964c2f653931109, type: 3}
+  m_ShaderKeywords: _GLOSSINESS_FROM_BASE_ALPHA _REFLECTION_PLANARREFLECTION _SPECULAR_COLOR
   m_LightmapFlags: 6
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 1
@@ -59,14 +58,14 @@ Material:
     m_Floats:
     - _AlphaClip: 0
     - _Blend: 0
-    - _BumpScale: 0.25
+    - _BumpScale: 0.65
     - _Cull: 2
     - _Cutoff: 0.5
     - _Debug: 0
     - _DetailNormalMapScale: 1
     - _DstBlend: 0
     - _GlossMapScale: 1
-    - _Glossiness: 0.5
+    - _Glossiness: 0.92
     - _GlossinessSource: 0
     - _GlossyReflections: 1
     - _Parallax: 0.02
@@ -78,11 +77,11 @@ Material:
     - _SrcBlend: 1
     - _Static: 0
     - _Surface: 0
-    - _TessellationEdgeLength: 50
+    - _TessellationEdgeLength: 12
     - _UVSec: 0
     - _ZWrite: 1
     m_Colors:
-    - _Color: {r: 0.43867922, g: 0.80530274, b: 1, a: 1}
+    - _Color: {r: 0.04, g: 0.22, b: 0.58, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
-    - _SpecColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+    - _SpecColor: {r: 0.9, g: 0.9, b: 0.9, a: 1}
   m_BuildTextureStacks: []

@@ -310,13 +310,16 @@ namespace WaterSystem
 
             for (int i = 0; i < _waves.Length; i++)
             {
-                var p = Mathf.Lerp(0.5f, 1.5f, i * r);
+                // p: 첫 파도(i=0)가 가장 크고 길고, 뒤로 갈수록 작고 짧아짐 (주 너울 우선)
+                var p = Mathf.Lerp(1.5f, 0.5f, i * r);
+                // 방향 분산을 ±45°로 제한 → 너울이 한 방향에서 크게 밀려옴
+                var dirSpread = (i == 0) ? 10f : 45f;
                 _waves[i] = new Wave(
                     p * Random.Range(ampMin, ampMax),
-                    (baseDir + Random.Range(-90f, 90f)) * Mathf.Deg2Rad,
+                    (baseDir + Random.Range(-dirSpread, dirSpread)) * Mathf.Deg2Rad,
                     p * Random.Range(lenMin, lenMax),
-                    _waves[i].origin,
-                    _waves[i].onmiDir > 0.5f
+                    Vector2.zero,
+                    false // 모두 방향성 파도 (omniDir 제거)
                 );
             }
 

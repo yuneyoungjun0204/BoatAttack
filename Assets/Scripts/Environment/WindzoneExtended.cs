@@ -150,9 +150,6 @@ public class WindzoneExtended : MonoBehaviour
         }
         Initialized = true;
 
-        // 파도 랜덤화
-        RandomizeWaves();
-
         Debug.Log($"[Wind] RandomizeWind: dir={WindDirection}, speed={WindSpeed:F2} m/s, Water={Water.Instance != null}");
     }
 
@@ -160,33 +157,12 @@ public class WindzoneExtended : MonoBehaviour
     public float windSpeedMin = 5f;
     public float windSpeedMax = 15f;
 
-    [Header("Wave Randomization")]
-    [Tooltip("파도 랜덤화 활성화 (false면 인스펙터 파도 설정 유지)")]
-    public bool enableWaveRandomization = true;
-    public float waveAmplitudeMin = 0.1f;
-    public float waveAmplitudeMax = 1.5f;
-    public float waveWavelengthMin = 2f;
-    public float waveWavelengthMax = 10f;
-
     /// <summary>
-    /// 에피소드마다 파도 방향/높이/파장 랜덤화 (Water.cs에서 GPU/CPU 모두 처리)
+    /// 파도 랜덤화. 범위는 호출부(DefenseEnvController Inspector)에서 직접 지정.
     /// </summary>
-    public static void RandomizeWaves()
+    public static void RandomizeWaves(float ampMin, float ampMax, float lenMin, float lenMax)
     {
         if (Water.Instance == null) return;
-
-        // 파도 랜덤화 비활성화 시 인스펙터 설정 유지
-        if (_instance != null && !_instance.enableWaveRandomization) return;
-
-        float ampMin = 1.0f, ampMax = 5.0f, lenMin = 5f, lenMax = 20f;
-        if (_instance != null)
-        {
-            ampMin = _instance.waveAmplitudeMin;
-            ampMax = _instance.waveAmplitudeMax;
-            lenMin = _instance.waveWavelengthMin;
-            lenMax = _instance.waveWavelengthMax;
-        }
-
         Water.Instance.RandomizeWaves(ampMin, ampMax, lenMin, lenMax);
     }
 }
