@@ -135,7 +135,7 @@ namespace BoatAttack
                 sliderEnemyCount.minValue = 1;
                 sliderEnemyCount.maxValue = 5;
                 sliderEnemyCount.wholeNumbers = true;
-                sliderEnemyCount.value = envController != null ? envController.stage3EnemyCount : 1;
+                sliderEnemyCount.value = envController != null ? envController.enemyCount : 1;
             }
 
             // 아군 수 (표시용, 현재 고정 2)
@@ -199,8 +199,7 @@ namespace BoatAttack
             int count = Mathf.RoundToInt(value);
             if (envController != null)
             {
-                envController.stage2EnemyCount = count;
-                envController.stage3EnemyCount = count;
+                envController.enemyCount = count;
             }
             UpdateLabel(textEnemyCount, $"{count}");
         }

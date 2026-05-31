@@ -15,7 +15,7 @@ namespace BoatAttack
             // ============================================================
             // Pool Size 경고 + 자동 보정
             // ============================================================
-            int maxNeeded = Mathf.Max(env.stage1EnemyCount, env.stage2EnemyCount, env.stage3EnemyCount);
+            int maxNeeded = Mathf.Max(env.enemyCount, 1);
             if (env.poolSize < maxNeeded)
             {
                 EditorGUILayout.Space(5);
@@ -120,8 +120,7 @@ namespace BoatAttack
             EditorGUILayout.LabelField("Pool Size:", $"{env.poolSize} (필요: {maxNeeded})");
             GUI.contentColor = origColor;
 
-            EditorGUILayout.LabelField("Stage2 Enemies:", env.stage2EnemyCount.ToString());
-            EditorGUILayout.LabelField("Stage3 Enemies:", env.stage3EnemyCount.ToString());
+            EditorGUILayout.LabelField("Enemy Count:", env.enemyCount.ToString());
         }
 
         private void SetupAll(DefenseEnvController env)
@@ -129,7 +128,7 @@ namespace BoatAttack
             Undo.RecordObject(env, "Setup All Formation System");
 
             // Pool Size 자동 보정
-            int maxNeeded = Mathf.Max(env.stage1EnemyCount, env.stage2EnemyCount, env.stage3EnemyCount, 10);
+            int maxNeeded = Mathf.Max(env.enemyCount, 10);
             if (env.poolSize < maxNeeded)
             {
                 env.poolSize = maxNeeded;
@@ -199,12 +198,11 @@ namespace BoatAttack
             lzm.motherShip = env.motherShip;
             lzm.envController = env;
 
-            if (env.defenseAgent1 != null && env.defenseAgent2 != null)
+            if (env.defenseAgent1 != null)
             {
                 lzm.templatePair = new DefensePair
                 {
                     agent1 = env.defenseAgent1,
-                    agent2 = env.defenseAgent2,
                     webObject = env.webObject
                 };
             }

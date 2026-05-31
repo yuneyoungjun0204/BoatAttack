@@ -10,29 +10,6 @@ using System.Collections.Generic;
 namespace BoatAttack
 {
     /// <summary>
-    /// 가상 아군 쌍: agent1+agent2 위치를 가진 PhantomPair
-    /// Stage6에서 실제 아군 쌍이 없을 때 대형 학습용으로 사용
-    /// </summary>
-    [System.Serializable]
-    public class PhantomPair
-    {
-        public Vector3 agent1Pos;
-        public Vector3 agent2Pos;
-        public float heading;
-        public float noiseSeed1;
-        public float noiseSeed2;
-        public float speedMult;     // 개별 속도 배율 (각 쌍마다 랜덤)
-        public bool isValid;
-        public bool hasWeb;         // 가상 그물 유무 (관측용, 적에게는 영향 없음)
-        public bool isStopped;      // 가다가 멈춘 상태
-        public bool willStop;       // 중간에 멈출 예정
-        public float stopTime;      // 멈출 시각 (Time.time 기준)
-
-        public Vector3 WebCenter => (agent1Pos + agent2Pos) * 0.5f;
-        public float WebLength => Vector3.Distance(agent1Pos, agent2Pos);
-    }
-
-    /// <summary>
     /// 방어 에이전트: 2대가 협력하여 적군 선박을 web 사이로 유도
     /// 상대 좌표 기반 관측, 보상은 DefenseEnvController에서 그룹 보상으로 분배
     /// </summary>
@@ -76,14 +53,6 @@ namespace BoatAttack
 
         [Tooltip("아군 BufferSensor 최대 관측 수")]
         [Range(1, 20)] public int allyMaxObservables = 3;
-
-        [Header("Action Settings")]
-        public float maxLinearVelocity = 200f;
-        public float maxAngularVelocity = 90f;
-        public float velocityControlGain = 2.5f;
-        public float angularVelocityControlGain = 1.0f;
-        public float maxLinearAcceleration = 12f;
-        public float maxAngularAcceleration = 45f;
 
         [Header("Control Settings")]
         [Range(0f, 1.5f)]
@@ -141,31 +110,6 @@ namespace BoatAttack
 
         [Header("Ally Pair NormK")]
         [Range(1f, 1000f)] public float allyPairNormK = 100f;
-
-        [Header("Phantom Neighbors (Stage6: 좌3+우3 = 6쌍)")]
-        [Tooltip("가상 아군쌍 간격 (방어선 방향, m)")]
-        [Range(30f, 200f)] public float phantomSpacing = 80f;
-
-        [Tooltip("가상 아군쌍 전진 속도 (m/s, fallback)")]
-        [Range(1f, 50f)] public float phantomSpeed = 8f;
-
-        [Tooltip("가상 아군쌍 속도 배율 (실제 아군 속도 × 배율, 에피소드마다 랜덤)")]
-        [HideInInspector] public float phantomSpeedMult = 1.5f;
-
-        [Tooltip("가상 아군쌍 좌우 노이즈 강도 (m/s)")]
-        [Range(0f, 10f)] public float phantomNoiseStrength = 3f;
-
-        [Tooltip("가상 아군쌍 내부 그물 반폭 (agent1↔agent2 사이 절반 거리, m)")]
-        [Range(5f, 50f)] public float phantomWebHalfWidth = 25f;
-
-        // Phantom 상태 (최대 10쌍, 실제 수는 에피소드마다 5~10 랜덤)
-        public const int PHANTOM_MAX = 10;
-        [HideInInspector] public PhantomPair[] phantomPairs;
-        [HideInInspector] public int phantomCount;  // 이번 에피소드 실제 phantom 수
-        [HideInInspector] public bool phantomsInitialized;
-
-        /// <summary>하위 호환: EnvController에서 phantom 유효성 확인</summary>
-        public bool lastPhantomValid => phantomsInitialized && phantomPairs != null;
 
         [Header("Heuristic")]
         [Tooltip("true면 화살표키, false면 WASD (페어 배치 시 자동 설정)")]
@@ -337,7 +281,7 @@ namespace BoatAttack
             enemyBufferSensor.ObservableSize = 3;   // Dist, SignedBrg, Hdg
             enemyBufferSensor.MaxNumObservables = enemyMaxObservables;
 
-            // 아군 쌍 BufferSensor: 가변 개수 (실제 쌍 + phantom, 최대 PHANTOM_MAX+6)
+            // 아군 쌍 BufferSensor
             var buffers = GetComponents<BufferSensorComponent>();
             allyBufferSensor = buffers.Length > 1 ? buffers[1] : null;
             if (allyBufferSensor == null)
@@ -468,18 +412,6 @@ namespace BoatAttack
 
         protected override void OnEnable()
         {
-            // Stage4: DefenseAgent를 InferenceOnly로 전환 (base.OnEnable → LazyInitialize 전에 설정)
-            if (envController != null && envController.IsCommanderStage()
-                && envController.defenseOnnxModel != null)
-            {
-                var bp = GetComponent<BehaviorParameters>();
-                if (bp != null)
-                {
-                    bp.BehaviorType = BehaviorType.InferenceOnly;
-                    bp.Model = envController.defenseOnnxModel;
-                }
-            }
-
             base.OnEnable();
 
             if (motherShip == null)
@@ -721,8 +653,6 @@ namespace BoatAttack
             _prevSteering = 0f;
             _throttleDelta = 0f;
             _steeringDelta = 0f;
-            phantomsInitialized = false;
-
             // chase 모드: Phase2 직접 학습 — SingleNet + 가이던스 복원
             // isLeftAgent는 OnEpisodeBegin에서 리셋되지 않으므로 그대로 사용
             if (envController != null && envController.chaseTrainingMode)
@@ -974,33 +904,6 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 타 페어(자신과 파트너 제외) 에이전트 중 가장 가까운 거리 반환
-        /// </summary>
-        private float GetNearestInterPairDistance()
-        {
-            float minDist = float.MaxValue;
-            if (envController == null || envController.launchZoneManager == null) return minDist;
-
-            int cap = envController.launchZoneManager.GetPoolCapacity();
-            for (int i = 0; i < cap; i++)
-            {
-                var pair = envController.launchZoneManager.GetPair(i);
-                if (pair == null || !pair.isActive) continue;
-                if (pair.agent1 == this || pair.agent2 == this) continue;
-                if (pair.agent1 != null)
-                {
-                    float d = Vector3.Distance(transform.position, pair.agent1.transform.position);
-                    if (d < minDist) minDist = d;
-                }
-                if (pair.agent2 != null)
-                {
-                    float d = Vector3.Distance(transform.position, pair.agent2.transform.position);
-                    if (d < minDist) minDist = d;
-                }
-            }
-            return minDist;
-        }
-
         /// <summary>
         /// 타 페어 에이전트로부터의 APF 척력 조향값 [-1,1] 반환
         /// splitMode [A] Safety Layer에서 사용
@@ -1017,18 +920,14 @@ namespace BoatAttack
             {
                 var pair = envController.launchZoneManager.GetPair(i);
                 if (pair == null || !pair.isActive) continue;
-                if (pair.agent1 == this || pair.agent2 == this) continue;
+                if (pair.agent1 == this) continue;
+                if (pair.agent1 == null) continue;
 
-                DefenseAgent[] others = { pair.agent1, pair.agent2 };
-                foreach (var other in others)
-                {
-                    if (other == null) continue;
-                    Vector3 toOther = other.transform.position - myPos;
-                    toOther.y = 0f;
-                    float d = toOther.magnitude;
-                    if (d < 0.1f || d > radius) continue;
+                Vector3 toOther = pair.agent1.transform.position - myPos;
+                toOther.y = 0f;
+                float d = toOther.magnitude;
+                if (d >= 0.1f && d <= radius)
                     repulsion += -(toOther / (d * d));
-                }
             }
 
             if (repulsion.sqrMagnitude < 0.0001f) return 0f;
@@ -1349,33 +1248,21 @@ namespace BoatAttack
                     if (i == myPairIdx) continue;
                     DefensePair pair = lzm.GetPair(i);
                     if (pair == null || !pair.isActive) continue;
-                    if (pair.agent1 == null || pair.agent2 == null) continue;
+                    if (pair.agent1 == null) continue;
 
                     Vector3 a1Pos = pair.agent1.transform.position;
-                    Vector3 a2Pos = pair.agent2.transform.position;
-                    if (a1Pos.y < -100f || a2Pos.y < -100f) continue;
+                    Vector3 anchorPos = pair.AnchorPos;
+                    if (a1Pos.y < -100f) continue;
 
-                    Vector3 otherCenter = (a1Pos + a2Pos) * 0.5f;
+                    Vector3 otherCenter = (a1Pos + anchorPos) * 0.5f;
                     float d = Vector3.Distance(myPos, otherCenter);
-                    float allyYaw = (pair.agent1.transform.eulerAngles.y + pair.agent2.transform.eulerAngles.y) * 0.5f;
+                    float allyYaw = pair.agent1.transform.eulerAngles.y;
 
                     candidates.Add((otherCenter, d, allyYaw));
                 }
             }
 
-            // 2. Phantom 쌍 (heading 정보 없음 → 0f)
-            if (phantomsInitialized && phantomPairs != null)
-            {
-                for (int i = 0; i < phantomCount; i++)
-                {
-                    if (!phantomPairs[i].isValid) continue;
-                    Vector3 pc = phantomPairs[i].WebCenter;
-                    float d = Vector3.Distance(myPos, pc);
-                    candidates.Add((pc, d, 0f));
-                }
-            }
-
-            // 3. 트랩 (정적 → heading 0f)
+            // 2. 트랩 (정적 → heading 0f)
             if (envController != null && envController.activeTraps != null)
             {
                 for (int i = 0; i < envController.activeTraps.Count; i++)
@@ -1411,159 +1298,6 @@ namespace BoatAttack
 
             allyBufferSensor.AppendObservation(new float[] { normDist, brg, hdg });
             lastAllyBufferObs.Add(normDist); lastAllyBufferObs.Add(brg); lastAllyBufferObs.Add(hdg);
-        }
-
-        /// <summary>
-        /// Phantom 초기 배치: webCenter 기준 원형 배치 (360° 균등 + 랜덤 지터)
-        /// 각 PhantomPair는 agent1+agent2 위치를 보유 (가상 그물)
-        /// </summary>
-        public void InitializePhantoms(Vector3 webCenter, Vector3 enemyPos, Vector3 motherPos)
-        {
-            float headingDeg = Mathf.Atan2(
-                (enemyPos - motherPos).x,
-                (enemyPos - motherPos).z) * Mathf.Rad2Deg;
-
-            // 에피소드마다 5~10쌍 랜덤
-            phantomCount = Random.Range(5, PHANTOM_MAX + 1);
-            phantomPairs = new PhantomPair[phantomCount];
-
-            float angleStep = 360f / phantomCount;
-
-            for (int i = 0; i < phantomCount; i++)
-            {
-                // 원형 균등 배분 + 랜덤 각도 지터 (±반 스텝)
-                float angleDeg = angleStep * i + Random.Range(-angleStep * 0.3f, angleStep * 0.3f);
-                float angleRad = angleDeg * Mathf.Deg2Rad;
-
-                // 거리 랜덤 (phantomSpacing의 1~5배)
-                float radius = phantomSpacing * Random.Range(1f, 5f);
-
-                Vector3 dir = new Vector3(Mathf.Sin(angleRad), 0f, Mathf.Cos(angleRad));
-                Vector3 pairCenter = webCenter + dir * radius;
-
-                // 그물 방향: 중심→쌍 방향에 수직
-                Vector3 webDir = new Vector3(-dir.z, 0f, dir.x);
-
-                // 그물 길이 10~60m (반폭 5~30m) 랜덤
-                float halfWidth = Random.Range(5f, 30f);
-
-                // 각 쌍의 헤딩: 중심을 향하거나 적 방향 등 랜덤
-                float pairHeading = angleDeg + 180f + Random.Range(-30f, 30f);
-
-                phantomPairs[i] = new PhantomPair
-                {
-                    agent1Pos = pairCenter - webDir * halfWidth,
-                    agent2Pos = pairCenter + webDir * halfWidth,
-                    heading = pairHeading,
-                    noiseSeed1 = Random.Range(0f, 1000f),
-                    noiseSeed2 = Random.Range(0f, 1000f),
-                    speedMult = Random.Range(0.7f, 2.0f),
-                    isValid = true,
-                    hasWeb = Random.value > 0.2f,
-                    isStopped = false,
-                    willStop = false,
-                    stopTime = 0f
-                };
-            }
-
-            // 절반 이상 랜덤 선택 → 가다가 중간에 멈추도록 예약
-            int stopCount = Random.Range(phantomCount / 2, phantomCount + 1);
-            int[] indices = new int[phantomCount];
-            for (int i = 0; i < phantomCount; i++) indices[i] = i;
-            for (int i = phantomCount - 1; i > 0; i--)
-            {
-                int j = Random.Range(0, i + 1);
-                int tmp = indices[i]; indices[i] = indices[j]; indices[j] = tmp;
-            }
-            float now = Time.time;
-            for (int k = 0; k < stopCount; k++)
-            {
-                var pp = phantomPairs[indices[k]];
-                pp.willStop = true;
-                pp.stopTime = now + Random.Range(1f, 5f); // 1~5초 후 멈춤
-            }
-
-            phantomsInitialized = true;
-        }
-
-        /// <summary>
-        /// Phantom 독립 기동 업데이트: 차단 기동 + Perlin 노이즈
-        /// DefenseEnvController.FixedUpdate에서 매 스텝 호출
-        /// </summary>
-        public void UpdatePhantoms(float dt, Vector3 enemyPos, Vector3 motherPos)
-        {
-            if (!phantomsInitialized)
-            {
-                Vector3 pPos = (partnerAgent != null) ? partnerAgent.transform.position : transform.position;
-                Vector3 wc = (transform.position + pPos) * 0.5f;
-                InitializePhantoms(wc, enemyPos, motherPos);
-            }
-
-            // 기본 속도 (실제 아군 기준)
-            float baseSpeed = 0f;
-            if (_engine != null && _engine.RB != null)
-            {
-                Vector3 vel = _engine.RB.velocity;
-                vel.y = 0f;
-                baseSpeed = vel.magnitude;
-            }
-            if (baseSpeed < 0.5f) baseSpeed = 0.5f;
-
-            float time = Time.time;
-
-            // 적 방향 및 방어선 방향
-            Vector3 enemyDir = enemyPos - motherPos;
-            enemyDir.y = 0f;
-            if (enemyDir.sqrMagnitude < 1f) enemyDir = Vector3.forward;
-            enemyDir.Normalize();
-            Vector3 defenseDir = new Vector3(-enemyDir.z, 0f, enemyDir.x);
-            float headingDeg = Mathf.Atan2(enemyDir.x, enemyDir.z) * Mathf.Rad2Deg;
-
-            for (int i = 0; i < phantomCount; i++)
-            {
-                var pp = phantomPairs[i];
-                if (!pp.isValid) continue;
-
-                // 가다가 멈추기: 예약 시간 도달 시 정지
-                if (pp.willStop && !pp.isStopped && time >= pp.stopTime)
-                    pp.isStopped = true;
-                if (pp.isStopped) continue;
-
-                // 개별 속도: 아군 속도가 phantomSpeed 이하면 동일, 초과하면 초과분의 절반만 반영
-                float pairSpeed;
-                if (baseSpeed <= phantomSpeed)
-                    pairSpeed = baseSpeed * pp.speedMult;
-                else
-                    pairSpeed = (phantomSpeed + (baseSpeed - phantomSpeed) * 0.1f) * pp.speedMult;
-
-                // 이동: 실제 아군처럼 적을 향해 지속 전진
-                // 헤딩 = 적 방향 + Perlin 노이즈 (각 phantom pair 독립)
-                float headingNoiseDeg = (Mathf.PerlinNoise(pp.noiseSeed1 + pp.noiseSeed2, time * 0.15f) - 0.5f)
-                    * 2f * phantomNoiseStrength * 10f; // ±도
-                float moveAngle = (headingDeg + headingNoiseDeg) * Mathf.Deg2Rad;
-                Vector3 moveDir = new Vector3(Mathf.Sin(moveAngle), 0f, Mathf.Cos(moveAngle));
-                Vector3 movement = moveDir * pairSpeed * dt;
-
-                // 방어선 방향 횡이동 노이즈 (각 agent 독립 → 쌍 내부 약간 비대칭)
-                float noise1 = (Mathf.PerlinNoise(pp.noiseSeed1, time * 0.2f) - 0.5f) * 2f * phantomNoiseStrength;
-                float noise2 = (Mathf.PerlinNoise(pp.noiseSeed2, time * 0.2f) - 0.5f) * 2f * phantomNoiseStrength;
-
-                pp.agent1Pos += movement + defenseDir * noise1 * dt;
-                pp.agent2Pos += movement + defenseDir * noise2 * dt;
-
-                // 쌍 간격 보정: 초기 생성된 그물 길이(개별 랜덤) 유지
-                float currentHalfWidth = pp.WebLength * 0.5f;
-                if (currentHalfWidth < 1f) currentHalfWidth = 5f;
-                Vector3 pairMid = (pp.agent1Pos + pp.agent2Pos) * 0.5f;
-                Vector3 pairDir = (pp.agent2Pos - pp.agent1Pos);
-                pairDir.y = 0f;
-                if (pairDir.sqrMagnitude < 0.01f) pairDir = defenseDir;
-                pairDir.Normalize();
-                pp.agent1Pos = pairMid - pairDir * currentHalfWidth;
-                pp.agent2Pos = pairMid + pairDir * currentHalfWidth;
-
-                pp.heading = headingDeg + headingNoiseDeg;
-            }
         }
 
         /// <summary>관측값 기록 + 센서 추가 헬퍼</summary>
@@ -1682,40 +1416,6 @@ namespace BoatAttack
             // float throttle = Mathf.Clamp((throttleInput + 1f) * 0.25f + 0.1f, 0f, maxThrottle);
             float throttle = Mathf.Clamp(throttleInput+0.4f, 0f, maxThrottle);
             float steering = Mathf.Clamp(steeringInput, -1f, 1f);
-
-            // [B] 타 페어 충돌 회피 보상
-            if (envController != null && envController.rewardCalculator != null)
-            {
-                float avoidCoeff = envController.rewardCalculator.interPairAvoidanceCoeff;
-                float warnR      = envController.rewardCalculator.avoidanceWarningRadius;
-                float dangR      = envController.rewardCalculator.avoidanceDangerRadius;
-                if (avoidCoeff > 0f)
-                {
-                    float d = GetNearestInterPairDistance();
-                    if (d < warnR)
-                        AddReward(-avoidCoeff * Mathf.Pow(1f - d / warnR, 2f));
-                    if (d < dangR)
-                        AddReward(-avoidCoeff * 2f);
-                }
-            }
-
-            // LOS 조향 정렬 보상
-            float losCoeff = (envController != null && envController.rewardCalculator != null)
-                ? envController.rewardCalculator.losAlignmentRewardCoeff : 0f;
-            if (losCoeff > 0f && _clusterTarget != Vector3.zero)
-            {
-                float diff = Mathf.Abs(steeringInput - _cachedLOSBaseline);
-                AddReward(losCoeff * Mathf.Exp(-diff * diff));
-            }
-
-            // LOS 속도 정렬 보상: 선회 각도에 맞춘 감속 정답지와 비교
-            float losThrottleCoeff = (envController != null && envController.rewardCalculator != null)
-                ? envController.rewardCalculator.losThrottleAlignmentCoeff : 0f;
-            if (losThrottleCoeff > 0f && _clusterTarget != Vector3.zero)
-            {
-                float tDiff = Mathf.Abs(throttleInput - _cachedLOSThrottleBaseline);
-                AddReward(losThrottleCoeff * Mathf.Exp(-tDiff * tDiff));
-            }
 
             if (inputSmoothing < 1f)
             {
@@ -1888,14 +1588,10 @@ namespace BoatAttack
             {
                 DefensePair pair = lzm.GetPair(i);
                 if (pair == null || !pair.isActive) continue;
-                // 자신이 속한 쌍(파트너 포함) 스킵
-                if (pair.agent1 == this || pair.agent2 == this ||
-                    pair.agent1 == partnerAgent || pair.agent2 == partnerAgent) continue;
+                if (pair.agent1 == this || pair.agent1 == partnerAgent) continue;
 
-                // 다른 쌍의 webCenter 기준으로 1회 체크
                 Vector3 a1Pos = pair.agent1 != null ? pair.agent1.transform.position : Vector3.zero;
-                Vector3 a2Pos = pair.agent2 != null ? pair.agent2.transform.position : a1Pos;
-                Vector3 otherCenter = (a1Pos + a2Pos) * 0.5f;
+                Vector3 otherCenter = (a1Pos + pair.AnchorPos) * 0.5f;
                 if (otherCenter.y < -100f) continue; // HIDDEN_POS 제외
 
                 Vector3 toOther = otherCenter - myPos; toOther.y = 0f;

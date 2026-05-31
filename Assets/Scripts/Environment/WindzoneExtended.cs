@@ -20,7 +20,6 @@ public class WindzoneExtended : MonoBehaviour
     public static bool Initialized { get; private set; } = false;
 
     private static WindzoneExtended _instance;
-    private static bool _debugLogged = false;
 
     /// <summary>
     /// 도메인 리로드 비활성(Enter Play Mode Settings) 시에도 정적 변수 리셋 보장
@@ -32,7 +31,6 @@ public class WindzoneExtended : MonoBehaviour
         WindSpeed = 0f;
         Initialized = false;
         _instance = null;
-        _debugLogged = false;
     }
 
     void OnEnable()

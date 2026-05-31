@@ -663,7 +663,7 @@ namespace BoatAttack
             if (envController != null)
             {
                 capturedCount = envController.GetCapturedEnemyCount();
-                breachedCount = envController.GetBreachedEnemyCount();
+                breachedCount = 0;
             }
 
             GUILayout.BeginArea(new Rect(Screen.width - 275, 15, 260, 155), _hudStyle);
