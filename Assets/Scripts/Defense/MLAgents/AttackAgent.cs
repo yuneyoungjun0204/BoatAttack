@@ -127,8 +127,18 @@ namespace BoatAttack
         [Tooltip("노이즈 변화 속도 (초당)")]
         public float noiseSpeed = 2f;
 
+        [Header("지그재그 기동")]
+        [Tooltip("지그재그 조향 진폭 (0=직진, 클수록 좌우로 크게 흔듦)")]
+        [Range(0f, 1f)]
+        public float zigzagAmplitude = 0.5f;
+
+        [Tooltip("지그재그 주파수 (rad/s, 클수록 빠르게 좌우 전환)")]
+        public float zigzagFrequency = 2.0f;
+
         // 각 적군마다 다른 노이즈 시드
         private float _noiseSeed;
+        private float _zigFreqMul = 1f;   // 적군별 지그재그 주파수 배율 (불규칙성)
+        private float _zigPhase2  = 0f;    // 2차 사인 위상
 
         private float _lastDistance;
         private Vector3 _lastPosition;
@@ -262,6 +272,8 @@ namespace BoatAttack
             // SetNeutralized() 후 OnEpisodeBegin 자동 호출 시 다시 움직이는 것 방지
             // 풀 재활성화 시 OnEnable()에서 리셋됨
             _noiseSeed = Random.Range(0f, 1000f); // 각 적군마다 다른 노이즈 패턴
+            _zigFreqMul = Random.Range(0.6f, 1.6f);          // 적군마다 지그재그 속도 다르게
+            _zigPhase2  = Random.Range(0f, 6.2831853f);      // 2차 사인 위상 랜덤
             
             // Waypoint 초기화 (에피소드 재시작 시)
             if (followWaypoints)
@@ -1021,7 +1033,13 @@ namespace BoatAttack
                 // Perlin 노이즈로 부드러운 랜덤 조향 (각 적군마다 다른 패턴)
                 float noise = (Mathf.PerlinNoise(_noiseSeed, Time.time * noiseSpeed) - 0.5f) * 2f * steeringNoise;
 
-                float steering = Mathf.Clamp(baseSteering + noise, -1f, 1f);
+                // 불규칙 지그재그 — 두 개의 다른 주파수 사인 합성 + 적군별 주파수/위상 분산
+                // (단일 사인이 아니라 준주기적이라 좌우 폭·간격이 매번 달라짐)
+                float f = zigzagFrequency * _zigFreqMul;
+                float zigzag = (Mathf.Sin(Time.time * f + _noiseSeed * 6.2831853f) * 0.65f
+                              + Mathf.Sin(Time.time * f * 1.7f + _zigPhase2) * 0.35f) * zigzagAmplitude;
+
+                float steering = Mathf.Clamp(baseSteering + zigzag + noise, -1f, 1f);
 
                 _engine.Accelerate(rushThrottle);
                 _engine.Turn(steering * steeringSensitivity);

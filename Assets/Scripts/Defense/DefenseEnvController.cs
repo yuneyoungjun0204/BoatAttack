@@ -35,7 +35,7 @@ namespace BoatAttack
 
         [Tooltip("활성화할 적군 수")]
         [Range(0, 10)]
-        public int enemyCount = 1;
+        public int enemyCount = 10;
 
         [Tooltip("트랩 그물 유지 스텝 (Stage9/10)")]
         public int trapLifetimeSteps = 500;
@@ -193,6 +193,9 @@ namespace BoatAttack
         [Tooltip("적이 그물보다 모선에 이 거리 이상 더 가까우면 방어선 돌파 (m)")]
         public float enemyBreachThreshold = 20f;
 
+        [Tooltip("적이 모선과 이 거리 이내로 들어오면 충돌=공격성공 처리(모선피격 페널티+적 제거). 0이면 비활성")]
+        public float motherShipAttackDistance = 280f;
+
         [Tooltip("에피소드 내 최대 아군 쌍 생성 수 (이 수 이상 생성 불가)")]
         public int maxAllyPairsPerEpisode = 3;
 
@@ -229,7 +232,7 @@ namespace BoatAttack
 
         [Tooltip("적군 조향 노이즈 크기")]
         [Range(0f, 0.5f)]
-        public float enemySteeringNoise = 0.1f;
+        public float enemySteeringNoise = 0.05f;
 
         [Tooltip("적군 노이즈 변화 속도")]
         public float enemyNoiseSpeed = 2f;
@@ -237,6 +240,31 @@ namespace BoatAttack
         [Tooltip("적군 조향 감도")]
         [Range(0.1f, 2.0f)]
         public float enemySteeringSensitivity = 0.3f;
+
+        [Header("적군 지그재그 기동")]
+        [Tooltip("지그재그 조향 진폭 (0=직진, 클수록 좌우로 확확 꺾음). 권장 1.0~2.0")]
+        [Range(0f, 3f)]
+        public float enemyZigzagAmplitude = 0.3f;
+        [Tooltip("지그재그 사인 텍스처 주파수(rad/s)")]
+        public float enemyZigzagFrequency = 2.0f;
+        [Tooltip("급변(확 꺾는) 최소 간격(초)")]
+        public float enemyZigzagMinInterval = 0.25f;
+        [Tooltip("급변(확 꺾는) 최대 간격(초)")]
+        public float enemyZigzagMaxInterval = 0.9f;
+        [Tooltip("지그재그 중 모선 방향 추종 비중(0~1, 낮을수록 더 산만) — 구버전(조향흔들기)용, 현재 조준점방식에선 미사용")]
+        [Range(0f, 1f)]
+        public float enemyZigzagBaseWeight = 0.45f;
+
+        [Tooltip("조준점 위빙 최대 횡 오프셋(m) × Amplitude. 멀수록 옆으로 크게 위빙")]
+        public float enemyWeaveWidth = 200f;
+        [Tooltip("이 거리(m) 이상에서 위빙 최대, 모선에 가까울수록 0으로 수렴 → 반드시 명중")]
+        public float enemyWeaveFullDist = 250f;
+
+        [Header("빙글 방지 (교전 반경/타임아웃)")]
+        [Tooltip("모선 표면 이 거리(m) 이내 = 교전 중 → 감속(선회반경↓) + 체류시간 누적")]
+        public float enemyEngageRadius = 120f;
+        [Tooltip("교전 반경 내에 이 시간(초) 이상 머물면(=빙글) 강제 공격성공 처리. 0이면 비활성")]
+        public float enemyEngageTimeout = 6f;
 
         [Header("Enemy Pool")]
         [Tooltip("풀 최대 크기 (stage*EnemyCount 이상으로 설정)")]
@@ -276,6 +304,10 @@ namespace BoatAttack
         private SimpleExplosionOnCollision[] _poolExplosions;
         private Cinemachine.CinemachineDollyCart[] _poolDollyCarts;
         private float[] _poolNoiseSeed;
+        private float[] _poolZigTimer;   // 적군별 급변 타이머
+        private float[] _poolZigCmd;     // 적군별 현재 지그재그 조향 명령
+        private float[] _poolEngageTimer; // 적군별 교전 반경 체류 시간(빙글 방지)
+        private Collider _motherCollider; // 모선 콜라이더(표면거리 충돌판정용)
         private float _poolTemplateY; // 템플릿 높이(y) 저장
 
         [Header("Multi-Environment")]
@@ -881,6 +913,34 @@ namespace BoatAttack
             {
                 if (_camTargetId < 0 || _camTargetId >= enemyShips.Length || enemyShips[_camTargetId] == null) return;
                 var enemy = enemyShips[_camTargetId];
+
+                // === 1인칭: 적군 선박 위에서 전방 (아군과 동일) ===
+                if (firstPersonAllyCam)
+                {
+                    Vector3 fpPosE = enemy.transform.position
+                        + enemy.transform.right   * firstPersonOffset.x
+                        + Vector3.up              * firstPersonOffset.y
+                        + enemy.transform.forward * firstPersonOffset.z;
+
+                    Vector3 lookDirE = enemy.transform.forward;
+                    if (lookDirE.sqrMagnitude < 0.0001f) lookDirE = Vector3.forward;
+                    Quaternion fpRotE = Quaternion.LookRotation(lookDirE, Vector3.up)
+                                        * Quaternion.Euler(firstPersonPitch, 0f, 0f);
+
+                    if (_followCamSnap)
+                    {
+                        _followCamCamera.transform.position = fpPosE;
+                        _followCamCamera.transform.rotation = fpRotE;
+                        _followCamSnap = false;
+                    }
+                    else
+                    {
+                        float kE = 8f * Time.unscaledDeltaTime;
+                        _followCamCamera.transform.position = Vector3.Lerp(_followCamCamera.transform.position, fpPosE, kE);
+                        _followCamCamera.transform.rotation = Quaternion.Slerp(_followCamCamera.transform.rotation, fpRotE, kE);
+                    }
+                    return;
+                }
 
                 targetPos = enemy.transform.position;
                 targetPos.y = 0f;
@@ -2012,6 +2072,34 @@ namespace BoatAttack
 
             float side = Vector3.Cross(fwd, toEnemy.normalized).y;
             return side >= 0f ? rightPerp : leftPerp;
+        }
+
+        /// <summary>
+        /// 클러스터에서 '전개(towDir) 방향의 반대편 끝' 적군 위치를 타겟으로 반환.
+        /// 오른쪽으로 전개하는 모드면 맨 왼쪽 적, 왼쪽으로 전개하면 맨 오른쪽 적
+        /// (= 스윕을 시작할 가장자리). 적이 없으면 fallback(클러스터 중심) 반환.
+        /// </summary>
+        public Vector3 ComputeClusterEdgeTarget(System.Collections.Generic.List<int> enemyIndices,
+            Vector3 fromPos, Vector3 fwd, Vector3 fallback)
+        {
+            if (enemyIndices == null || enemyShips == null || enemyIndices.Count == 0) return fallback;
+
+            Vector3 towDir = ComputeTowDir(fromPos, fwd);   // 스윕 방향 (오른쪽/왼쪽)
+
+            Vector3 best = fallback;
+            float bestProj = float.MaxValue;
+            bool found = false;
+            foreach (int idx in enemyIndices)
+            {
+                if (idx < 0 || idx >= enemyShips.Length) continue;
+                var e = enemyShips[idx];
+                if (e == null || !e.activeInHierarchy || IsEnemyNeutralized(e)) continue;
+
+                // towDir 투영이 가장 작은 적 = towDir 반대편 끝 (스윕 시작 가장자리)
+                float proj = Vector3.Dot(e.transform.position, towDir);
+                if (!found || proj < bestProj) { bestProj = proj; best = e.transform.position; found = true; }
+            }
+            return found ? best : fallback;
         }
 
         /// <summary>
@@ -3630,6 +3718,14 @@ namespace BoatAttack
         {
             if (_enemyPool == null) return;
 
+            // 지그재그 상태 배열 (풀 크기에 맞춰 lazy 할당)
+            if (_poolZigTimer == null || _poolZigTimer.Length != _enemyPool.Length)
+            {
+                _poolZigTimer    = new float[_enemyPool.Length];
+                _poolZigCmd      = new float[_enemyPool.Length];
+                _poolEngageTimer = new float[_enemyPool.Length];
+            }
+
             Vector3 motherPos = motherShip.transform.position;
 
             for (int i = 0; i < _enemyPool.Length; i++)
@@ -3654,21 +3750,82 @@ namespace BoatAttack
                 toMother.y = 0f;
                 if (toMother.sqrMagnitude < 0.01f) continue;
 
-                float angleToMother = Vector3.SignedAngle(_enemyPool[i].transform.forward, toMother.normalized, Vector3.up);
-                float baseSteering = Mathf.Clamp(angleToMother / 45f, -1f, 1f);
+                // 모선 콜라이더 '표면'까지 거리 (모선 크기 무관)
+                if (_motherCollider == null && motherShip != null)
+                    _motherCollider = motherShip.GetComponentInChildren<Collider>();
+                float surfDist;
+                if (_motherCollider != null)
+                {
+                    Vector3 cp = _motherCollider.bounds.ClosestPoint(_enemyPool[i].transform.position);
+                    surfDist = Vector3.Distance(_enemyPool[i].transform.position, cp);
+                }
+                else surfDist = toMother.magnitude;   // 콜라이더 없으면 중심거리 폴백
 
-                // Perlin 노이즈 (각 적군 다른 패턴)
+                // 충돌=공격 성공
+                if (motherShipAttackDistance > 0f && surfDist < motherShipAttackDistance)
+                {
+                    Debug.LogWarning($"[DefenseEnv] 적 공격 성공! {_enemyPool[i].name} 표면거리={surfDist:F0}m → 충돌처리");
+                    OnMotherShipCollision(_enemyPool[i]);
+                    continue;
+                }
+
+                // === 빙글 방지: 교전 반경 내 체류 → 감속 + 타임아웃 강제 처리 ===
+                float engageThrottleMul = 1f;
+                if (surfDist < enemyEngageRadius)
+                {
+                    _poolEngageTimer[i] += Time.deltaTime;
+                    if (enemyEngageTimeout > 0f && _poolEngageTimer[i] > enemyEngageTimeout)
+                    {
+                        Debug.LogWarning($"[DefenseEnv] 적 교전 {enemyEngageTimeout:F0}s 초과(빙글) → 강제 공격성공: {_enemyPool[i].name}");
+                        OnMotherShipCollision(_enemyPool[i]);
+                        continue;
+                    }
+                    // 가까울수록 감속 → 선회 반경 축소로 빙글 대신 파고듦
+                    engageThrottleMul = Mathf.Lerp(0.35f, 1f, surfDist / Mathf.Max(1f, enemyEngageRadius));
+                }
+                else _poolEngageTimer[i] = 0f;
+
+                // === 조준점 위빙 방식 ===
+                // 조향을 직접 흔들지 않고, '모선 근처의 한 점(조준점)'을 향하게 하되
+                // 그 점의 횡 오프셋을 불규칙하게 흔든다. 거리에 비례해 오프셋이 0으로 줄어
+                // 모선에 가까워질수록 직진 → 빗나가지 않고 반드시 명중한다.
+                float dist = toMother.magnitude;
+                Vector3 dirM = toMother / dist;
+                Vector3 perp = new Vector3(dirM.z, 0f, -dirM.x);   // 모선 방향 우측 수직
+
                 float seed = _poolNoiseSeed[i];
-                float noise = (Mathf.PerlinNoise(seed, Time.time * enemyNoiseSpeed) - 0.5f) * 2f * enemySteeringNoise;
 
-                float steering = Mathf.Clamp(baseSteering + noise, -1f, 1f);
+                // 불규칙 위빙 신호 [-1,1]: 랜덤 급변 명령 + 사인 텍스처 + perlin
+                _poolZigTimer[i] -= Time.deltaTime;
+                if (_poolZigTimer[i] <= 0f)
+                {
+                    float dir = (_poolZigCmd[i] >= 0f) ? -1f : 1f;
+                    if (Random.value < 0.25f) dir = -dir;
+                    _poolZigCmd[i] = dir * Random.Range(0.5f, 1f);
+                    _poolZigTimer[i] = Random.Range(enemyZigzagMinInterval, enemyZigzagMaxInterval);
+                }
+                float freqMul = 0.6f + (seed % 100f) / 100f;
+                float wave  = Mathf.Sin(Time.time * enemyZigzagFrequency * freqMul + seed) * 0.35f;
+                float noise = (Mathf.PerlinNoise(seed, Time.time * enemyNoiseSpeed) - 0.5f) * 2f * enemySteeringNoise;
+                float weaveSignal = Mathf.Clamp(_poolZigCmd[i] + wave + noise, -1f, 1f);
+
+                // 거리에 비례해 줄어드는 횡 오프셋(m): 멀면 최대, 모선 근처면 0
+                float weaveScale = Mathf.Clamp01(dist / Mathf.Max(1f, enemyWeaveFullDist));
+                float lateral = weaveSignal * enemyWeaveWidth * enemyZigzagAmplitude * weaveScale;
+
+                // 조준점 = 모선 + 횡오프셋, 그 점을 향해 조향(일반 추적이라 빗나가지 않음)
+                Vector3 aimPoint = motherPos + perp * lateral;
+                Vector3 toAim = aimPoint - _enemyPool[i].transform.position; toAim.y = 0f;
+                if (toAim.sqrMagnitude < 0.01f) toAim = toMother;
+                float angleToAim = Vector3.SignedAngle(_enemyPool[i].transform.forward, toAim.normalized, Vector3.up);
+                float steering = Mathf.Clamp(angleToAim / 45f, -1f, 1f);
 
                 // Engine.Accelerate()는 0~1 클램프 → 적군은 직접 AddForce로 속도 배율 적용
                 var forward = engine.RB.transform.forward;
                 forward.y = 0f;
                 forward.Normalize();
                 if (float.IsNaN(forward.x)) forward = Vector3.forward;
-                engine.RB.AddForce(engine.horsePower * currentEnemyRushThrottle * forward, ForceMode.Acceleration);
+                engine.RB.AddForce(engine.horsePower * currentEnemyRushThrottle * engageThrottleMul * forward, ForceMode.Acceleration);
 
                 engine.Turn(steering * enemySteeringSensitivity);
             }

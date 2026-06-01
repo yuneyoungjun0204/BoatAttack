@@ -178,7 +178,7 @@ namespace BoatAttack
             var map = mapObj.AddComponent<TacticalMapDisplay>();
             map.envController = env;
             map.radarRange = 1000f;
-            map.mapScaleFromRadar = (3f / 1.3f) * 3f;   // 표시 범위 현재의 3배
+            map.mapScaleFromRadar = (3f / 1.3f) * 12f;   // 표시 범위 = 직전의 2배 (축 2배)
             map.gridSpacing = 500f;
             map.showRadarCircle = true;
             map.friendlyMarkerSize = 20f;

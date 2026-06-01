@@ -1431,6 +1431,26 @@ namespace BoatAttack
             _engine.Accelerate(throttle);
             _engine.Turn(steering);
 
+            // === LOS 정렬 보상: RL 액션이 LOS 베이스라인에 가까울수록 + (개별) ===
+            if (_clusterTarget != Vector3.zero && envController != null && envController.rewardCalculator != null)
+            {
+                var rc = envController.rewardCalculator;
+
+                // 조향 정렬 (steering, _cachedLOSBaseline 둘 다 [-1,1])
+                if (rc.losAlignmentRewardCoeff > 0f)
+                {
+                    float steerErr = Mathf.Clamp01(Mathf.Abs(steering - _cachedLOSBaseline) * 0.5f);
+                    AddReward(rc.losAlignmentRewardCoeff * (1f - steerErr));
+                }
+
+                // 속도 정렬 (RL throttle vs 선회감속 베이스라인, maxThrottle로 정규화)
+                if (rc.losThrottleAlignmentCoeff > 0f && maxThrottle > 0.01f)
+                {
+                    float thrErr = Mathf.Clamp01(Mathf.Abs(throttle - _cachedLOSThrottleBaseline) / maxThrottle);
+                    AddReward(rc.losThrottleAlignmentCoeff * (1f - thrErr));
+                }
+            }
+
             if (enableDebugLog)
                 Debug.Log($"[{gameObject.name}] Throttle: {throttle:F2}, Steering: {steering:F2}");
         }

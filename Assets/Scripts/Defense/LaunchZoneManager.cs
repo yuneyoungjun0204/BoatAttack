@@ -663,11 +663,19 @@ namespace BoatAttack
             int initTarget = repIdx >= 0 ? repIdx + 1 : -1;
             if (pair.agent1 != null) pair.agent1.assignedTargetIndex = initTarget;
 
-            // Residual policy용 클러스터 타겟
+            // 클러스터 타겟: 전개 방향(towDir) 반대편 끝 적군 (오른쪽 전개→맨 왼쪽 적)
             if (clusterIdx >= 0)
             {
                 Vector3 centroid = pair.clusterCentroid;
-                if (pair.agent1 != null) pair.agent1.SetClusterTarget(centroid);
+                Vector3 tgtPoint = centroid;
+                if (envController != null && pair.clusterEnemyIndices != null)
+                {
+                    Vector3 apprFwd = centroid - info.pairCenter; apprFwd.y = 0f;
+                    if (apprFwd.sqrMagnitude < 0.01f) apprFwd = Vector3.forward; else apprFwd.Normalize();
+                    tgtPoint = envController.ComputeClusterEdgeTarget(
+                        pair.clusterEnemyIndices, info.pairCenter, apprFwd, centroid);
+                }
+                if (pair.agent1 != null) pair.agent1.SetClusterTarget(tgtPoint);
             }
 
             // 스폰 방향 = 모선 후미 방향
@@ -1305,7 +1313,16 @@ namespace BoatAttack
                 if (pair.agent1 != null) pair.agent1.assignedTargetIndex = initTarget;
 
                 Vector3 centroid = pair.clusterCentroid;
-                pair.agent1?.SetClusterTarget(centroid);
+                Vector3 tgtPoint = centroid;
+                if (envController != null && pair.clusterEnemyIndices != null && pair.agent1 != null)
+                {
+                    Vector3 fromPos = pair.agent1.transform.position;
+                    Vector3 apprFwd = centroid - fromPos; apprFwd.y = 0f;
+                    if (apprFwd.sqrMagnitude < 0.01f) apprFwd = Vector3.forward; else apprFwd.Normalize();
+                    tgtPoint = envController.ComputeClusterEdgeTarget(
+                        pair.clusterEnemyIndices, fromPos, apprFwd, centroid);
+                }
+                pair.agent1?.SetClusterTarget(tgtPoint);
             }
 
             _deployedPairCount++;

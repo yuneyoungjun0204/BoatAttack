@@ -18,16 +18,6 @@ namespace BoatAttack
         [Tooltip("RL 속도가 LOS 선회감속 베이스라인에 가까울수록 보상. 권장: 0.001")]
         public float losThrottleAlignmentCoeff = 0.001f;
 
-        [Header("=== 타 페어 충돌 회피 ===")]
-        [Tooltip("타 페어 에이전트 접근 시 페널티 계수. 권장: 0.003")]
-        public float interPairAvoidanceCoeff = 0.003f;
-
-        [Tooltip("충돌 회피 경보 반경 (m). 이 거리 이내부터 페널티 시작. 권장: 30m")]
-        public float avoidanceWarningRadius = 30f;
-
-        [Tooltip("충돌 위험 반경 (m). 이 거리 이내에서 급격한 추가 페널티. 권장: 8m")]
-        public float avoidanceDangerRadius = 8f;
-
         [Header("=== 이벤트 보상 ===")]
         [Tooltip("포획 성공 보상")]
         public float captureReward = 1.0f;
