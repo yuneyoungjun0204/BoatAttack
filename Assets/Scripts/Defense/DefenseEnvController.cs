@@ -283,7 +283,7 @@ namespace BoatAttack
         public DefenseFollowCamera followCamera;
 
         [Header("1인칭 카메라 (아군 추적 시 메인 화면)")]
-        [Tooltip("아군(Pair) 추적 시 1인칭 시점으로 메인 화면 표시")]
+        [Tooltip("아군/적군 추적 시 1인칭 시점으로 메인 화면 표시")]
         public bool firstPersonAllyCam = true;
         [Tooltip("선박 기준 카메라 위치 (x=우현, y=높이, z=전방/뱃머리)")]
         public Vector3 firstPersonOffset = new Vector3(0f, 3.5f, 5f);
