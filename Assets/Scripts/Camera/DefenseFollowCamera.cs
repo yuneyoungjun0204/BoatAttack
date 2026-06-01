@@ -58,6 +58,14 @@ namespace BoatAttack
         [Tooltip("회전 추적 속도")]
         public float rotationSpeed = 4f;
 
+        [Header("First-Person (아군 추적 시 1인칭)")]
+        [Tooltip("아군을 따라갈 때 1인칭 시점(선박 위에서 전방)으로 봄")]
+        public bool firstPersonWhenFollowingAlly = true;
+        [Tooltip("선박 기준 카메라 위치 (x=우현, y=높이, z=전방/뱃머리)")]
+        public Vector3 firstPersonOffset = new Vector3(0f, 3.5f, 5f);
+        [Tooltip("아래로 내려다보는 각도(+ 값이 더 아래)")]
+        public float firstPersonPitch = 5f;
+
         [Header("Top-Down View")]
         [Tooltip("탑다운 카메라 높이")]
         public float topDownHeight = 300f;
@@ -574,6 +582,24 @@ namespace BoatAttack
         {
             if (_currentTarget == null) return;
 
+            // === 1인칭: 따라가는 아군 선박 위에서 전방을 바라봄 (기본 바탕 화면) ===
+            if (firstPersonWhenFollowingAlly && _followingAllies && !_isExtraCamera)
+            {
+                Vector3 fpPos = _currentTarget.position
+                    + _currentTarget.right   * firstPersonOffset.x
+                    + Vector3.up             * firstPersonOffset.y
+                    + _currentTarget.forward * firstPersonOffset.z;
+                transform.position = Vector3.Lerp(transform.position, fpPos, followSpeed * Time.deltaTime);
+
+                Vector3 lookDir = _currentTarget.forward;   // 선박 전방
+                if (lookDir.sqrMagnitude < 0.0001f) lookDir = transform.forward;
+                Quaternion fpRot = Quaternion.LookRotation(lookDir, Vector3.up)
+                                   * Quaternion.Euler(firstPersonPitch, 0f, 0f);
+                transform.rotation = Quaternion.Slerp(transform.rotation, fpRot, rotationSpeed * Time.deltaTime);
+                return;
+            }
+
+            // === 기존 추격 시점 (적군/드론 등) ===
             Vector3 desiredPos = _currentTarget.position
                 + _currentTarget.right * offset.x
                 + Vector3.up * offset.y
@@ -666,38 +692,12 @@ namespace BoatAttack
                 breachedCount = 0;
             }
 
-            GUILayout.BeginArea(new Rect(Screen.width - 275, 15, 260, 155), _hudStyle);
+            // ALLY/ENEMY 수 HUD — 좌측 하단 고정 (CAM 표시는 비활성화)
+            GUILayout.BeginArea(new Rect(15, Screen.height - 95, 280, 80), _hudStyle);
 
             GUILayout.Label($"ALLY:  {allyCount} ships  ({pairCount} pairs)", _hudStyleAlly);
             GUILayout.Label($"ENEMY: {enemyCount} ships", _hudStyleEnemy);
             GUILayout.Label($"  Captured: {capturedCount}  |  Breached: {breachedCount}", _hudStyleTarget);
-
-            if (_isExtraCamera && _currentTarget != null)
-            {
-                GUILayout.Label($"CAM: [Drone] {_currentTarget.name}  [C=next]  speed:{droneMoveSpeed:F0}", _hudStyleTarget);
-                GUILayout.Label($"  WASD=이동  Space/Shift=상하  QE/RZ=회전  RDrag=마우스회전  Scroll=속도", _hudStyleTarget);
-            }
-            else if (_freeFlyCamera != null && _freeFlyCamera.IsActive)
-            {
-                GUILayout.Label($"CAM: [FreeFly]  [F=exit]", _hudStyleTarget);
-                GUILayout.Label($"  WASD=move  RDrag=rotate  Scroll=speed", _hudStyleTarget);
-            }
-            else if (_isTopDown)
-            {
-                GUILayout.Label($"CAM: [Top-Down]  [RClick=follow]  [F=free]", _hudStyleTarget);
-                GUILayout.Label($"  Drag=move  Scroll=zoom", _hudStyleTarget);
-            }
-            else if (_currentTarget != null)
-            {
-                string prefix = _followingAllies ? "[Ally]" : "[Enemy]";
-                GUILayout.Label($"CAM: {prefix} {_currentTarget.name}  [C=switch]", _hudStyleTarget);
-                GUILayout.Label($"  [RClick=top-down]  [F=free]", _hudStyleTarget);
-            }
-            else
-            {
-                GUILayout.Label("CAM: No target  [C=switch]", _hudStyleTarget);
-                GUILayout.Label($"  [RClick=top-down]  [F=free]", _hudStyleTarget);
-            }
 
             GUILayout.EndArea();
         }

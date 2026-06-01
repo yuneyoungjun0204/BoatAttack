@@ -32,6 +32,9 @@ namespace BoatAttack
         [Tooltip("게임 모드 시 상단에 표시할 미니 레이더 오버레이")]
         public GameObject radarOverlay;
 
+        [Tooltip("게임 모드 시 표시할 전장 통합 오버레이 (맵 배경 + 아군/적군 카메라 창). 지정 시 미니 레이더 대신 사용")]
+        public GameObject battleOverlay;
+
         [Tooltip("하단 페이지 인디케이터 바")]
         public GameObject indicatorBar;
 
@@ -66,9 +69,11 @@ namespace BoatAttack
             if (btnPrev != null) btnPrev.onClick.AddListener(PrevPage);
             if (btnNext != null) btnNext.onClick.AddListener(NextPage);
 
-            // 미니 레이더 오버레이는 시작 시 숨김
+            // 오버레이는 시작 시 숨김
             if (radarOverlay != null)
                 radarOverlay.SetActive(false);
+            if (battleOverlay != null)
+                battleOverlay.SetActive(false);
 
             ShowPage(0);
             Debug.Log($"[TacticalPageManager] 초기화 완료. {pages.Length}개 페이지, Tab=전환, Enter=게임모드");
@@ -135,7 +140,10 @@ namespace BoatAttack
                 if (indicatorBar != null)
                     indicatorBar.SetActive(false);
 
-                if (radarOverlay != null)
+                // 전장 통합 오버레이가 있으면 우선 사용, 없으면 미니 레이더
+                if (battleOverlay != null)
+                    battleOverlay.SetActive(true);
+                else if (radarOverlay != null)
                     radarOverlay.SetActive(true);
             }
             else
@@ -143,6 +151,8 @@ namespace BoatAttack
                 // UI 모드 복귀: 현재 페이지 + 인디케이터 표시
                 if (radarOverlay != null)
                     radarOverlay.SetActive(false);
+                if (battleOverlay != null)
+                    battleOverlay.SetActive(false);
 
                 if (indicatorBar != null)
                     indicatorBar.SetActive(true);

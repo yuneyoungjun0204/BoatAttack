@@ -104,12 +104,12 @@ Assets/**/스크린샷*.mat.meta
 **/OcclusionCullingData.asset
 **/OcclusionCullingData.asset.meta
 
-# === 기타 대용량/캐시 파일 ===
-*.exr
-*.tga
-*.psd
-*.fbx
-*.FBX
+# === 대용량 에셋: Git LFS로 추적 (.gitattributes 참조) ===
+# 주의: *.fbx/*.tga/*.psd/*.exr 등은 .gitattributes에서 LFS로 추적됩니다.
+#       여기서 무시하면 추적이 막혀 git clean/브랜치전환 시 영구 소실됩니다
+#       (2026-06 참사 원인). 따라서 전역 무시하지 않습니다.
+#       단, 재생성 가능한 베이크 데이터(Lightmap-*/ReflectionProbe-*/LightingData)는
+#       위쪽 "Unity 자동 생성" 섹션에서 개별적으로 무시합니다.
 
 # 유령 파일 무시
 nul
@@ -117,3 +117,7 @@ nul
 # Roonshot 프로젝트 (별도 레포)
 Roonshot/
 LOSDefense*
+# === 대용량 데모 영상 (추적 안 함) ===
+*.mov
+*.mp4
+Assets/Resources/video/

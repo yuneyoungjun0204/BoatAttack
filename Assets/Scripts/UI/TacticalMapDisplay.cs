@@ -52,6 +52,9 @@ namespace BoatAttack
         public float mothershipMarkerSize = 16f;
         public float edgeMarkerSize = 6f;
 
+        [Tooltip("포획 대상이 할당되지 않은 아군 쌍은 레이다에 표시하지 않음")]
+        public bool hideUnassignedAllies = true;
+
         [Header("=== Colors ===")]
         public Color bgColor = new Color(0.01f, 0.02f, 0.06f, 0.95f);
         public Color gridColor = new Color(0.08f, 0.15f, 0.25f, 0.4f);
@@ -146,6 +149,8 @@ namespace BoatAttack
 
         bool _hasWebLine;
         Vector2 _webP1, _webP2;
+        readonly System.Collections.Generic.List<(Vector2 a, Vector2 b)> _webLines
+            = new System.Collections.Generic.List<(Vector2, Vector2)>();
 
         // 줌/팬 상태
         float _zoomLevel = 1f;
@@ -337,6 +342,18 @@ namespace BoatAttack
                 }
             }
 
+            // 8-b. 설치된 그물(모든 활성 쌍) — 3단 글로우
+            for (int wi = 0; wi < _webLines.Count; wi++)
+            {
+                var wl = _webLines[wi];
+                if (!IsInRect(wl.a, cx, cy, halfW, halfH) || !IsInRect(wl.b, cx, cy, halfW, halfH)) continue;
+                DrawLine(vh, wl.a.x, wl.a.y, wl.b.x, wl.b.y, 12f,
+                    new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.06f));
+                DrawLine(vh, wl.a.x, wl.a.y, wl.b.x, wl.b.y, 5f,
+                    new Color(webLineColor.r, webLineColor.g, webLineColor.b, 0.2f));
+                DrawLine(vh, wl.a.x, wl.a.y, wl.b.x, wl.b.y, 2.5f, webLineColor);
+            }
+
             // 9. 선박 마커 (글로우 + 깜빡임)
             float blinkAlpha = 0.6f + 0.4f * Mathf.Sin(Time.unscaledTime * 4f);
             foreach (var ship in _shipData)
@@ -413,6 +430,7 @@ namespace BoatAttack
         {
             _shipData.Clear();
             _hasWebLine = false;
+            _webLines.Clear();
 
             bool recordTrail = showTrails && (Time.unscaledTime - _lastTrailTime >= trailInterval);
             if (recordTrail) _lastTrailTime = Time.unscaledTime;
@@ -434,23 +452,39 @@ namespace BoatAttack
                 });
             }
 
-            if (envController.launchZoneManager != null && envController.launchZoneManager.IsInitialized)
+            var lzmRef = envController.launchZoneManager;
+            if (lzmRef != null && lzmRef.IsInitialized)
             {
-                var activeAgents = envController.launchZoneManager.GetActiveAgents();
-                foreach (var agent in activeAgents)
-                    AddShipAgent(agent, friendlyColor, friendlyMarkerSize, recordTrail);
+                // 쌍 단위로 순회: 미할당(포획 대상 없음) 쌍은 숨김, 설치된 그물 선 수집
+                int poolCount = lzmRef.GetCurrentPoolCount();
+                for (int i = 0; i < poolCount; i++)
+                {
+                    var pair = lzmRef.GetPair(i);
+                    if (pair == null || !pair.isActive || pair.agent1 == null) continue;
+
+                    bool assigned = pair.agent1.assignedTargetIndex > 0;
+                    if (hideUnassignedAllies && !assigned) continue;
+
+                    AddShipAgent(pair.agent1, friendlyColor, friendlyMarkerSize, recordTrail);
+                    if (pair.agent2 != null)
+                        AddShipAgent(pair.agent2, friendlyColor, friendlyMarkerSize, recordTrail);
+
+                    // 설치된 그물: agent1 ↔ agent2(없으면 anchor)
+                    Vector3 wp1 = pair.agent1.transform.position;
+                    Vector3 wp2 = (pair.agent2 != null) ? pair.agent2.transform.position
+                                : (pair.webObject != null ? pair.webObject.transform.position : wp1);
+                    if ((wp2 - wp1).sqrMagnitude > 0.01f)
+                        _webLines.Add((WorldToLocal(wp1, cx, cy), WorldToLocal(wp2, cx, cy)));
+                }
             }
             else
             {
                 AddShipAgent(envController.defenseAgent1, friendlyColor, friendlyMarkerSize, recordTrail);
                 AddShipAgent(envController.defenseAgent2, friendlyColor, friendlyMarkerSize, recordTrail);
-            }
-
-            if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
-            {
-                _webP1 = WorldToLocal(envController.defenseAgent1.transform.position, cx, cy);
-                _webP2 = WorldToLocal(envController.defenseAgent2.transform.position, cx, cy);
-                _hasWebLine = true;
+                if (envController.defenseAgent1 != null && envController.defenseAgent2 != null)
+                    _webLines.Add((
+                        WorldToLocal(envController.defenseAgent1.transform.position, cx, cy),
+                        WorldToLocal(envController.defenseAgent2.transform.position, cx, cy)));
             }
 
             if (envController.enemyShips != null)

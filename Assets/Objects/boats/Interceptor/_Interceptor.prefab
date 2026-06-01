@@ -356,9 +356,33 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 1025780610191132, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1073097268604762, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1500772317517024, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 1553288845585282, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
       propertyPath: m_Name
       value: _Interceptor
+      objectReference: {fileID: 0}
+    - target: {fileID: 1852268228170652, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1857863317272600, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1881930577848730, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4154958958717284, guid: fc3ffb83d6eafb1489a5b23bc82d25b6, type: 3}
       propertyPath: m_LocalScale.z
@@ -432,7 +456,7 @@ PrefabInstance:
         type: 3}
       propertyPath: m_Materials.Array.data[0]
       value: 
-      objectReference: {fileID: 2100000, guid: 7dc5b4500b2ab6446908dcdad6abf2de, type: 2}
+      objectReference: {fileID: 2100000, guid: 05b60c4c46bbb684a866c85e23c1bcee, type: 2}
     - target: {fileID: 54710712322113256, guid: fc3ffb83d6eafb1489a5b23bc82d25b6,
         type: 3}
       propertyPath: m_Drag
@@ -732,6 +756,7 @@ MonoBehaviour:
   - {fileID: 0}
   maxEnemyCount: 5
   partnerAgent: {fileID: 0}
+  anchorTransform: {fileID: 0}
   motherShip: {fileID: 0}
   motherShipTag: MotherShip
   webObject: {fileID: 0}
@@ -741,12 +766,6 @@ MonoBehaviour:
   allyBufferSensor: {fileID: 0}
   enemyMaxObservables: 6
   allyMaxObservables: 3
-  maxLinearVelocity: 20
-  maxAngularVelocity: 90
-  velocityControlGain: 1
-  angularVelocityControlGain: 1
-  maxLinearAcceleration: 5
-  maxAngularAcceleration: 45
   maxThrottle: 1
   minThrottle: 0
   steeringSensitivity: 1.112
@@ -767,14 +786,6 @@ MonoBehaviour:
   forwardSpeedScale: 1
   driftSpeedScale: 1
   allyPairNormK: 100
-  phantomSpacing: 80
-  phantomSpeed: 50
-  phantomSpeedMult: 1.5
-  phantomNoiseStrength: 5
-  phantomWebHalfWidth: 25
-  phantomPairs: []
-  phantomCount: 0
-  phantomsInitialized: 0
   useArrowKeys: 0
   enableLOSHeuristic: 0
   losOffset: 120

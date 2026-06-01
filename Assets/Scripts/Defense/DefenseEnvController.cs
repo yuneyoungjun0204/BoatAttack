@@ -254,6 +254,16 @@ namespace BoatAttack
         [Tooltip("방어 추적 카메라 (없으면 카메라 전환 비활성화)")]
         public DefenseFollowCamera followCamera;
 
+        [Header("1인칭 카메라 (아군 추적 시 메인 화면)")]
+        [Tooltip("아군(Pair) 추적 시 1인칭 시점으로 메인 화면 표시")]
+        public bool firstPersonAllyCam = true;
+        [Tooltip("선박 기준 카메라 위치 (x=우현, y=높이, z=전방/뱃머리)")]
+        public Vector3 firstPersonOffset = new Vector3(0f, 3.5f, 5f);
+        [Tooltip("아래로 내려다보는 각도(+ 값이 더 아래)")]
+        public float firstPersonPitch = 5f;
+        [Tooltip("[CAM]/Cluster 디버그 HUD 표시 (기본 끔)")]
+        public bool showCamClusterHud = false;
+
         [Tooltip("아군 생성 버튼 UI (없으면 무시)")]
         public AllySpawnButtonUI spawnButtonUI;
 
@@ -638,6 +648,7 @@ namespace BoatAttack
 
         private void OnGUI()
         {
+            if (!showCamClusterHud) return;   // [CAM]/Cluster 디버그 HUD 비활성화
             string mode = _camMode.ToString();
             string target = "None";
             if (_camMode == FollowCamMode.Pair && launchZoneManager != null)
@@ -821,12 +832,42 @@ namespace BoatAttack
             {
                 var pair = launchZoneManager.GetPair(_camTargetId);
                 if (pair == null || !pair.isActive) return;
+                var a1 = pair.agent1;
+                if (a1 == null) return;
 
-                Vector3 p1 = pair.agent1 != null ? pair.agent1.transform.position : Vector3.zero;
+                // === 1인칭: 아군 선박 위에서 전방을 바라봄 (메인 화면) ===
+                if (firstPersonAllyCam)
+                {
+                    Vector3 fpPos = a1.transform.position
+                        + a1.transform.right   * firstPersonOffset.x
+                        + Vector3.up           * firstPersonOffset.y
+                        + a1.transform.forward * firstPersonOffset.z;
+
+                    Vector3 lookDir = a1.transform.forward;
+                    if (lookDir.sqrMagnitude < 0.0001f) lookDir = Vector3.forward;
+                    Quaternion fpRot = Quaternion.LookRotation(lookDir, Vector3.up)
+                                       * Quaternion.Euler(firstPersonPitch, 0f, 0f);
+
+                    if (_followCamSnap)
+                    {
+                        _followCamCamera.transform.position = fpPos;
+                        _followCamCamera.transform.rotation = fpRot;
+                        _followCamSnap = false;
+                    }
+                    else
+                    {
+                        float k = 8f * Time.unscaledDeltaTime;
+                        _followCamCamera.transform.position = Vector3.Lerp(_followCamCamera.transform.position, fpPos, k);
+                        _followCamCamera.transform.rotation = Quaternion.Slerp(_followCamCamera.transform.rotation, fpRot, k);
+                    }
+                    return;   // 1인칭은 아래 공통 추격 코드 사용 안 함
+                }
+
+                Vector3 p1 = a1.transform.position;
                 targetPos = p1;
                 targetPos.y = 0f;
 
-                Vector3 fwd1 = pair.agent1 != null ? pair.agent1.transform.forward : Vector3.forward;
+                Vector3 fwd1 = a1.transform.forward;
                 camForward = fwd1;
                 camForward.y = 0f;
                 if (camForward.sqrMagnitude < 0.01f) camForward = Vector3.forward;
