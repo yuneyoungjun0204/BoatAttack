@@ -60,21 +60,18 @@ namespace BoatAttack
         private int _lastCallCount = -1; // collectObsCallCount 변화 추적
         private int _staleFrames = 0;    // 관측 갱신 없이 경과한 프레임 수
 
-        // VectorSensor 6개: isLeftAgent, 모선거리, 파트너거리, 파트너헤딩, 파트너베어링, LOS조향명령
-        private static readonly string[] Labels = { "IsLeft", "MthDst", "PrtDst", "PrtHdg", "PrtBrg", "LOSCmd" };
+        // VectorSensor 3개: 모선거리, LOS조향명령, 의도 드리프트 방향(+1 우/-1 좌)
+        private static readonly string[] Labels = { "MthDst", "LOSCmd", "DrftDir" };
 
-        // EnemyBuffer: 3개씩 (Dist, Brg, Hdg)
-        private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "Hdg" };
-        // AllyBuffer: 3개씩 (Dist, Brg, WebLen)
-        private static readonly string[] AllyObsSuffix = { "Dist", "Brg", "WebLen" };
+        // EnemyBuffer: 3개씩 (Dist, Brg, ClstN=클러스터 적 수 정규화)
+        private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "ClstN" };
+        // AllyBuffer: 4개씩 (Dist, Brg, HdgC, HdgS)
+        private static readonly string[] AllyObsSuffix = { "Dist", "Brg", "HdgC", "HdgS" };
 
+        // VectorSensor(2) 전용 색상. 버퍼(클러스터/아군) 항목은 GetColor의 골든레이시오 자동 색 사용.
         private static readonly Color[] GraphColors =
         {
-            new Color(0.9f, 0.9f, 0.4f, 1f),  // IsLeft   - 노랑
             new Color(0.4f, 0.9f, 0.9f, 1f),  // MthDst   - 청록
-            new Color(0.3f, 0.8f, 0.4f, 1f),  // PrtDst   - 녹색
-            new Color(0.9f, 0.5f, 0.3f, 1f),  // PrtHdg   - 주황
-            new Color(0.9f, 0.5f, 0.9f, 1f),  // PrtBrg   - 보라
             new Color(0.4f, 0.7f, 1.0f, 1f),  // LOSCmd   - 하늘색
         };
 
@@ -777,22 +774,22 @@ namespace BoatAttack
 
             int bufferIdx = index - Labels.Length;
 
-            // 적군 버퍼 영역 (3개씩: Dist, SignedBrg, Hdg)
+            // 적군 버퍼 영역 (클러스터, 3개씩: Dist, SignedBrg, ClstN)
             int enemyCount = (targetAgent != null) ? targetAgent.lastEnemyBufferObs.Count : 0;
             if (bufferIdx >= 0 && bufferIdx < enemyCount)
             {
-                int enemyNum = bufferIdx / 3;
-                int comp = bufferIdx % 3;
-                return $"E{enemyNum} {EnemyObsSuffix[comp]}";
+                int clusterNum = bufferIdx / EnemyObsSuffix.Length;
+                int comp = bufferIdx % EnemyObsSuffix.Length;
+                return $"C{clusterNum} {EnemyObsSuffix[comp]}";
             }
 
-            // 아군 버퍼 영역 (3개씩: Dist, Brg, WebLen)
+            // 아군 버퍼 영역 (4개씩: Dist, Brg, HdgC, HdgS)
             int allyIdx = bufferIdx - enemyCount;
             int allyCount = (targetAgent != null) ? targetAgent.lastAllyBufferObs.Count : 0;
             if (allyIdx >= 0 && allyIdx < allyCount)
             {
-                int allyNum = allyIdx / 3;
-                int comp = allyIdx % 3;
+                int allyNum = allyIdx / AllyObsSuffix.Length;
+                int comp = allyIdx % AllyObsSuffix.Length;
                 return $"A{allyNum} {AllyObsSuffix[comp]}";
             }
 

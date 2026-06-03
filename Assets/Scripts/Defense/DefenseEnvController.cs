@@ -1149,20 +1149,6 @@ namespace BoatAttack
                 return;
             }
 
-            // 그물 성장 보상 (isSplitting 중인 쌍)
-            int poolCount = launchZoneManager.GetCurrentPoolCount();
-            for (int pi = 0; pi < poolCount; pi++)
-            {
-                var pair = launchZoneManager.GetPair(pi);
-                if (pair == null || !pair.isActive || !pair.isSplitting || pair.agent1 == null) continue;
-                if (pair.anchorObject == null) continue;
-
-                float anchorDist = Vector3.Distance(
-                    pair.agent1.transform.position, pair.anchorObject.transform.position);
-                float growthReward = rewardCalculator.CalculateWebGrowthReward(pi, anchorDist);
-                if (growthReward != 0f) pair.agent1.AddReward(growthReward);
-            }
-
             _currentStep = _resetTimer;
             _totalCollisions = _totalCollisionCount;
         }
@@ -1340,11 +1326,6 @@ namespace BoatAttack
                     _poolNoiseSeed[i] = Random.Range(0f, 1000f);
             }
 
-            // RewardCalculator 리셋
-            if (rewardCalculator != null)
-            {
-                rewardCalculator.Reset();
-            }
 
             // Stage 설정 적용 (에피소드 시작 시마다)
             ApplyStageSettings();
@@ -2075,6 +2056,19 @@ namespace BoatAttack
         }
 
         /// <summary>
+        /// 의도 드리프트(그물 전개 스윕) 방향 부호 반환. +1=오른쪽, -1=왼쪽. 관측용.
+        /// ComputeTowDir 결과를 fwd 기준 좌/우 부호로 변환 (towDirectionOverride도 반영).
+        /// </summary>
+        public float ComputeTowDirSign(Vector3 fromPos, Vector3 fwd)
+        {
+            if (fwd.sqrMagnitude < 1e-6f) return 0f;
+            fwd.y = 0f; fwd.Normalize();
+            Vector3 dir = ComputeTowDir(fromPos, fwd);
+            Vector3 rightPerp = new Vector3(fwd.z, 0f, -fwd.x);
+            return Vector3.Dot(dir, rightPerp) >= 0f ? 1f : -1f;
+        }
+
+        /// <summary>
         /// 클러스터에서 '전개(towDir) 방향의 반대편 끝' 적군 위치를 타겟으로 반환.
         /// 오른쪽으로 전개하는 모드면 맨 왼쪽 적, 왼쪽으로 전개하면 맨 오른쪽 적
         /// (= 스윕을 시작할 가장자리). 적이 없으면 fallback(클러스터 중심) 반환.
@@ -2156,31 +2150,14 @@ namespace BoatAttack
                         if (phase1TrapOnlyMode)
                         {
                             pair.agent1.SetStopMode(true);
-
-                            float deployBonus = rewardCalculator != null ? rewardCalculator.trapDeployBonus : 1.0f;
-                            if (m_AgentGroup != null)
-                                m_AgentGroup.AddGroupReward(deployBonus);
-                            else
-                                pair.agent1.AddReward(deployBonus);
-
-                            Debug.Log($"[Phase1] Pair {pi} 트랩 설치 완료 → 정지. bonus={deployBonus:F2}, step={_resetTimer}");
+                            Debug.Log($"[Phase1] Pair {pi} 트랩 설치 완료 → 정지. step={_resetTimer}");
 
                             if (AreAllActivePairsDisarmed())
-                            {
-                                float bonus = rewardCalculator != null ? rewardCalculator.allTrapsDeployedBonus : 2.0f;
-                                RestartEpisode("AllTrapsDeployed", bonus);
-                            }
+                                RestartEpisode("AllTrapsDeployed", 0f);
                         }
                         else
                         {
                             pair.agent1.SetStopMode(true);
-
-                            float deployBonus = rewardCalculator != null ? rewardCalculator.trapDeployBonus : 1.0f;
-                            if (m_AgentGroup != null)
-                                m_AgentGroup.AddGroupReward(deployBonus);
-                            else
-                                pair.agent1.AddReward(deployBonus);
-
                             Debug.Log($"[Trap] Pair {pi} 정지 트랩 설치 완료 → 정지. dist={dist:F1}m, timeout={timeout}, step={_resetTimer}");
                         }
                     }
@@ -2210,21 +2187,6 @@ namespace BoatAttack
 
                         pair.isSplitting = true;
                         pair.splitStartStep = _resetTimer;
-
-                        // 앵커드롭 즉각 보상: towDir ⊥ 적 진로일수록 최대 (그물이 진로를 잘 가로막음)
-                        if (rewardCalculator != null && rewardCalculator.anchorDropQualityReward > 0f
-                            && nearestEnemyPos != Vector3.zero && motherShip != null)
-                        {
-                            Vector3 enemyDir = (motherShip.transform.position - nearestEnemyPos);
-                            enemyDir.y = 0f;
-                            if (enemyDir.sqrMagnitude > 0.01f)
-                            {
-                                float interceptQuality = Mathf.Abs(Vector3.Cross(towDir, enemyDir.normalized).y);
-                                float dropReward = interceptQuality * rewardCalculator.anchorDropQualityReward;
-                                pair.agent1.AddReward(dropReward);
-                                Debug.Log($"[AnchorDrop] Pair {pi}: interceptQuality={interceptQuality:F2}, dropReward={dropReward:F3}");
-                            }
-                        }
 
                         string dirLabel = (towDir == new Vector3(fwd.z, 0f, -fwd.x)) ? "RIGHT" : "LEFT";
                         Debug.Log($"[AnchorDrop] Pair {pi}: dir={dirLabel}, anchorPos={anchorPos:F0}, towDir={towDir:F2}, nearestEnemy={nearestEnemy:F1}m, step={_resetTimer}");

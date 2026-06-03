@@ -278,7 +278,7 @@ namespace BoatAttack
             if (enemyBufferSensor == null)
                 enemyBufferSensor = gameObject.AddComponent<BufferSensorComponent>();
             enemyBufferSensor.SensorName = "EnemyBufferSensor";
-            enemyBufferSensor.ObservableSize = 3;   // Dist, SignedBrg, Hdg
+            enemyBufferSensor.ObservableSize = 3;   // Dist, SignedBrg, ClusterSize (heading 제거, 클러스터 관측)
             enemyBufferSensor.MaxNumObservables = enemyMaxObservables;
 
             // 아군 쌍 BufferSensor
@@ -287,7 +287,7 @@ namespace BoatAttack
             if (allyBufferSensor == null)
                 allyBufferSensor = gameObject.AddComponent<BufferSensorComponent>();
             allyBufferSensor.SensorName = "AllyBufferSensor";
-            allyBufferSensor.ObservableSize = 3;   // dist, bearing, hdg
+            allyBufferSensor.ObservableSize = 4;   // dist, bearing, hdgCos, hdgSin
             allyBufferSensor.MaxNumObservables = allyMaxObservables;
 
             // 데모 녹화 모드: BehaviorType=HeuristicOnly + DemonstrationRecorder 자동 추가
@@ -1023,10 +1023,10 @@ namespace BoatAttack
         }
 
         /// <summary>
-        /// 관측 수집 (VectorSensor 0개 + AllyBufferSensor 최대10 + EnemyBufferSensor 최대10)
-        /// VectorSensor: 없음 (모든 정보가 BufferSensor의 상대값으로 충분)
-        /// AllyBufferSensor: 아군쌍+트랩 최대10개, 각 3개 (dist, bearing, hdg)
-        /// EnemyBufferSensor: 활성 적군 최대10대, 각 3개 (Dist, SignedBrg, Hdg)
+        /// 관측 수집 (VectorSensor 2개 + AllyBufferSensor + EnemyBufferSensor)
+        /// VectorSensor(2): motherDistNorm, LOSBaseline
+        /// AllyBufferSensor: 타 아군쌍+트랩, 각 4개 (dist, bearing, hdgCos, hdgSin)
+        /// EnemyBufferSensor: 적 각도 클러스터(일반) 또는 배정 적 1대(SingleNet), 각 3개 (Dist, SignedBrg, ClusterSize)
         /// </summary>
         public override void CollectObservations(VectorSensor sensor)
         {
@@ -1039,9 +1039,12 @@ namespace BoatAttack
             //  [3] partner hdg      — 파트너 헤딩차
             //  [4] partner bearing  — 파트너 베어링
             //  [5] LOSBaseline      — LOS 조향 명령 [-1,1]
-            const int VECTOR_OBS_COUNT = 6;
+            // VectorSensor 3개 (RL 정책이 실제 조종하는 '접근' 구간에 유효한 것만):
+            //  [0] 모선 거리, [1] LOS 베이스라인 조향, [2] 의도 드리프트 방향(+1 우/-1 좌)
+            // (tow모드/전개진행률/앵커베어링/그물⊥적 = 스크립트 구간 전용이라 제거)
+            const int VECTOR_OBS_COUNT = 3;
             if (lastObservations == null || lastObservations.Length < VECTOR_OBS_COUNT)
-                lastObservations = new float[VECTOR_OBS_COUNT];  // [5] 추가 시 크기 자동 반영
+                lastObservations = new float[VECTOR_OBS_COUNT];
             int oi = 0;
 
             if (_engine == null || _engine.RB == null)
@@ -1051,12 +1054,7 @@ namespace BoatAttack
                 return;
             }
 
-            // [0] 그물 전개 중 여부 (One-Way Towing: _towMode=true이면 횡단 스윕 중)
-            float isTowObs = _towMode ? 1f : 0f;
-            sensor.AddObservation(isTowObs);
-            lastObservations[0] = isTowObs;
-
-            // [1] 모선 거리
+            // [0] 모선 거리
             float motherDistNorm = 0f;
             if (motherShip != null)
             {
@@ -1066,61 +1064,22 @@ namespace BoatAttack
                 motherDistNorm = _normK / (toMother.magnitude + _normK);
             }
             sensor.AddObservation(motherDistNorm);
-            lastObservations[1] = motherDistNorm;
+            lastObservations[0] = motherDistNorm;
 
-            // [2][3][4] One-Way Towing 앵커 관측
-            {
-                float webProgress = 0f;  // 전개 진행률 (anchorDist / webDeployedThreshold)
-                float anchorBrg   = 0f;  // 앵커 베어링 (agent1 전방 기준 signed -1~1)
-                float webOrtho    = 0f;  // 그물⊥적진로 정렬도 (sin, 1=수직, 0=평행)
-
-                if (anchorTransform != null)
-                {
-                    Vector3 toAnchor = anchorTransform.position - transform.position;
-                    toAnchor.y = 0f;
-                    float anchorDist = toAnchor.magnitude;
-
-                    // [2] 전개 진행률
-                    float threshold = (envController != null) ? envController.webDeployedThreshold : 100f;
-                    webProgress = threshold > 0f ? Mathf.Clamp(anchorDist / threshold, 0f, 2f) : 0f;
-
-                    // [3] 앵커 베어링 (전방=0, 우=+1, 좌=-1)
-                    if (anchorDist > 0.5f)
-                        anchorBrg = ComputeSignedBearing(transform.forward, toAnchor);
-
-                    // [4] 그물-적 수직 정렬도: sin(그물방향 ∠ 적접근방향)
-                    // _towMode 중에만 의미있음 (anchorDist 충분할 때)
-                    if (_towMode && anchorDist > 1f && enemyShips != null)
-                    {
-                        Vector3 webDir = toAnchor.normalized;
-                        float minDist = float.MaxValue;
-                        Vector3 nearestEnemyPos = Vector3.zero;
-                        for (int ei = 0; ei < enemyShips.Length; ei++)
-                        {
-                            if (enemyShips[ei] == null || !enemyShips[ei].activeInHierarchy) continue;
-                            float ed = Vector3.Distance(transform.position, enemyShips[ei].transform.position);
-                            if (ed < minDist) { minDist = ed; nearestEnemyPos = enemyShips[ei].transform.position; }
-                        }
-                        if (minDist < float.MaxValue)
-                        {
-                            Vector3 toEnemy = (nearestEnemyPos - transform.position); toEnemy.y = 0f;
-                            if (toEnemy.sqrMagnitude > 0.01f)
-                                webOrtho = Vector3.Cross(webDir, toEnemy.normalized).y; // sin값, ±1
-                        }
-                    }
-                }
-
-                sensor.AddObservation(webProgress);
-                sensor.AddObservation(anchorBrg);
-                sensor.AddObservation(webOrtho);
-                lastObservations[2] = webProgress;
-                lastObservations[3] = anchorBrg;
-                lastObservations[4] = webOrtho;
-            }
-
-            // [5] LOS 베이스라인 조향 명령 [-1, 1]
+            // [1] LOS 베이스라인 조향 명령 [-1, 1]
             sensor.AddObservation(_cachedLOSBaseline);
-            if (lastObservations.Length > 5) lastObservations[5] = _cachedLOSBaseline;
+            lastObservations[1] = _cachedLOSBaseline;
+
+            // [2] 의도 드리프트(그물 전개 스윕) 방향 부호 (+1 우 / -1 좌) — 접근 단계에서 사전 인지
+            float driftSign = 0f;
+            if (envController != null)
+            {
+                Vector3 fwdD = transform.forward; fwdD.y = 0f;
+                if (fwdD.sqrMagnitude > 0.001f)
+                    driftSign = envController.ComputeTowDirSign(transform.position, fwdD.normalized);
+            }
+            sensor.AddObservation(driftSign);
+            lastObservations[2] = driftSign;
 
             oi = VECTOR_OBS_COUNT;
 
@@ -1135,48 +1094,96 @@ namespace BoatAttack
             // 4. AllyBufferSensor: 가까운 아군 쌍 최대 3개
             CollectAllyPairBufferObs(webCenter, webForward);
 
-            // 5. EnemyBufferSensor
-            // Flank Phase: 배정된 적 1개만 / 일반: 모든 활성 적 거리순
+            // 5. EnemyBufferSensor — 자신에게 할당된 클러스터(또는 배정 적 1대)만 관측
+            //   1 엔티티 × 3필드: { 거리, 방위(signed bearing), 클러스터 적 수(정규화) }  ← heading 제거
+            //   - SingleNet/배정 모드: 배정된 적 1대만 정밀 관측
+            //   - 일반(접근) 모드: 이 쌍에 배정된 클러스터(pair.clusterEnemyIndices)의 centroid만 관측
+            //   할당 클러스터가 비었거나(전멸) 없으면 → 최근접 활성 적 1대로 폴백
             lastEnemyBufferObs.Clear();
-            if (enemyBufferSensor != null)
+            if (enemyBufferSensor != null && enemyShips != null)
             {
                 float normK  = (envController != null) ? envController.enemyNormK        : enemyNormK;
                 float eDistS = (envController != null) ? envController.enemyDistScale    : enemyDistScale;
                 float eBrgS  = (envController != null) ? envController.enemyBearingScale : enemyBearingScale;
-                float eHdgS  = (envController != null) ? envController.enemyHeadingScale : enemyHeadingScale;
+                int   totalEnemies = (envController != null) ? Mathf.Max(1, envController.enemyCount) : 10;
 
-                // 가이던스 중: 클러스터 추상 없이 개별 적군 raw obs 강제
-                // RL 이후: useLOSObservation 토글 따름
-                bool useLOS = useLOSObservation && !_guidancePhase && motherShip != null;
+                GameObject assigned = _singleNetMode ? GetAssignedEnemy() : null;
 
-                if (enemyShips != null)
+                if (assigned != null && assigned.activeInHierarchy)
                 {
-                // 모드 무관 — 거리순 정렬 후 maxEnemyObsNormal개까지 관측 (Phase1/Phase2 동일 형태)
-                var enemyByDist = new List<(int idx, float dist)>();
-                for (int i = 0; i < enemyShips.Length; i++)
-                {
-                    if (enemyShips[i] == null || !enemyShips[i].activeInHierarchy) continue;
-                    if (envController != null && envController.IsEnemyNeutralized(enemyShips[i])) continue;
-                    float d = Vector3.Distance(webCenter, enemyShips[i].transform.position);
-                    enemyByDist.Add((i, d));
-                }
-                enemyByDist.Sort((a, b) => a.dist.CompareTo(b.dist));
-                _heuristicNearestEnemy = enemyByDist.Count > 0 ? enemyShips[enemyByDist[0].idx] : null;
-
-                int count = Mathf.Min(enemyByDist.Count,
-                                      Mathf.Min(maxEnemyObsNormal, enemyBufferSensor.MaxNumObservables));
-                for (int ei = 0; ei < count; ei++)
-                {
-                    var enemy = enemyShips[enemyByDist[ei].idx];
-                    float hdg = NormalizeHeadingDiff(webAngle, enemy.transform.eulerAngles.y) * eHdgS;
-                    Vector3 rel = enemy.transform.position - webCenter;
+                    // ── 배정 적 1대 정밀 관측 (막판 SingleNet 포획) ──
+                    Vector3 rel = assigned.transform.position - webCenter;
                     float obs0 = NormalizePosition(rel.magnitude, normK) * eDistS;
                     float obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
-                    enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, hdg });
-                    lastEnemyBufferObs.Add(obs0); lastEnemyBufferObs.Add(obs1); lastEnemyBufferObs.Add(hdg);
+                    float obs2 = 1f / totalEnemies;   // 단일 표적 → 정규화 카운트
+                    AppendEnemyObs(obs0, obs1, obs2);
+                    _heuristicNearestEnemy = assigned;
                 }
-                } // if (enemyShips != null)
-            } // if (enemyBufferSensor != null)
+                else
+                {
+                    // ── 자신에게 할당된 클러스터만 관측 ──
+                    // 내 쌍의 clusterEnemyIndices(배치 시 배정) → 활성 멤버로 centroid·count 재계산
+                    List<int> myCluster = null;
+                    var lzm = (envController != null) ? envController.launchZoneManager : null;
+                    if (lzm != null && lzm.IsInitialized)
+                    {
+                        int pi = lzm.FindPairIndex(this);
+                        if (pi >= 0)
+                        {
+                            var p = lzm.GetPair(pi);
+                            if (p != null) myCluster = p.clusterEnemyIndices;
+                        }
+                    }
+
+                    Vector3 sum = Vector3.zero;
+                    int activeCount = 0;
+                    GameObject nearest = null; float nearestD = float.MaxValue;
+                    if (myCluster != null)
+                    {
+                        for (int k = 0; k < myCluster.Count; k++)
+                        {
+                            int idx = myCluster[k];
+                            if (idx < 0 || idx >= enemyShips.Length) continue;
+                            var e = enemyShips[idx];
+                            if (e == null || !e.activeInHierarchy) continue;
+                            if (envController != null && envController.IsEnemyNeutralized(e)) continue;
+                            sum += e.transform.position;
+                            activeCount++;
+                            float d = Vector3.Distance(webCenter, e.transform.position);
+                            if (d < nearestD) { nearestD = d; nearest = e; }
+                        }
+                    }
+
+                    // 폴백: 할당 클러스터가 비었거나 없음 → 최근접 활성 적 1대
+                    if (activeCount == 0)
+                    {
+                        for (int i = 0; i < enemyShips.Length; i++)
+                        {
+                            var e = enemyShips[i];
+                            if (e == null || !e.activeInHierarchy) continue;
+                            if (envController != null && envController.IsEnemyNeutralized(e)) continue;
+                            float d = Vector3.Distance(webCenter, e.transform.position);
+                            if (d < nearestD) { nearestD = d; nearest = e; }
+                        }
+                        if (nearest != null)
+                        {
+                            sum = nearest.transform.position;
+                            activeCount = 1;
+                        }
+                    }
+
+                    if (activeCount > 0)
+                    {
+                        Vector3 centroid = sum / activeCount;
+                        Vector3 rel = centroid - webCenter;
+                        float obs0 = NormalizePosition(rel.magnitude, normK) * eDistS;
+                        float obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
+                        float obs2 = Mathf.Clamp01(activeCount / (float)totalEnemies);
+                        AppendEnemyObs(obs0, obs1, obs2);
+                    }
+                    _heuristicNearestEnemy = nearest;
+                }
+            } // if (enemyBufferSensor != null && enemyShips != null)
 
             // 전체 관측을 lastObservations에 병합 (VectorSensor + EnemyBuffer + AllyBuffer)
             int totalObs = oi + lastEnemyBufferObs.Count + lastAllyBufferObs.Count;
@@ -1293,11 +1300,20 @@ namespace BoatAttack
             float aHdgS  = (envController != null) ? envController.allyHdgScale : allyHdgScale;
             float normDist = NormalizePosition(dist, allyPairNormK) * aDistS;
             float brg = ComputeSignedBearing(myForward, rel) * aBrgS;
-            // hdg: 내 헤딩과 아군 쌍 헤딩의 차이 (±180°=반대방향→0, 0°=동방향→±1)
-            float hdg = NormalizeHeadingDiff(myAngle, allyYaw) * aHdgS;
+            // 헤딩차를 (cos, sin) 2개로 → 부호 포함 모든 각도 유일 표현
+            float dHdgA = Mathf.DeltaAngle(myAngle, allyYaw) * Mathf.Deg2Rad;
+            float hdgCos = Mathf.Cos(dHdgA) * aHdgS;
+            float hdgSin = Mathf.Sin(dHdgA) * aHdgS;
 
-            allyBufferSensor.AppendObservation(new float[] { normDist, brg, hdg });
-            lastAllyBufferObs.Add(normDist); lastAllyBufferObs.Add(brg); lastAllyBufferObs.Add(hdg);
+            allyBufferSensor.AppendObservation(new float[] { normDist, brg, hdgCos, hdgSin });
+            lastAllyBufferObs.Add(normDist); lastAllyBufferObs.Add(brg); lastAllyBufferObs.Add(hdgCos); lastAllyBufferObs.Add(hdgSin);
+        }
+
+        /// <summary>적군(클러스터) 1개를 enemyBufferSensor에 추가 (3개: dist, bearing, clusterSize)</summary>
+        private void AppendEnemyObs(float obs0, float obs1, float obs2)
+        {
+            enemyBufferSensor.AppendObservation(new float[] { obs0, obs1, obs2 });
+            lastEnemyBufferObs.Add(obs0); lastEnemyBufferObs.Add(obs1); lastEnemyBufferObs.Add(obs2);
         }
 
         /// <summary>관측값 기록 + 센서 추가 헬퍼</summary>

@@ -82,9 +82,9 @@ namespace BoatAttack
         [Tooltip("Waypoint 추적 모드일 때 모선 접근 거리 (이 거리 이내면 모선을 직접 추적)")]
         public float directChaseDistance = 50f;
 
-        [Header("=== Self-Play 모드 ===")]
-        [Tooltip("Self-Play 학습 모드 (true: ML이 미세 조정, false: 기존 스크립트)")]
-        public bool selfPlayMode = true;
+        [Header("=== Self-Play 모드 (비활성) ===")]
+        [Tooltip("Self-Play 학습 모드 (true: ML이 미세 조정, false: 기존 스크립트). 현재 self-play 미사용 → false 고정 권장")]
+        public bool selfPlayMode = false;
 
         [Tooltip("Self-Play 시 throttle 오프셋 범위 (0~이 값, 감속만)")]
         [Range(0f, 0.5f)]
