@@ -63,8 +63,8 @@ namespace BoatAttack
         // VectorSensor 3개: 모선거리, LOS조향명령, 의도 드리프트 방향(+1 우/-1 좌)
         private static readonly string[] Labels = { "MthDst", "LOSCmd", "DrftDir" };
 
-        // EnemyBuffer: 3개씩 (Dist, Brg, ClstN=클러스터 적 수 정규화)
-        private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "ClstN" };
+        // EnemyBuffer: 3개씩 (Dist, Brg, Sprd=클러스터 각도 스프레드 /90)
+        private static readonly string[] EnemyObsSuffix = { "Dist", "Brg", "Sprd" };
         // AllyBuffer: 4개씩 (Dist, Brg, HdgC, HdgS)
         private static readonly string[] AllyObsSuffix = { "Dist", "Brg", "HdgC", "HdgS" };
 

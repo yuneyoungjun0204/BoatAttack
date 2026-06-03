@@ -214,6 +214,11 @@ namespace BoatAttack
         [Range(0f, 10f)]
         public float guidanceKd = 0.3f;
 
+        [Header("=== Residual RL (접근 구간 행동 결합) ===")]
+        [Tooltip("RL 비중. 접근 구간 행동 = (1-s)*LOS추종 + s*RL.  0=순수 LOS 추종(scripted), 1=순수 RL, 0.5=반반. ablation용 연속 스위치")]
+        [Range(0f, 1f)]
+        public float residualScale = 0.5f;
+
         private bool _guidancePhase = false;
         private float _guidanceEndTime = 0f;
         private Vector3 _guidanceTarget = Vector3.zero;
@@ -1095,17 +1100,17 @@ namespace BoatAttack
             CollectAllyPairBufferObs(webCenter, webForward);
 
             // 5. EnemyBufferSensor — 자신에게 할당된 클러스터(또는 배정 적 1대)만 관측
-            //   1 엔티티 × 3필드: { 거리, 방위(signed bearing), 클러스터 적 수(정규화) }  ← heading 제거
-            //   - SingleNet/배정 모드: 배정된 적 1대만 정밀 관측
-            //   - 일반(접근) 모드: 이 쌍에 배정된 클러스터(pair.clusterEnemyIndices)의 centroid만 관측
-            //   할당 클러스터가 비었거나(전멸) 없으면 → 최근접 활성 적 1대로 폴백
+            //   1 엔티티 × 3필드: { 거리, 방위(signed bearing), 각도 스프레드(클러스터가 몇 도에 퍼졌나) }
+            //   - SingleNet/배정 모드: 배정된 적 1대만 정밀 관측 (스프레드=0)
+            //   - 일반(접근) 모드: 이 쌍에 배정된 클러스터(pair.clusterEnemyIndices)의 centroid + 각도폭
+            //   각도 스프레드 = 멤버들의 모선 기준 방위각 (max−min), 매 스텝 현재 위치로 재계산 → /90 정규화
+            //   할당 클러스터가 비었거나(전멸) 없으면 → 최근접 활성 적 1대로 폴백 (스프레드=0)
             lastEnemyBufferObs.Clear();
             if (enemyBufferSensor != null && enemyShips != null)
             {
                 float normK  = (envController != null) ? envController.enemyNormK        : enemyNormK;
                 float eDistS = (envController != null) ? envController.enemyDistScale    : enemyDistScale;
                 float eBrgS  = (envController != null) ? envController.enemyBearingScale : enemyBearingScale;
-                int   totalEnemies = (envController != null) ? Mathf.Max(1, envController.enemyCount) : 10;
 
                 GameObject assigned = _singleNetMode ? GetAssignedEnemy() : null;
 
@@ -1115,7 +1120,7 @@ namespace BoatAttack
                     Vector3 rel = assigned.transform.position - webCenter;
                     float obs0 = NormalizePosition(rel.magnitude, normK) * eDistS;
                     float obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
-                    float obs2 = 1f / totalEnemies;   // 단일 표적 → 정규화 카운트
+                    float obs2 = 0f;   // 단일 표적 → 스프레드 없음
                     AppendEnemyObs(obs0, obs1, obs2);
                     _heuristicNearestEnemy = assigned;
                 }
@@ -1135,9 +1140,15 @@ namespace BoatAttack
                         }
                     }
 
+                    // 각도 스프레드 계산용 모선 기준점
+                    Vector3 motherPos = (motherShip != null) ? motherShip.transform.position : webCenter;
+
                     Vector3 sum = Vector3.zero;
                     int activeCount = 0;
                     GameObject nearest = null; float nearestD = float.MaxValue;
+                    // 멤버들의 모선 기준 방위각 범위(스프레드)용: 첫 멤버 각도를 기준으로 DeltaAngle 누적
+                    float refAngle = 0f; bool haveRef = false;
+                    float minDelta = 0f, maxDelta = 0f;
                     if (myCluster != null)
                     {
                         for (int k = 0; k < myCluster.Count; k++)
@@ -1151,6 +1162,17 @@ namespace BoatAttack
                             activeCount++;
                             float d = Vector3.Distance(webCenter, e.transform.position);
                             if (d < nearestD) { nearestD = d; nearest = e; }
+
+                            // 모선 기준 방위각 → 스프레드 누적 (wraparound은 DeltaAngle로 처리)
+                            Vector3 relM = e.transform.position - motherPos; relM.y = 0f;
+                            float angM = Mathf.Atan2(relM.x, relM.z) * Mathf.Rad2Deg;
+                            if (!haveRef) { refAngle = angM; haveRef = true; }
+                            else
+                            {
+                                float dlt = Mathf.DeltaAngle(refAngle, angM);
+                                if (dlt < minDelta) minDelta = dlt;
+                                if (dlt > maxDelta) maxDelta = dlt;
+                            }
                         }
                     }
 
@@ -1178,7 +1200,9 @@ namespace BoatAttack
                         Vector3 rel = centroid - webCenter;
                         float obs0 = NormalizePosition(rel.magnitude, normK) * eDistS;
                         float obs1 = ComputeSignedBearing(webForward, rel) * eBrgS;
-                        float obs2 = Mathf.Clamp01(activeCount / (float)totalEnemies);
+                        // 각도 스프레드(도) = max−min 방위각, /90 정규화. 단일 멤버면 0.
+                        float spreadDeg = haveRef ? (maxDelta - minDelta) : 0f;
+                        float obs2 = Mathf.Clamp01(spreadDeg / 90f);
                         AppendEnemyObs(obs0, obs1, obs2);
                     }
                     _heuristicNearestEnemy = nearest;
@@ -1428,10 +1452,23 @@ namespace BoatAttack
                 _cachedLOSThrottleBaseline = ComputeLOSBaselineThrottle();
             }
 
-            // 순수 RL 제어
-            // float throttle = Mathf.Clamp((throttleInput + 1f) * 0.25f + 0.1f, 0f, maxThrottle);
-            float throttle = Mathf.Clamp(throttleInput+0.4f, 0f, maxThrottle);
-            float steering = Mathf.Clamp(steeringInput, -1f, 1f);
+            // Residual RL: 접근 구간 행동 = (1-s)*LOS추종 베이스라인 + s*RL
+            //   s=residualScale. s=0→순수 LOS 추종, s=1→순수 RL, 0.5→반반 (ablation 스위치)
+            //   _clusterTarget==0(표적 없음)이면 baseline 무효 → 순수 RL 폴백
+            float rlThrottle = Mathf.Clamp(throttleInput + 0.4f, 0f, maxThrottle);
+            float rlSteering = Mathf.Clamp(steeringInput, -1f, 1f);
+            float throttle, steering;
+            if (_clusterTarget != Vector3.zero && residualScale < 0.999f)
+            {
+                float s = Mathf.Clamp01(residualScale);
+                steering = Mathf.Clamp((1f - s) * _cachedLOSBaseline         + s * rlSteering, -1f, 1f);
+                throttle = Mathf.Clamp((1f - s) * _cachedLOSThrottleBaseline + s * rlThrottle, 0f, maxThrottle);
+            }
+            else
+            {
+                throttle = rlThrottle;
+                steering = rlSteering;
+            }
 
             if (inputSmoothing < 1f)
             {
