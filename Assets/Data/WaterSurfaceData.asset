@@ -12,11 +12,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b17284ebf5e80436eb6089f8c7459dab, type: 3}
   m_Name: WaterSurfaceData
   m_EditorClassIdentifier: 
-  _waterMaxVisibility: 4.5
+  _waterMaxVisibility: 2
   _absorptionRamp:
     serializedVersion: 2
-    key0: {r: 0.13510147, g: 0.8679245, b: 0.8679245, a: 1}
-    key1: {r: 0.021626905, g: 0.49048996, b: 0.509434, a: 1}
+    key0: {r: 0.03, g: 0.18, b: 0.42, a: 1}
+    key1: {r: 0.008, g: 0.11, b: 0.34, a: 1}
     key2: {r: 0.05304379, g: 0.06483533, b: 0.0754717, a: 0}
     key3: {r: 0, g: 0.275, b: 0.44, a: 0}
     key4: {r: 0.0034180656, g: 0.2614573, b: 0.4165103, a: 0}
@@ -45,9 +45,9 @@ MonoBehaviour:
     m_NumAlphaKeys: 2
   _scatterRamp:
     serializedVersion: 2
-    key0: {r: 0.18356179, g: 0.23584908, b: 0.21841997, a: 1}
-    key1: {r: 0.23375759, g: 0.4811321, b: 0.47868282, a: 1}
-    key2: {r: 0.11574403, g: 0.41769665, b: 0.4811321, a: 0}
+    key0: {r: 0.03, g: 0.09, b: 0.26, a: 1}
+    key1: {r: 0.04, g: 0.14, b: 0.4, a: 1}
+    key2: {r: 0.05, g: 0.2, b: 0.46, a: 0}
     key3: {r: 0.11574403, g: 0.41769665, b: 0.4811321, a: 0}
     key4: {r: 0.01176471, g: 0.90588236, b: 0.84650886, a: 0}
     key5: {r: 0, g: 0, b: 0, a: 0}
@@ -119,10 +119,10 @@ MonoBehaviour:
   _customWaves: 0
   randomSeed: 98505
   _basicWaveSettings:
-    numWaves: 3
-    amplitude: 3.1
+    numWaves: 2
+    amplitude: 7.5
     direction: -51
-    wavelength: 121.6
+    wavelength: 52.5
   _foamSettings:
     foamType: 0
     basicFoam:

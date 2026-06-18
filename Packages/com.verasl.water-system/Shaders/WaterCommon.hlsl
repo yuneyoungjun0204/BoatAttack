@@ -272,7 +272,8 @@ half4 WaterFragment(WaterVertexOutput IN) : SV_Target
 	half3 refraction = Refraction(distortion, depth.x, depthMulti);
 
 	// Do compositing
-	half3 comp = lerp(lerp(refraction, reflection, fresnelTerm) + sss + spec, foam, foamMask); //lerp(refraction, color + reflection + foam, 1-saturate(1-depth.x * 25));
+	// 골/마루의 흰 반사 억제: 환경반사 0.5배, 태양 스페큘러 글린트 0.3배
+	half3 comp = lerp(lerp(refraction, reflection * 0.5, fresnelTerm) + sss + spec * 0.3, foam, foamMask); //lerp(refraction, color + reflection + foam, 1-saturate(1-depth.x * 25));
 
 	// Fog
     float fogFactor = IN.fogFactorNoise.x;

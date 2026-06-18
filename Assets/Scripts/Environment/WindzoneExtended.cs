@@ -163,10 +163,10 @@ public class WindzoneExtended : MonoBehaviour
     [Header("Wave Randomization")]
     [Tooltip("파도 랜덤화 활성화 (false면 인스펙터 파도 설정 유지)")]
     public bool enableWaveRandomization = true;
-    public float waveAmplitudeMin = 0.1f;
-    public float waveAmplitudeMax = 1.5f;
-    public float waveWavelengthMin = 2f;
-    public float waveWavelengthMax = 10f;
+    public float waveAmplitudeMin = 4.5f;    // 높이 ×1.5
+    public float waveAmplitudeMax = 9.0f;
+    public float waveWavelengthMin = 16.875f; // 주기 ×0.5 (33.75→16.875)
+    public float waveWavelengthMax = 41.25f;  // 82.5→41.25
 
     /// <summary>
     /// 에피소드마다 파도 방향/높이/파장 랜덤화 (Water.cs에서 GPU/CPU 모두 처리)
@@ -178,7 +178,7 @@ public class WindzoneExtended : MonoBehaviour
         // 파도 랜덤화 비활성화 시 인스펙터 설정 유지
         if (_instance != null && !_instance.enableWaveRandomization) return;
 
-        float ampMin = 1.0f, ampMax = 5.0f, lenMin = 5f, lenMax = 20f;
+        float ampMin = 4.5f, ampMax = 9.0f, lenMin = 16.875f, lenMax = 41.25f;  // 높이×1.5, 주기×0.5
         if (_instance != null)
         {
             ampMin = _instance.waveAmplitudeMin;

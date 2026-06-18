@@ -1770,6 +1770,18 @@ namespace BoatAttack
                 Gizmos.DrawLine(transform.position, partnerAgent.transform.position);
             }
 
+            // ★ 추종 목적지 (_clusterTarget): 밝은 초록 구 — "에이전트가 PD로 따라가는 점".
+            //   Commander/웨이포인트 방식은 이 점만 바꾸면 됨 (시스템은 그대로 추종).
+            if (_clusterTarget != Vector3.zero)
+            {
+                Gizmos.color = Color.green;
+                Gizmos.DrawSphere(_clusterTarget + Vector3.up * 2f, 5f);          // 목적지 본체
+                Gizmos.color = new Color(0f, 1f, 0f, 0.9f);
+                Gizmos.DrawLine(transform.position, _clusterTarget);              // 나 → 목적지
+                Gizmos.color = new Color(0.2f, 1f, 0.2f, 0.3f);
+                Gizmos.DrawWireSphere(_clusterTarget, 9f);                        // 강조 링
+            }
+
             // 적군: 배정된 적=노란 굵은 선, 나머지=어두운 빨간 선
             if (enemyShips != null)
             {
