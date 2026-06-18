@@ -1,0 +1,566 @@
+% =====================================================================
+%  ICROS 2026 (제어·로봇·시스템학회 논문지) — 공식 국문양식(260108) 정밀 반영
+%  불법 수상정 포획을 위한 강화학습 기반 무인수상정 협력 제어
+%  ▶ 컴파일: XeLaTeX 또는 LuaLaTeX (kotex + fontspec)
+%  ▶ 리뷰 1차 대응 반영(구조 재편 / 각도 (sin,cos) / Gerstner 명칭 / 차단망 물리모델 /
+%     재현성 파라미터 표 / k값 / heading·formation 근거 / LOS 축소 / 명칭·표기 통일).
+%  ▶ 값은 two-USV-system 브랜치 실제 코드 기준. 일부 실험 항목(ablation·다중시드·Fig11 스케일)은 후순위.
+%  ▶ 그림: figures/<파일> 있으면 사용, 없으면 placeholder. 수식 일부는 코드 기준 재구성.
+% =====================================================================
+\documentclass[9pt,twocolumn,a4paper]{extarticle}
+
+\usepackage{kotex}
+\IfFontExistsTF{New Batang}{\setmainhangulfont{New Batang}}{}
+\IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}}{}
+\IfFontExistsTF{Malgun Gothic}{\setsanshangulfont{Malgun Gothic}}{}
+
+\usepackage[a4paper,top=13mm,bottom=13mm,left=20mm,right=20mm,columnsep=10mm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{url}
+\usepackage{titlesec}
+\usepackage{caption}
+\usepackage{setspace}
+\usepackage{fancyhdr}
+
+\setstretch{1.5}
+\setlength{\parindent}{4mm}
+
+\renewcommand{\thesection}{\Roman{section}}
+\renewcommand{\thesubsection}{\arabic{subsection}}
+\renewcommand{\thesubsubsection}{\arabic{subsection}.\arabic{subsubsection}}
+\titleformat{\section}[block]
+  {\centering\sffamily\bfseries\fontsize{9}{12}\selectfont}{\thesection.}{0.5em}{}
+\titlespacing*{\section}{0pt}{1\baselineskip}{0.4\baselineskip}
+\titleformat{\subsection}[block]
+  {\sffamily\bfseries\fontsize{9}{12}\selectfont}{\thesubsection.}{0.4em}{}
+\titlespacing*{\subsection}{0pt}{0.5\baselineskip}{0.2\baselineskip}
+
+\captionsetup{font=footnotesize,labelformat=empty,justification=raggedright,singlelinecheck=false}
+\newcommand{\figcap}[2]{\refstepcounter{figure}%
+  \caption*{\textbf{그림~\thefigure.}~#1\\ \textbf{Fig.~\thefigure.}~#2}}
+\newcommand{\tabcap}[2]{\refstepcounter{table}%
+  \caption*{\textbf{표~\thetable.}~#1\\ \textbf{Table~\thetable.}~#2}}
+
+\graphicspath{{figures/}}
+\newcommand{\figph}[1]{%
+  \IfFileExists{figures/#1}{\includegraphics[width=\linewidth]{#1}}%
+  {\fbox{\parbox[c][0.40\columnwidth][c]{0.9\linewidth}{\centering\ttfamily\footnotesize \detokenize{#1}\par\smallskip (그림 추가 필요)}}}}
+
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\footnotesize Journal of Institute of Control, Robotics and Systems (2026)}
+\fancyhead[R]{\footnotesize ISSN: 1976-5622}
+\fancyfoot[L]{\footnotesize Copyright\copyright\ ICROS 2026}
+\fancyfoot[R]{\footnotesize \thepage}
+\renewcommand{\headrulewidth}{0.3pt}\renewcommand{\footrulewidth}{0.3pt}
+
+\providecommand{\doi}[1]{doi:~\url{#1}}
+
+\begin{document}
+
+% ===================== 제목 / 저자 / 초록 (전단) =====================
+\twocolumn[{%
+\begin{@twocolumnfalse}
+\begin{center}
+{\setstretch{1.3}
+{\sffamily\bfseries\fontsize{16}{20}\selectfont 불법 수상정 포획을 위한 강화학습 기반 무인수상정 협력 제어\par}
+\vspace{1mm}
+{\fontsize{15.5}{19}\selectfont Multi-Agent Reinforcement Learning for Cooperative Unmanned\\
+Surface Vehicle Control in Illegal Vessel Capture\par}
+\vspace{3mm}
+{\sffamily\fontsize{10}{13}\selectfont 윤 영 준$^{1\dagger}$, 방 현 태$^{1\dagger}$, 하 지 웅$^{1}$, 전 유 라$^{2}$, 신 헌 용$^{3}$, 윤 원 근$^{1*}$\par}
+\vspace{1mm}
+{\fontsize{9}{12}\selectfont (Youngjun Yun$^{1}$, Hyuntae Bang$^{1}$, Jiwoong Ha$^{1}$, Youra Jun$^{2}$, Hunyong Shin$^{3}$, and Wonkeun Youn$^{1,*}$)\par}
+\vspace{1mm}
+{\fontsize{8}{10}\selectfont $^{1}$Department of Autonomous Vehicle System Engineering, Chungnam National University;\\
+$^{2}$Department of Mechanical Engineering, KAIST;\quad $^{3}$Agency for Defense Development (ADD)\par}
+}
+\end{center}
+\vspace{2mm}
+
+{\fontsize{9}{13.5}\selectfont
+\noindent\textbf{Abstract:} This paper proposes a cooperative capture system in which two allied
+Unmanned Surface Vehicles (USVs) jointly deploy a capture net to intercept non-cooperative vessels in
+naval environments. To overcome the limitations of traditional rule-based methods under environmental
+uncertainties, a Multi-Agent Reinforcement Learning (MARL) framework is developed within a
+high-fidelity Unity-based simulation incorporating Gerstner wave and wind disturbance models. Each
+agent utilizes an ego-centric polar coordinate observation space; distance values are normalized via a
+non-linear rational function to prioritize close-range sensitivity, while angular discontinuities are
+resolved through a $(\sin,\cos)$ trigonometric transformation. We adopt the Multi-Agent POsthumous
+Credit Assignment (MA-POCA) algorithm within a Centralized Training with Decentralized Execution
+(CTDE) architecture, enabling robust strategy learning through posthumous credit assignment even when
+agents exit the environment. The reward structure combines sparse event rewards for capture success
+with dense continuous rewards based on formation maintenance, target approach, and heading alignment.
+Quantitative results show that the proposed approach significantly outperforms modified Line-of-Sight
+(LOS) guidance, achieving a 65\% capture success rate and a three-fold reduction in formation collapse
+under dynamic sea conditions.\par
+\smallskip
+\noindent\textbf{Keywords:} unmanned surface vehicles (USVs), multi-agent reinforcement learning (MARL),
+cooperative capture, maritime simulation\par
+}
+\vspace{4mm}
+\noindent\rule{\textwidth}{0.3pt}
+{\scriptsize\par\smallskip
+Manuscript received 2026.xx.xx; revised 2026.xx.xx; accepted 2026.xx.xx.\\
+$\dagger$These authors contributed equally to this work. $*$Corresponding Author.\\
+윤영준: 충남대학교 자율운항시스템공학과 석사과정 (0204jun@o.cnu.ac.kr).\;
+방현태: 충남대학교 자율운항시스템공학과 박사과정 (htbang@g.cnu.ac.kr).\;
+하지웅: 충남대학교 자율운항시스템공학과 석사과정 (nb10316@g.cnu.ac.kr).\;
+전유라: KAIST 기계공학과 박사과정 (youraj@kaist.ac.kr).\;
+신헌용: 국방과학연구소 선임연구원 (newoldd@naver.com).\;
+윤원근: 충남대학교 자율운항시스템공학과 조교수 (wkyoun@cnu.ac.kr).\\
+※ 이 연구는 2025년 정부(방위사업청)의 재원으로 국방과학연구소의 지원을 받아 수행된 미래도전국방기술 연구개발사업임 (No.~915141301).\par}
+\vspace{3mm}
+\end{@twocolumnfalse}
+}]
+
+% ============================== I. 서론 ==============================
+\section{서론}
+어선 단속, 해상 밀수 차단, 해양보호구역 침범 선박 제지 등 해상 내 비협조 선박을 저지해야 하는 수요는
+민간 해양 경비와 군사 방어 측면에서 중요해졌다. 군사적으로도 자폭 선박과 같은 무인 수상정의 공격이
+새로운 위협으로 대두되면서 이에 대한 무력화 방법 연구가 필수적이다~\cite{ref1}. 위협 선박 저지 방식은
+하드킬(Hard-Kill)과 소프트킬(Soft-Kill)로 구분된다. 하드킬은 요격 미사일·함포 등으로 직접 파괴하여
+제압 확실성을 제공하나 막대한 비용과 살상을 수반한다~\cite{ref2}. 소프트킬은 비살상 무력화 수단으로 GPS
+재밍/스푸핑 기반 전자전이 대표적이나, 자체 관성항법(INS)·광학 자율항법 선박에는 효과가 제한적이고 아군
+통신까지 교란하는 부수적 피해가 존재한다~\cite{ref3}.
+
+이러한 한계를 극복하고자 본 연구에서는 두 대의 수상정이 차단망을 전개하여 침입 선박의 추진 기관을
+물리적으로 구속하는 방식을 제안한다. 이는 전자 시스템에 비의존하여 아군 통신에 영향을 주지 않으면서도,
+저비용·비살상이라는 점에서 기존 하드킬·소프트킬의 한계를 동시에 보완한다. 다만 유인 포획은 탑승자 안전을
+보장할 수 없어 무인 선박 도입이 요구된다~\cite{ref4}. 이를 위해서는 두 수상정 간 정교한 협력 기동,
+차단망의 기하학적 제약, 해양 환경의 불확실성을 복합적으로 고려해야 한다.
+
+전통적 규칙 기반 접근법은 사전 정의된 시나리오에서는 효과적이나, 파도·바람 외란과 위협 선박의 불규칙한
+접근 경로 등 실시간 변동 요소에 유연하게 대응하기 어렵다. 반면 심층 강화학습(DRL)은 시행착오 상호작용으로
+복잡한 의사결정을 스스로 해결하며 충돌 회피·경로 계획 등 해상 환경에서 효용이 입증되었다~\cite{ref5,ref6}.
+특히 다중 에이전트 강화학습(MARL)은 협력 과제에서 에이전트 간 상호작용 전략을 자동 학습하여 군집 대형
+유지, 다중 표적 포획, 추적·포위 기동 등에 적용되었다~\cite{ref7,ref8}. 기존 연구는 주로 CTDE 구조로 학습
+시 전역 정보를 활용하고 실행 시 분산 제어를 달성하였으나~\cite{ref9}, 표적 포획 문제에 MARL을 적용한 예는
+드물다. 본 연구는 MARL 기반 차단망 협력 포획 학습 프레임워크를 제안한다(그림~\ref{fig:loop}).
+
+\begin{figure}[t]\centering
+\figph{fig1_loop.png}
+\figcap{물리 환경 시뮬레이션을 포함한 에이전트 상호작용 루프}{The Loop of Agent Interaction Within the Physics Simulation Environment}
+\label{fig:loop}
+\end{figure}
+
+본 논문의 주요 기여는 다음과 같다. 첫째, 파도·바람 모델을 포함한 Unity 기반 해상 시뮬레이션 환경을
+구축하여 협력 포획 학습 프레임워크를 제안한다. 둘째, 에이전트 중심 극좌표 기반 관측 체계와 거리 범위·각도
+불연속 문제를 해결하는 관측 공간 설계 방법을 제시한다. 셋째, MARL 구조로 두 아군 USV가 차단망을 공유하며
+협력 포획 기동을 자율 학습함을 정량적 비교 실험으로 입증한다.
+
+% ============================== II. 포획 시스템 ==============================
+\section{포획 시스템}
+\begin{figure}[t]\centering
+\figph{fig2_capture.png}
+\figcap{차단망을 이용한 협력 포획 시스템}{Cooperative Net-based Capture System}
+\label{fig:capture}
+\end{figure}
+
+제안하는 포획 방식은 그림~\ref{fig:capture}와 같이 두 아군 선박이 편대를 이루어 선박 사이에 전개한 차단망으로
+적군 선박을 포획하는 협력 기동이다. 차단망은 두 선박의 실시간 위치에 따라 동적으로 형상이 변하며, 선박 간
+거리에 비례하여 유효 전개 폭이 결정된다. 차단망의 유효성은 두 선박 간 거리 $d_s=\lVert \bm{p}_1-\bm{p}_2\rVert$로
+결정되며, 활성 조건은 식~(\ref{eq:netactive})와 같다.
+\begin{equation}\label{eq:netactive}
+\text{net}=
+\begin{cases}
+\text{active}, & d_{\min}\le d_s \le d_{\max}\\
+\text{inactive}, & \text{otherwise}
+\end{cases}
+\end{equation}
+여기서 $d_{\min}=20$\,m는 차단망이 충분한 장력을 확보하는 최소 활성화 거리이며, $d_s<d_{\min}$이면 그물이
+접혀 포획력을 잃는다. $d_{\max}=120$\,m는 협력 대형이 유지되는 최대 간격으로, 이를 초과하면 대형 붕괴로
+간주한다. 활성 상태에서 적군 선박이 두 선박을 잇는 그물 선분과 접촉하면 포획이 성립한다(식~\ref{eq:capture}).
+\begin{equation}\label{eq:capture}
+\text{capture} \iff (\text{net}=\text{active}) \;\wedge\; \big(\mathrm{dist}(\bm{p}_e,\,\overline{\bm{p}_1\bm{p}_2})\le \tfrac{w}{2}\big)
+\end{equation}
+$\bm{p}_e$는 적 위치, $\overline{\bm{p}_1\bm{p}_2}$는 그물 선분, $w$는 그물 폭이다. 이는 실제 해상에서 차단망이
+일정 수준 이상 전개되어야만 유효한 포획이 가능하다는 물리적 제약을 반영한다.
+
+% ============================== III. 시뮬레이션 환경 및 보상 설계 ==============================
+\section{시뮬레이션 환경 및 보상 설계}
+\subsection{훈련 환경}
+강화학습 환경을 위해 Unity 엔진으로 해상 시뮬레이터를 구축한다. 시뮬레이터는 방어 대상인 모선, 이를
+방어하는 아군 선박 2대, 모선을 향해 접근하는 적군 선박으로 구성된다(그림~\ref{fig:sim}). 본 연구에서는 자폭
+선박의 돌진 상황을 학습 환경으로 설정하였다. 적군은 약 1{,}000\,m 거리에서 스폰되어 모선을 향해 최단 경로로
+고속 접근하며(접근 속도는 매 에피소드 $\pm30\%$ 무작위), 모선 반경 20\,m 이내 진입 시 방어 실패(돌파)로
+처리된다. 아군 2대는 제한 시간 내 협력 기동으로 적군을 차단·포획해야 한다.
+
+\begin{figure}[t]\centering
+\figph{fig3_sim.png}
+\figcap{Unity 기반 해상 시뮬레이션 구현 결과: (a) 협력 기동 두 아군 USV, (b) 방어 실패 시 모선 피격, (c) 차단망으로 연결된 두 아군 USV·적군 USV}{Implementation of the Unity-Based Maritime Simulation}
+\label{fig:sim}
+\end{figure}
+
+\subsection{외란 구현}
+해양 물리는 Gerstner 파랑 모델로 구현하였다~\cite{ref10,ref11}. 다중 파형 합성으로 해수면 변위를 계산하며,
+수직·수평 변위는 식~(\ref{eq:gv}),~(\ref{eq:gh})와 같다.
+\begin{equation}\label{eq:gv}
+y(\bm{X},t)=\sum_{i=1}^{N} A_i \sin\theta_i
+\end{equation}
+\begin{equation}\label{eq:gh}
+\begin{bmatrix}x\\ z\end{bmatrix}=\sum_{i=1}^{N} Q_i A_i\,\bm{D}_i\cos\theta_i
+\end{equation}
+$A_i$는 진폭, $\bm{D}_i$는 단위 진행 방향, $Q_i$는 첨예도 계수이다. 각 파형의 파장 $\lambda_i$로부터
+\textbf{파수(wavenumber)} $k_i=2\pi/\lambda_i$가 정의되고(식~\ref{eq:k}), 심해 분산관계로부터
+\textbf{각진동수} $\omega_i$(식~\ref{eq:omega})와 \textbf{위상 속도} $c_i$(식~\ref{eq:c})가 결정된다.
+\begin{equation}\label{eq:k}
+k_i = \frac{2\pi}{\lambda_i}
+\end{equation}
+\begin{equation}\label{eq:omega}
+\omega_i = \sqrt{g\,k_i}
+\end{equation}
+\begin{equation}\label{eq:c}
+c_i = \frac{\omega_i}{k_i}
+\end{equation}
+위상각은 $\theta_i = k_i(\bm{D}_i\cdot\bm{X}) - \omega_i t$이며, 마루의 날카로움(첨예도)은
+$Q_i=Q/(\omega_i A_i N)$로 제어한다($Q$=첨예도 상수, $N$=총 파형 수). 선체 풍력은 매 물리 스텝
+$\bm{F}_{\text{wind}}=s\,V_{\text{wind}}\,\hat{\bm{u}}_{\text{wind}}$로 외력 적용한다. 매 에피소드 파도·풍력을
+무작위로 설정하는 도메인 랜덤화로 외란 강건성과 sim-to-real 전이 가능성을 높였다~\cite{ref12}.
+
+\subsection{보상 설계}
+보상체계는 기하 기반 연속 보상과 임무 결과 기반 순간 보상을 계층적으로 결합한다.
+
+\textbf{대형 유지 보상}은 두 선박 간격 $d_p$가 차단망 최적 전개 간격 $d^{*}=100$\,m에 가까울수록 커지는
+가우시안 형태이다(식~\ref{eq:rform}). 표준편차 $\sigma=40$\,m는 차단망 길이 한계 내 허용 분산으로,
+$|d_p-d^{*}|=\sigma$에서 약 0.37로 감쇠한다. 즉 단순 임계가 아니라 최적 간격을 중심으로 부드럽게 보상하여
+그물이 과도하게 접히거나($d_p<d_{\min}$) 붕괴되지($d_p>d_{\max}$) 않도록 유도한다.
+\begin{equation}\label{eq:rform}
+R_{\text{form}}=\alpha_f\,\exp\!\Big(-\frac{(d_p-d^{*})^2}{2\sigma^2}\Big)
+\end{equation}
+\textbf{적 접근 보상}은 거리 감소량이 양수일 때만 부여하여 적군을 향한 실질 접근을 유도한다(식~\ref{eq:rapp}).
+\begin{equation}\label{eq:rapp}
+R_{\text{app}}=\alpha_a\,\max(0,\; d_{t-1}-d_t)
+\end{equation}
+\textbf{선수 정렬 보상}은 진행 방향과 적군 방향의 코사인이 양수일 때 부여한다(식~\ref{eq:rhead}). 차단망 포획에서
+핵심은 적의 진행 경로를 가로막는 \emph{배치}이며, 이는 대형 유지·접근 보상이 담당한다. 선수 정렬은 접근·차단
+기동을 보조하는 정렬 신호로서 가장 작은 가중치($\alpha_h=0.0003$)를 부여하여, 배치 목표와 충돌하지 않고
+보완적으로만 작용하도록 설계하였다.
+\begin{equation}\label{eq:rhead}
+R_{\text{head}}=\alpha_h\,\max(0,\;\cos\theta)
+\end{equation}
+\textbf{시간 벌점}은 매 스텝 $-0.0001$로 신속한 포획을 유도한다. \textbf{순간(이벤트) 보상}은 포획 성공
+$+1.0$(포획 쌍 개별 $+0.3$), 모선 피격 $-1.0$, 아군 충돌 $-0.5$, 전멸 보너스 $+2.0$, 종료 시 잔존 적
+1척당 $-0.5$이다. 포획·모선피격 시 에피소드는 조기 종료되고, 충돌 시 해당 에이전트는 비활성화된다. 총 보상은
+식~(\ref{eq:rtot})와 같다~\cite{ref18,ref19}.
+\begin{equation}\label{eq:rtot}
+R=R_{\text{form}}+R_{\text{app}}+R_{\text{head}}+R_{\text{time}}+R_{\text{event}}
+\end{equation}
+재현성을 위한 보상·환경·정규화 주요 파라미터는 표~\ref{tab:param}에 정리하였다.
+
+\begin{table}[t]\centering
+\tabcap{주요 보상·환경·정규화 파라미터}{Key reward, environment, and normalization parameters}
+\label{tab:param}
+\smallskip
+\begin{tabular}{|l|l|c|}
+\hline
+구분 & 파라미터 & 값\\ \hline
+\multirow{4}{*}{보상 가중치}
+ & 대형 유지 $\alpha_f$ & 0.002\\ \cline{2-3}
+ & 적 접근 $\alpha_a$ & 0.001\\ \cline{2-3}
+ & 선수 정렬 $\alpha_h$ & 0.0003\\ \cline{2-3}
+ & 시간 벌점 & $-0.0001$\\ \hline
+\multirow{5}{*}{이벤트 보상}
+ & 포획 (+개별) & $+1.0\ (+0.3)$\\ \cline{2-3}
+ & 모선 피격 & $-1.0$\\ \cline{2-3}
+ & 아군 충돌 & $-0.5$\\ \cline{2-3}
+ & 전멸 보너스 & $+2.0$\\ \cline{2-3}
+ & 잔존 적 (1척) & $-0.5$\\ \hline
+\multirow{3}{*}{대형·차단망}
+ & 최적 간격 $d^{*}$ & 100 m\\ \cline{2-3}
+ & 허용 분산 $\sigma$ & 40 m\\ \cline{2-3}
+ & 활성 간격 $[d_{\min},d_{\max}]$ & $[20,120]$ m\\ \hline
+\multirow{3}{*}{정규화 $k$}
+ & 적 거리 $k_e$ & 77\\ \cline{2-3}
+ & 파트너 거리 $k_p$ & 100\\ \cline{2-3}
+ & 방위각 $k_\beta$ & 10\\ \hline
+\multirow{3}{*}{환경}
+ & 적 스폰 거리 & 1000 m\\ \cline{2-3}
+ & 모선 돌파 반경 & 20 m\\ \cline{2-3}
+ & 적 속도 무작위 & $\pm30\%$\\ \hline
+\end{tabular}
+\end{table}
+
+% ============================== IV. 강화학습 문제 정식화 ==============================
+\section{강화학습 문제 정식화}
+\subsection{학습 구조: MA-POCA와 CTDE}
+두 선박의 협력 포획에서는 한 선박이 포획을 완료하거나, 아군 충돌·대형 붕괴로 \emph{도중에 비활성화}되는 일이
+빈번하다. MADDPG(Multi-Agent Deep Deterministic Policy Gradient)~\cite{ref14}나 QMIX~\cite{ref15}는 고정된
+에이전트 수를 전제하므로, 이러한 에이전트 이탈 상황에서 학습이 불안정해진다. 본 연구는 사후 크레딧 할당
+(Posthumous Credit Assignment)을 제공하는 MA-POCA~\cite{ref13}를 채택하였다. MA-POCA는 에이전트가 이탈한
+이후에도 그 기여를 평가할 수 있어, 포획 완료·충돌 비활성화·대형 붕괴 등 \emph{팀 구성원 수가 동적으로 변하는}
+본 포획 시나리오에 직접 부합한다(그림~\ref{fig:mapoca}).
+
+\begin{figure}[t]\centering
+\figph{fig4_mapoca.png}
+\figcap{MA-POCA 기반 협동 학습 구조~\cite{ref13}}{MA-POCA-based Cooperative Learning Architecture}
+\label{fig:mapoca}
+\end{figure}
+
+학습 시 중앙 비평가는 전체 $N$개 에이전트 관측을 Attention 계층으로 처리해 팀 가치 $V(\bm{s})$를 추정한다
+(식~\ref{eq:value}). 이는 각 선박의 상태를 동적으로 가중·통합하여 협력적 가치를 산출하는 역할을 한다.
+\begin{equation}\label{eq:value}
+V(\bm{s})=g\!\left(\textstyle\sum_{i=1}^{N}\bm{c}_i\right)
+\end{equation}
+Attention 가중치(식~\ref{eq:attn})는 에이전트 $i$가 다른 선박 $j$에 두는 집중도를, 맥락 벡터(식~\ref{eq:ctx})는
+그 가중 통합 결과를 나타낸다. $N\times N$ 행렬은 에이전트 수가 변해도 자동 조정되어 가변 구성에 대응한다
+(그림~\ref{fig:credit}).
+\begin{equation}\label{eq:attn}
+\alpha_{ij}=\mathrm{softmax}_j\!\left(\frac{\bm{q}_i^{\top}\bm{k}_j}{\sqrt{d_k}}\right)
+\end{equation}
+\begin{equation}\label{eq:ctx}
+\bm{c}_i=\sum_{j=1}^{N}\alpha_{ij}\,\bm{v}_j
+\end{equation}
+
+\begin{figure}[t]\centering
+\figph{fig5_credit.png}
+\figcap{Attention 기반 크레딧 할당 구조}{Attention-Based Credit Assignment Architecture}
+\label{fig:credit}
+\end{figure}
+
+에이전트 $j$를 제외한 기준선 가치(식~\ref{eq:base})를 이용해, 팀 보상에서 $j$의 순수 기여인 상대적 이득
+(식~\ref{eq:adv})을 분리 추정한다. 이는 특정 선박이 이탈해도 나머지 선박의 포획 기여 학습이 지속되도록 한다.
+\begin{equation}\label{eq:base}
+b_j(\bm{s}) = V\!\left(\bm{s}_{\setminus j}\right)
+\end{equation}
+\begin{equation}\label{eq:adv}
+A_j^{t}=r_t+\gamma\,V(\bm{s}_{t+1})-b_j(\bm{s}_t)
+\end{equation}
+각 정책 $\pi_\theta$는 이 상대적 이득으로 PPO Clipped Surrogate 목적(식~\ref{eq:ppo})을 최대화하며, 갱신 비율은
+식~(\ref{eq:ratio})와 같다~\cite{ref18}. 클리핑은 과도한 정책 변화를 억제하여 학습을 안정화한다.
+\begin{equation}\label{eq:ppo}
+L^{\text{CLIP}}(\theta)=\hat{\mathbb{E}}_t\!\big[\min(\rho_t \hat{A}_j,\,
+\mathrm{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat{A}_j)\big]
+\end{equation}
+\begin{equation}\label{eq:ratio}
+\rho_t=\frac{\pi_\theta(a_t^{j}\mid o_t^{j})}{\pi_{\theta_{\text{old}}}(a_t^{j}\mid o_t^{j})}
+\end{equation}
+실행 시 각 에이전트는 자신의 관측 $o^{j}$만으로 독립 행동하므로 중앙 통신 없이 분산 실행이 가능하다(CTDE).
+
+\subsection{정책 네트워크}
+개별 정책 네트워크는 그림~\ref{fig:policy}와 같이 관측 $o^{j}$를 2개의 완전연결층(FC Encoder)으로 인코딩한 뒤
+LSTM 순환 신경망으로 처리한다~\cite{ref16}. 포획은 적의 경로 예측·속도 추정 등 단일 시점만으로 어려운
+시계열적 판단을 요구하므로 LSTM을 적용하였다. 게이트는 식~(\ref{eq:lstm1})--(\ref{eq:lstm6})과 같다.
+\begin{align}
+f_t &=\sigma(W_f[h_{t-1},x_t]+b_f) \label{eq:lstm1}\\
+i_t &=\sigma(W_i[h_{t-1},x_t]+b_i) \label{eq:lstm2}\\
+\tilde{c}_t &=\tanh(W_c[h_{t-1},x_t]+b_c) \label{eq:lstm3}\\
+c_t &=f_t\odot c_{t-1}+i_t\odot \tilde{c}_t \label{eq:lstm4}\\
+o_t &=\sigma(W_o[h_{t-1},x_t]+b_o) \label{eq:lstm5}\\
+h_t &=o_t\odot\tanh(c_t) \label{eq:lstm6}
+\end{align}
+은닉 상태 $h_t$는 추력·조타의 2차원 연속 행동을 결정한다. 정책 네트워크 구성은 표~\ref{tab:net}과 같다.
+
+\begin{figure}[t]\centering
+\figph{fig6_policy.png}
+\figcap{개별 에이전트 정책 네트워크 구조}{Individual Agent Policy Network Architecture}
+\label{fig:policy}
+\end{figure}
+
+\begin{table}[t]\centering
+\tabcap{개별 에이전트 정책 네트워크 구성}{Individual agent policy network configuration}
+\label{tab:net}
+\smallskip
+\begin{tabular}{|l|c|}
+\hline
+Parameter & Value\\ \hline
+Hidden units & 256\\ \hline
+Num layers & 2\\ \hline
+Memory size & 128\\ \hline
+Sequence length & 64\\ \hline
+\end{tabular}
+\end{table}
+
+\subsection{관측 공간}
+각 에이전트는 NED 좌표계 기준 자기 중심(ego-centric) 극좌표로 환경을 관측한다. 절대 좌표는 위치에 따라 관측이
+달라져 일반화가 저하되므로, 모든 관측을 자기 위치·헤딩 기준 상대 극좌표로 변환하여 회전 불변성을 확보한다
+(그림~\ref{fig:obs}). 관측 대상은 파트너·적군·모선이며, 상태 벡터는 아군 관측 $\bm{o}_{\text{ally}}$와 적군
+관측 $\bm{o}_{\text{enemy}}$를 결합한 $\bm{o}=[\bm{o}_{\text{ally}},\bm{o}_{\text{enemy}}]$이다. 각 대상에 대해
+거리·상대 방위각·상대 선수각을 관측하며 원시 범위는 표~\ref{tab:obs}와 같다.
+
+\begin{figure}[t]\centering
+\figph{fig7_obs.png}
+\figcap{에이전트 중심 극좌표 관측 구조}{Agent-Centric Polar Coordinate Observation Framework}
+\label{fig:obs}
+\end{figure}
+
+\begin{table}[t]\centering
+\tabcap{에이전트 관측 공간 구성}{Agent observation space configuration}
+\label{tab:obs}
+\smallskip
+\begin{tabular}{|l|l|c|}
+\hline
+Target & Observation & Raw Range\\ \hline
+\multirow{3}{*}{Partner ship}
+ & Distance          & $1$--$50$ m\\ \cline{2-3}
+ & Relative bearing  & $-180^\circ$--$180^\circ$\\ \cline{2-3}
+ & Relative heading  & $-180^\circ$--$180^\circ$\\ \hline
+\multirow{3}{*}{Enemy ship}
+ & Distance          & $0$--$5000$ m\\ \cline{2-3}
+ & Relative bearing  & $-180^\circ$--$180^\circ$\\ \cline{2-3}
+ & Relative heading  & $-180^\circ$--$180^\circ$\\ \hline
+\end{tabular}
+\end{table}
+
+\subsection{관측 정규화}
+파트너 거리(최대 50\,m)와 적군 거리(최대 5{,}000\,m)는 범위 차가 커, 신경망이 절댓값이 큰 적군 거리에 편향될
+수 있다. 이를 해결하기 위해 모든 거리를 식~(\ref{eq:nd})의 유계 유리함수로 $[-1,1)$로 정규화하여 근거리
+변화율을 키웠다.
+\begin{equation}\label{eq:nd}
+\bar{d}=\frac{d}{\,|d|+k\,}
+\end{equation}
+상수 $k$는 출력이 0.5가 되는 기준 거리로, 관측 대상별로 달리 설정한다(적군 $k_e=77$, 파트너 $k_p=100$,
+방위각 $k_\beta=10$). 적군은 원거리에서도 위협을 감지하도록, 파트너는 근접 협력 간격을 민감하게 보도록 조정한
+것이다(그림~\ref{fig:dsens}).
+
+\begin{figure}[t]\centering
+\figph{fig8_dsens.png}
+\figcap{관측 대상별 거리 감도 조정}{Distance Sensitivity Tuning by Observation Target}
+\label{fig:dsens}
+\end{figure}
+
+각도 관측은 $\pm180^\circ$ 경계에서 불연속이 발생한다. 사인 함수 단독 변환은 $30^\circ$와 $150^\circ$가 동일한
+값을 가져 방위의 일대일 대응이 깨진다. 이를 해결하기 위해 본 연구는 식~(\ref{eq:na})와 같이 \textbf{사인·코사인
+쌍}으로 변환하여, 모든 각도를 연속이면서 유일하게 표현하고 방향 정보를 온전히 보존한다.
+\begin{equation}\label{eq:na}
+g(\theta)=\big(\sin\theta,\;\cos\theta\big)
+\end{equation}
+이는 적군과의 정밀한 각도 정렬이 요구되는 최종 차단 기동에서, 정렬 부근의 미세 편차를 모호함 없이 감지하게
+한다(그림~\ref{fig:asens}).
+
+\begin{figure}[t]\centering
+\figph{fig9_asens.png}
+\figcap{각도 관측값의 삼각함수 정규화 전·후 비교}{Comparison of angular observation before and after trigonometric normalization}
+\label{fig:asens}
+\end{figure}
+
+% ============================== V. 학습 결과 ==============================
+\section{학습 결과}
+\subsection{학습 과정}
+학습 효율을 위해 한 실행 내 다수의 환경 인스턴스를 동시 구동하는 병렬 방식을 적용하였다(그림~\ref{fig:parallel}).
+MA-POCA 학습 하이퍼파라미터는 표~\ref{tab:hyp}과 같다. 학습 결과(그림~\ref{fig:reward}--\ref{fig:vloss})
+누적 보상은 약 1.1M 스텝 이후 수렴하며, 엔트로피는 점차 감소해 결정론적 정책으로 수렴한다. 정책·가치 손실의
+동반 감소는 MA-POCA의 안정적 수렴을 뒷받침한다.
+
+\begin{figure}[t]\centering
+\figph{fig10_parallel.png}
+\figcap{다중 환경 인스턴스를 활용한 병렬 학습 구조}{Parallel Training Architecture with Multiple Environment Instances}
+\label{fig:parallel}
+\end{figure}
+
+\begin{table}[t]\centering
+\tabcap{MA-POCA 학습 하이퍼파라미터}{MA-POCA training hyperparameters}
+\label{tab:hyp}
+\smallskip
+\begin{tabular}{|l|c|}
+\hline
+Parameter & Value\\ \hline
+Batch size & 1024\\ \hline
+Buffer size & 10240\\ \hline
+Learning rate & 0.0003 (linear)\\ \hline
+Beta (entropy) & 0.005\\ \hline
+Epsilon (clip) & 0.2\\ \hline
+Lambda (GAE~\cite{ref20}) & 0.95\\ \hline
+Num epoch & 3\\ \hline
+Gamma & 0.99\\ \hline
+Time scale & 10\\ \hline
+Max steps & $5\times10^{6}$\\ \hline
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]\centering\figph{fig11_reward.png}
+\figcap{보상 수렴 그래프}{Reward Convergence graph}\label{fig:reward}\end{figure}
+\begin{figure}[t]\centering\figph{fig12_entropy.png}
+\figcap{엔트로피 그래프}{Entropy graph}\label{fig:entropy}\end{figure}
+\begin{figure}[t]\centering\figph{fig13_ploss.png}
+\figcap{정책 손실 수렴 그래프}{Policy Loss Convergence graph}\label{fig:ploss}\end{figure}
+\begin{figure}[t]\centering\figph{fig14_vloss.png}
+\figcap{가치 손실 수렴 그래프}{Value Loss Convergence graph}\label{fig:vloss}\end{figure}
+
+\subsection{성능 비교}
+제안 정책을 baseline인 수정 LOS(Line-of-Sight) Guidance와 동일 환경에서 비교하였다~\cite{ref21}. 비교 용이성을
+위해 공격선 1대를 가정한다. 동적 환경에서는 고정 경유점 추종이 부적합하므로, 모선과 포획 대상의 실시간 상대
+좌표로 가상 경로를 생성하고($\hat{\bm{d}}$, 법선 $\bm{n}$, 목표 $\bm{p}_i^{\text{tgt}}=\bm{p}_e+L_a\hat{\bm{d}}+s_i
+L_s\bm{n}$), PD 조향($K_p{=}3,K_d{=}0.5$)과 거리 비례 추력으로 추종하는 수정 LOS를 비교군으로 사용하였다
+(그림~\ref{fig:loscmp}).
+
+\begin{figure}[t]\centering
+\figph{fig15_los.png}
+\figcap{포획을 위한 적응형 LOS Guidance}{Modified LOS Guidance for Target Capture}
+\label{fig:loscmp}
+\end{figure}
+
+두 정책 모두 동일 조건에서 각 40회 에피소드를 수행하였다(그림~\ref{fig:traj_los},~\ref{fig:traj_rl}). 평가 지표는
+포획률(Capture rate), 방어선 돌파율(Penetration rate), 대형 붕괴율(Formation collapse rate, 아군 충돌 또는
+간격이 차단망 길이를 초과한 비율)이며, 결과는 표~\ref{tab:result} 및 그림~\ref{fig:bar}와 같다.
+
+\begin{figure}[t]\centering\figph{fig16_traj_los.png}
+\figcap{Modified LOS 기반 방어 궤적 및 포획 결과}{Defense Trajectories and Capture Results Based on Modified LOS Guidance}\label{fig:traj_los}\end{figure}
+\begin{figure}[t]\centering\figph{fig17_traj_rl.png}
+\figcap{강화학습 모델 기반 방어 궤적 및 포획 결과}{Defense Trajectories and Capture Results Based on RL Model Inference}\label{fig:traj_rl}\end{figure}
+
+\begin{table}[t]\centering
+\tabcap{제어 방식별 방어 성능 비교}{Defense Performance Comparison by Control Method}
+\label{tab:result}
+\smallskip
+\begin{tabular}{|l|c|c|}
+\hline
+Evaluation Metric & Modified LOS & RL (proposed)\\ \hline
+Capture rate            & 6/40 (15.0\%)  & \textbf{26/40 (65.0\%)}\\ \hline
+Penetration rate        & 25/40 (62.5\%) & \textbf{11/40 (27.5\%)}\\ \hline
+Formation collapse rate & 9/40 (22.5\%)  & \textbf{3/40 (7.5\%)}\\ \hline
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]\centering
+\figph{fig18_bar.png}
+\figcap{제어 방식별 방어 성능 비교(막대그래프)}{Bar Chart of Defense Performance by Control Method}
+\label{fig:bar}
+\end{figure}
+
+표~\ref{tab:result}에서 강화학습 정책은 모든 지표에서 향상을 보였다. 포획률은 15.0\%에서 65.0\%로, 돌파율은
+62.5\%에서 27.5\%로, 대형 붕괴율은 22.5\%에서 7.5\%(약 3배 감소)로 개선되었다. 사전 정의 경로 추종 제어가
+동적 적군 기동에 능동 대응하기 어려운 반면, 강화학습 정책은 실시간 최적 행동으로 복합 방어 목표를 동시
+달성함을 의미한다. 다만 본 비교는 단일 시드·40회 평가이며 LOS 게인이 고정값이므로, 다중 시드 통계와 MAPPO
+등과의 ablation을 통한 정량 검증은 향후 과제로 남긴다.
+
+% ============================== VI. 결론 ==============================
+\section{결론}
+본 연구는 두 척의 아군 USV가 차단망을 공유하여 불법 선박을 협력 포획하는 문제에 대해 MA-POCA 기반 다중
+에이전트 강화학습 접근법을 제안하였다. 외란 해상 시뮬레이션 환경을 구축하고, 차단망의 물리적 활성·포획 조건을
+정식화하였으며, 극좌표 관측 체계와 정규화(거리 유리함수, 각도 사인·코사인 쌍)로 관측 공간을 설계하였다. 가우시안
+대형 유지·접근·선수 정렬의 연속 보상과 포획·방어 실패의 순간 보상을 계층 결합하여, 수정 LOS Guidance 대비
+포획률·대형 붕괴율을 대폭 개선하였다. 향후에는 MAPPO 등과의 ablation 및 다중 시드 통계 검증, 다수 적군·복수
+아군 쌍의 가변 분산 군집 제어, 침입 선박의 독립 회피 정책 학습(상호 경쟁적 진화)으로 확장하고자 한다.
+
+% ============================== 참고문헌 ==============================
+{\fontsize{9}{13.5}\selectfont
+\begin{thebibliography}{99}
+\bibitem{ref1} A. Boretti, ``Unmanned surface vehicles for naval warfare and maritime security,'' \textit{J. Defense Modeling and Simulation}, 2024. \doi{https://doi.org/10.1177/15485129241283056}
+\bibitem{ref2} National Research Council, \textit{Integration of Hard-Kill and Soft-Kill Systems for More Effective Fleet Air Defense}. Washington, DC: The National Academies Press, 1992.
+\bibitem{ref3} S. Tashakori, M. Ranjbar, S. Balochian, J. Sharif-Razavian, and M. Peymankar, ``Dynamic soft-kill weapon-target assignment in naval environments,'' \textit{Computers \& Industrial Engineering}, vol.~197, p.~110606, 2024. \doi{https://doi.org/10.1016/j.cie.2024.110606}
+\bibitem{ref4} H. Bang, D. Choi, J. Lee, E.-T. Kim, and W. Youn, ``Development and Experimental Validation of an Autonomous USV Berthing System with Transition Logic,'' \textit{Ocean Engineering}, 2025. \doi{https://doi.org/10.1016/j.oceaneng.2025.121333}
+\bibitem{ref5} R. S. Sutton and A. G. Barto, \textit{Reinforcement Learning: An Introduction}, 2nd ed. Cambridge, MA: MIT Press, 2018.
+\bibitem{ref6} J. Woo and N. Kim, ``Collision avoidance for an unmanned surface vehicle using deep reinforcement learning,'' \textit{Ocean Engineering}, vol.~199, p.~107001, 2020. \doi{https://doi.org/10.1016/j.oceaneng.2020.107001}
+\bibitem{ref7} C. Yu et al., ``The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games,'' \textit{NeurIPS Datasets and Benchmarks Track}, 2022.
+\bibitem{ref8} Y. Zhao, Y. Ma, and S. Hu, ``USV formation and path-following control via deep reinforcement learning with random braking,'' \textit{IEEE Trans. Neural Netw. Learn. Syst.}, vol.~32, no.~12, pp.~5468--5478, 2021. \doi{https://doi.org/10.1109/TNNLS.2021.3068762}
+\bibitem{ref9} F. A. Oliehoek and C. Amato, \textit{A Concise Introduction to Decentralized POMDPs}. Cham: Springer, 2016. \doi{https://doi.org/10.1007/978-3-319-28929-8}
+\bibitem{ref10} A. Lindell, ``Boat Attack,'' GitHub repository, Unity Technologies, 2020.
+\bibitem{ref11} J. Tessendorf, ``Simulating Ocean Water,'' \textit{SIGGRAPH 2001 Course Notes}, ACM, pp.~1--26, 2001.
+\bibitem{ref12} J. Tobin, R. Fong, A. Ray, J. Schneider, W. Zaremba, and P. Abbeel, ``Domain Randomization for Transferring Deep Neural Networks from Simulation to the Real World,'' \textit{IEEE/RSJ IROS}, pp.~23--30, 2017. \doi{https://doi.org/10.1109/IROS.2017.8202133}
+\bibitem{ref13} A. Cohen et al., ``On the Use and Misuse of Absorbing States in Multi-Agent Reinforcement Learning,'' arXiv:2111.05992, 2021.
+\bibitem{ref14} R. Lowe, Y. Wu, A. Tamar, J. Harb, P. Abbeel, and I. Mordatch, ``Multi-Agent Actor-Critic for Mixed Cooperative-Competitive Environments,'' \textit{NeurIPS}, pp.~6382--6393, 2017.
+\bibitem{ref15} T. Rashid et al., ``QMIX: Monotonic Value Function Factorisation for Deep Multi-Agent Reinforcement Learning,'' \textit{ICML}, pp.~4295--4304, 2018.
+\bibitem{ref16} S. Hochreiter and J. Schmidhuber, ``Long Short-Term Memory,'' \textit{Neural Computation}, vol.~9, no.~8, pp.~1735--1780, 1997. \doi{https://doi.org/10.1162/neco.1997.9.8.1735}
+\bibitem{ref17} A. Vaswani et al., ``Attention Is All You Need,'' \textit{NeurIPS}, pp.~5998--6008, 2017.
+\bibitem{ref18} J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, ``Proximal Policy Optimization Algorithms,'' arXiv:1707.06347, 2017.
+\bibitem{ref19} A. Y. Ng, D. Harada, and S. Russell, ``Policy Invariance Under Reward Transformations,'' \textit{ICML}, pp.~278--287, 1999.
+\bibitem{ref20} J. Schulman, P. Moritz, S. Levine, M. I. Jordan, and P. Abbeel, ``High-Dimensional Continuous Control Using Generalized Advantage Estimation,'' \textit{ICLR}, 2016.
+\bibitem{ref21} T. I. Fossen, M. Breivik, and R. Skjetne, ``Line-of-sight path following of underactuated marine craft,'' \textit{IFAC Proc. Volumes}, vol.~36, no.~21, pp.~211--216, 2003. \doi{https://doi.org/10.1016/S1474-6670(17)37809-6}
+\end{thebibliography}
+}
+
+\end{document}

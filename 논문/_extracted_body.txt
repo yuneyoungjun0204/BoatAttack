@@ -1,0 +1,799 @@
+I. 서론
+
+불법 수상정 포획을 위한 강화학습 기반 무인수상정 협력 제어
+
+Multi-Agent Reinforcement Learning for Cooperative Unmanned Surface Vehicle Control in Illegal Vessel Capture
+
+
+
+윤 영 준 , 방 현 태 , 하 지 웅 , 전 유 라 , 신 헌 용 , 윤 원 근
+
++These authors contributed equally to this work
+
+*Corresponding Author
+
+Manuscript received 20xx.xx.xx; revised 20xx.xx.xx; accepted 20xx.xx.xx
+
+윤영준: 충남대학교 자율운항시스템공학과 석사과정(0204jun@o.cnu.ac.kr, 0009-0005-8321-0461)
+
+방현태: 충남대학교 자율운항시스템공학과 박사과정(htbang@g.cnu.ac.kr, 0000-0002-2846-6334)
+
+하지웅: 충남대학교 자율운항시스템공학과 석사과정(nb10316@g.cnu.ac.kr, 0009-0005-2980-5413)
+
+전유라: 한국과학기술원(KAIST) 기계공학과 박사과정(youraj@kaist.ac.kr, 0000-0002-9591-2533)
+
+신헌용: 국방과학연구소 선임 연구원(newoldd@naver.com, 0009-0006-7247-4215)
+
+윤원근: 충남대학교 자율운항시스템공학과 조교수(wkyoun@cnu.ac.kr, 0000-0001-6954-9059)
+
+※ 이 연구는 2025년 정부(방위사업청)의 재원으로 국방과학연구소의 지원을 받아 수행된 미래도전국방기술 연구개발사업임 (No.915141301)
+
+Copyright© ICROS 2026
+
+(Youngjun Yun1, Hyuntae Bang1, Jiwoong Ha1, Youra Jun2, Hunyong Shin3 and Wonkeun Youn1)
+
+1Dpartment of Autonomous Vehicle System Engineering Chungnam National University
+
+2Department of Mechanical Engineering, KAIST
+
+3Agency for Defense Development (ADD)
+
+
+
+
+
+Journal of Institute of Control, Robotics and Systems (20XX) XX(XX):XXX-XXX
+
+DOI:10.5302/J.ICROS.20XX.XX.X.XXX  ISSN:1976-5622
+
+
+
+
+
+이현미
+
+Abstract: This paper proposes a cooperative capture system in which two allied Unmanned Surface Vehicles (USVs) jointly deploy a capture net to intercept non-cooperative vessels in naval environments. To overcome the limitations of traditional rule-based methods under environmental uncertainties, a Multi-Agent Reinforcement Learning (MARL) framework is developed within a high-fidelity Unity-based simulation incorporating Gerstner wave and wind disturbance models. Each agent utilizes an ego-centric polar coordinate observation space; distance values are normalized via a non-linear rational function to prioritize close-range sensitivity, while angular discontinuities are resolved through trigonometric transformations. We adopt the Multi-Agent POsthumous Credit Assignment (MA-POCA) algorithm within a Centralized Training with Decentralized Execution (CTDE) architecture, enabling robust strategy learning through posthumous credit assignment even when agents exit the environment. The reward structure is designed hierarchically, combining sparse event rewards for capture success with dense continuous rewards based on formation maintenance, target approach, and heading alignment. Quantitative experimental results demonstrate that the proposed MARL-based approach significantly outperforms modified Line-of-Sight (LOS) guidance, achieving a 65% capture success rate and a three-fold reduction in formation collapse under dynamic sea conditions. This study confirms that the proposed framework effectively enables autonomous USVs to learn complex, coordinated maneuvers for physical maritime interdiction, providing a robust solution for securing maritime security.
+
+Keywords: unmanned surface vehicles (USVs), Multi-Agent Reinforcement Learning (MARL), Cooperative Capture, Maritime Simulation
+
+
+
+
+
+윤 영 준, 방 현 태, 하 지 웅, 전 유 라, 신 헌 용, 윤 원 근
+
+어선 단속, 해상 밀수 차단, 해양보호구역 침범 선박 제지 등 해상 내 비협조 선박을 저지해야 하는 수요는 민간 해양 경비와 군사 방어 측면에서 중요해졌다. 또한 군사적으로는 자폭 선박과 같은 무인 수상정의 공격이 실제 전쟁에서 새로운 위협으로 대두되면서, 해당 선박들에 대한 무력화 방법에 관한 연구는 필수적이다 [1]. 위협 선박을 저지하는 방식은 크게 하드킬(Hard-Kill)과 소프트킬(Soft-Kill)로 구분된다. 하드킬 방식은 요격 미사일이나 함포와 같은 무기체계를 통해 위협 대상을 직접 파괴하는 방법으로, 제압 확실성을 제공하지만 막대한 비용이 소모되며 살상을 수반한다는 한계가 있다 [2]. 소프트킬 방식은 대상을 파괴하지 않고 무력화하는 비살상 수단으로, 대표적인 예로 GPS 재밍 또는 스푸핑을 통해 위협 선박의 항법 시스템을 교란하여 침입을 저지하는 전자전(Electronic Warfare) 기반 방법이 있다. 그러나 이러한 전자전 기반 소프트킬 방식은 자체 관성항법장치(INS)나 광학 기반 자율 항법을 탑재한 선박에 대해서는 효과가 제한적이며, 전파 간섭으로 인한 아군 사이에서도 통신을 교란시키는 등 부수적 피해도 존재한다 [3]. 이러한 문제들을 극복하고자 두 대의 수상정이 차단망을 전개하여 침입 선박의 추진 기관을 물리적으로 구속하는 방식을 본 연구에서 제안한다. 해당 방식은 전자 시스템에 의존하지 않는 물리적 제압 방식으로, 아군 통신에 영향을 주지 않는다는 점에서 기존 소프트킬 방식의 한계를 보완하면서도 적은 비용과 살상을 수반하지 않아도 된다는 점에서 하드킬의 한계 또한 해결한다. 하지만 유인 선박을 활용한 포획은 탑승자의 안전을 보장할 수 없기 때문에 무인 선박의 도입이 요구된다 [4]. 이를 구현하기 위해선 두 수상정 간의 정교한 협력 기동, 차단망의 기하학적 제약, 그리고 해양 환경의 불확실성이라는 복합적인 사항들을 고려해야 한다.
+
+전통적인 규칙 기반 접근법은 사전 정의된 시나리오에서는 효과적이나, 파도와 바람에 의한 외란, 위협 선박의 불규칙적인 접근 경로 등과 같은 실시간으로 변하는 요소들에 대해 유연하게 대응하기 어렵다는 한계가 존재한다. 이와 달리 심층 강화학습(Deep Reinforcement Learning, DRL)은 환경과의 지속적인 시행착오 상호작용을 통해 복잡한 의사결정 문제를 스스로 해결하며 다양한 외란과 불규칙적인 상황에도 대응 가능한 판단을 내리는 유력한 접근법으로 주목받고 있으며, 자율 운항 선박의 충돌 회피와 무인 수상정의 경로 계획 등 해상 환경에서 그 효용성이 입증된 바 있다 [5, 6]. 특히 다중 에이전트 강화학습(Multi-Agent Reinforcement Learning, MARL)은 협력적 과제에서 에이전트 간의 상호작용 전략을 자동으로 학습할 수 있어 USV 군집 대형 유지 제어, 다중 표적 협력 포획, 추적·포위 기동 등 복잡한 해양 임무에 적용된 바 있다. [7, 8]. 기존 연구들은 주로 CTDE(Centralized Training with Decentralized Execution) 구조를 활용하여 학습 시 팀 전체의 전역 정보를 활용하면서도 실행 시 분산 제어를 달성한 사례가 존재하지만 [9], 표적 포획 문제에 MARL을 적용한 연구에서는 흔치 않다. 본 연구에서는 MARL로의 차단망 협력 포획 학습 프레임워크를 제안한다.  Fig. 1.은 각 선박들의 상태를 관측값으로 받은 후 강화학습 네트워크를 거쳐 나온 각 선박들의 Throttle과 Steering이 물리 기반 시뮬레이터에서 상호작용하며 보상을 받는 과정을 에피소드가 종료되기 전까지 반복되는 과정을 나타낸다. 
+
+                 
+
+Fig. 1. 물리 환경 시뮬레이션을 포함한 에이전트 상호작용          루프
+
+ Fig. 1.The Loop of Agent Interaction Within the Physics
+
+              Simulation Environment
+
+본 논문의 주요 기여는 다음과 같다. 첫째, 파도 및 바람 모델을 포함한 Unity 기반 해상 시뮬레이션 환경을 구축하여 협력 포획 학습 프레임워크를 제안한다. 둘째, 에이전트 중심 극좌표 기반 관측 체계와 다양한 거리 범위와 각도 불연속 문제를 효과적으로 해결하는 관측 공간 설계 방법을 제시한다. 셋째, MARL 구조를 통해 두 아군 USV가 차단망을 공유하며 협력 포획 기동을 자율적으로 학습함을 Unity 시뮬레이션 환경에서의 정량적 비교 실험을 통해 입증한다.
+
+II. 포획 시스템
+
+
+
+ Fig. 2.차단망을 이용한 협력 포획 시스템
+
+ Fig. 2.Cooperative Net-based Capture System
+
+ 본 연구에서 제안하는 불법 선박 포획 방식은 Fig. 2와 같이 두 대의 아군 선박이 편대를 이루어 선박 사이에 전개한 차단망으로 적군 선박을 포획하는 협력 기동 방식이다. 두 선박은 차단망의 물리적 길이에 맞추어 선박 간 유클리드 거리를 실시간으로 조정하며, 차단망의 기하학적 전개 한계를 고려한 협력 기동을 수행한다.
+
+차단망은 두 선박의 실시간 위치에 따라 동적으로 형상이 변화하며, 선박 간 거리에 비례하여 차단망의 유효 전개 폭이 결정된다. 선박 간 거리가 최소 활성화 거리 이상일 때 차단망은 충분한 장력을 확보하여 유효한 포획력을 갖추게 되며, 이 상태에서 적군 선박과의 접촉 시 포획이 성립한다. 반대로, 선박 간 거리가 최소 활성화 거리 미만으로 좁혀지면 차단망이 충분한 장력을 갖추지 못하여 포획 기능이 비활성화된다. 이는 실제 해상 환경에서 차단망이 일정 수준 이상 전개되어야만 유효한 차단 및 포획이 가능하다는 물리적 제약을 반영한 것이다.
+
+III. 시뮬레이션 환경 구성
+
+훈련 환경 구성
+
+강화학습 환경을 위해 Unity 엔진을 활용하여 해상 시뮬레이터를 구축한다. 해당 시뮬레이터는 방어 대상인 모선, 이를 방어하는 아군 선박 2대, 그리고 모선을 향해 접근하는 적군 선박으로 구성된다. 아군 선박 2대는 선박 사이에 전개한 그물을 이용하여 적군 선박이 모선에 도달하기 전에 이를 포획하는 것을 목표로 한다. 해양 시뮬레이터는 Fig. 3.에서 (a) ~ (d)와 같이 구현이 되었다.
+
+
+
+(a) 모선 방어를 위해 협력 기동하는 두 대의 아군 무인 
+
+   수상정
+
+(a) Two Allied USVs Performing Cooperative Maneuvering 
+
+    to Defend the Mothership
+
+
+
+(c) 차단망으로 연결된 두 대의 아군 수상정
+
+(c) Two Allied USVs Connected by a Capture Net
+
+Fig. 3.Unity 기반 해상 시뮬레이션 환경 및 구현 USV 모델
+
+ 본 연구에서는 자폭 선박의 돌진 상황을 학습 환경으로 설정하였다. 자폭 선박은 모선을 향해 최단 경로로 고속 접근하며, 아군은 제한된 시간 내에 협력 기동을 통해 이를 차단 및 포획해야 한다.
+
+2. 외란 구현
+
+해양 물리 시뮬레이션은 Gerstner 파랑 모델을 사용하여 구현하였다 [10, 11]. Gerstner 파 이론은 다중 파형의 합성을 통해 해수면 변위를 계산하며, 해당 식은 (1)과 (2)와 같다.
+
+                          (1)
+
+
+
+(b) 방어 실패 시 침입 선박에 의한 모선 피격 장면
+
+(b) Mothership Explosion Caused by an Attacking USV 
+
+    Upon Defense Failure
+
+
+
+(d) 구현된 적군 수상정 모델
+
+(d) Model of the Enemy USV Implemented
+
+Fig. 3.Unity-Based Maritime Simulation Environment and Implemented USV Models
+
+식 (1)는 수직 방향 변위 를 나타낸다. 개 파의 진폭 를 파수 으로 정규화한 값에 위상각 에 따라 합산하여 해수면의 상하 운동을 구현한다.
+
+                    (2)
+
+식 (2)는 , 는 수평면 입자 변위 성분이다. 각 파의 첨예도 계수 , 진폭 , 단위 진행 방향 벡터 성분 , 및 위상각 을 개 파에 대해 합산 후 최종 수평 변위를 계산하여 해수면과 유사한 파형을 구현한다. 위상각 는 식 (3)과 같다.
+
+                    (3)
+
+파형이 특정 위치 에서 시각 일 때 어느 상태에 있는지를 결정하며, 진행 방향 와 각진동수 에 따라 위치별 위상 분포가 결정되고, 각진동수 와 시간 를 곱한 위상 속도로 시변성을 구현한다.  Gerstner 파 모델에서 파형의 마루는 실제 해수면처럼 뾰족하게 솟고 골은 완만하게 펼쳐지는 비대칭 형태를 가지며, 이 마루의 날카로움 정도를 첨예도라 정의하고 해당 첨예도를 제어하는 식이 식 (4)의 이다.
+
+                                 (4)
+
+분자의 는 첨예도 상수이며, 분모의 , , 은 각각 진폭, 각진동수, 총 파형 수를 나타낸다.
+
+ 각 파형의 각진동수인 는 식 (5)과 같이 결정된다.
+
+                         (5)
+
+식 (5)에서 는 파장, 는 위상 속도, 는 중력가속도를 나타내고 해당 과정을 통해 파도가 근사적으로 구현이 된다. 선체에 작용하는 풍력은 매 물리 스텝마다 식 (6)과 같이 계산되어 선체에 직접 적용되도록 한다.
+
+                       (6)
+
+ 풍력은 식 (6)과 같이 풍향 단위벡터 , 풍속 , 배율 계수 의 곱으로 산출되어 선박에 외력으로 작용한다. 매 에피소드마다 랜덤한 파도와 풍력을 설정하여 에이전트가 다양한 해상 환경을 마주하도록 한다. 이러한 도메인 랜덤화 전략으로 실해역에서 발생할 수 있는 다양한 외란 조건에 대한 강건성을 확보하여 시뮬레이션과 실해상 간의 전이 가능성을 높이고자 하였다 [12].
+
+IV. 모델 구성
+
+2대의 선박이 그물을 이용하여 적군을 포획하기 위해서는 각 선박의 독립적인 조종과 동시에 상호 간의 긴밀한 협력 기동이 요구된다. 이를 위해 본 연구에서는 MARL 방식 중 MA-POCA를 채택하였다 [13]. 해당 방식을 채택한 이유는 기존의 강화학습 방식들 중 MADDPG(Multi-Agent Deterministic Policy Gradient)나 QMIX(Q-Mixer Network)와 같은 알고리즘은 고정된 에이전트 수를 전제로 하여 에이전트 이탈 시 학습이 불안정해지는 한계가 존재한다 [14, 15]. 반면 MA-POCA는 사후 크레딧 할당(Posthumous Credit Assignment) 메커니즘을 통해 에이전트가 도중에 이탈하더라도 해당 에이전트의 기여도를 평가할 수 있으며, 중앙 집중식 비평가(Centralized Critic)가 전체 팀 관측을 바탕으로 개별 기여와 협력적 기여를 분리 학습한다 [13]. 이는 포획 과정에서 한 선박이 임무를 완료하거나 이탈하는 상황에 자연스럽게 대응할 수 있어, 본 연구의 알고리즘으로 선택하였다.
+
+
+
+Fig. 4.MA-POCA 기반 협동 학습 구조 [13]
+
+Fig. 4.MA-POCA-based Cooperative Learning Architecture
+
+[13]. 
+
+Fig.. 4.는 MA-POCA 기반 협동 학습 구조를 나타낸다. 상단의 중앙 집중형 비평가(Centralized Critic, Coach)는 모든 에이전트(Agent 1 Obs ~ Agent N Obs)의 관측값을 입력받아 Attention/Pooling Layer를 통해 에이전트 간 상호 연관성을 동적으로 반영한 팀 전체의 가치 함수 V(s)를 추정한다. 하단의 각 에이전트(Agent 1, Agent 2)는 동일한 구조의 개별 정책 네트워크를 가지며, VectorObs, EnemyBuffer, AllyBuffer로 구성된 관측값을 입력받아 LSTM(Long Short-Term Memory) 기반 순환 신경망과 FC 레이어를 거쳐 Throttle(추력)과 Steering(조타)의 2차원 연속 행동을 출력한다 [16]. 학습 시에는 중앙 비평가가 전체 관측을 활용하여 협동 전략을 학습하며, 실행 시에는 각 에이전트가 자신의 관측만으로 독립적으로 행동을 결정하는 CTDE 구조를 따른다.
+
+학습 시에는 중앙 집중형 비평가가 전체 에이전트 개의 관측을 입력으로 받아, Attention 계층을 통해 에이전트 간 상호 연관성을 동적으로 반영한 팀 전체의 가치 함수를 추정하고 가치함수는 식 (7)과 같다 [17].
+
+                      (7)
+
+해당 방식으로 구현함으로써 적군 선박의 개수가 늘어나더라도 동일한 구조로 학습이 가능하다.  이때 Attention 가중치 는 식 (8)과 같다.
+
+                     (8)
+
+여기서 는 에이전트 의 Query 벡터, 와 은 각각 에이전트 , 의 Key 벡터이며, 는 Key 벡터의 차원 수로 스케일 조정에 사용된다. 산출된 가중치 는 N×N 행렬로 표현되며, 에이전트 수 이 변화하더라도 행렬 크기는 Fig. 5.와 같이 자동으로 조정되는 Scalable한 구조를 가진다 [17]. 에이전트 는 산출된 가중치를 통해 맥락 벡터 를 구성하며, 해당 벡터는 식 (9)과 같다.
+
+               (9)
+
+여기서 는 에이전트 의 Value 벡터이다. 이는 에이전트 수가 고정된 상황에서도 각 에이전트가 매 시점마다 팀 내 다른 에이전트의 상태에 대한 집중도를 동적으로 조정할 수 있도록 한다.
+
+
+
+Fig. 5.Attention 기반 크레딧 할당 구조
+
+Fig. 5.Attention-Based Credit Assignment Architecture
+
+Fig. 5.는 사후 크레딧 할당(Posthumous Credit Assignment) 구조를 나타낸다 [13]. 각 에이전트(Agent 1 ~ Agent N)의 관측값 은 Attention Mechanism으로 입력되며, Softmax 기반 가중치 연산을 통해 에이전트 간 상호 기여도를 동적으로 산출한다 [17]. 에이전트가 환경에서 이탈한 이후에도 팀의 성공·실패에 대한 기여도를  평가하기 위해, 에이전트 를 팀에서 제외하였을 때의 기준선 가치를 식 (10)으로 계산한다. 해당 방식을 통해 아군 선박이 중간에 비활성화되더라도 나머지 선박의 포획 활동에 대한 학습이 지속적으로 이루어진다.
+
+             (10)
+
+ 해당 수식을 통해 의 에이전트가 없을 경우의 기대 가치를 추정할 수 있게되고, 이를 통해 의 에이전트의 순수 가치 또한 추정할 수 있게 된다. 에이전트별 다른 에이전트의 영향을 배제한 해당 에이전트만의 순수한 이득인 상대적 이득는 식 (9)와 같이 추정한다 [13].
+
+                               (11)
+
+여기서 는 시점 에서 에이전트 의 상대적 이득,  은 시점 에서의 팀 보상, 은 미래 보상에 대한 할인율, 은 다음 시점 에서의 팀 전체 가치 함수 추정값, 와 은 각각 시점  및 에서의 팀 전체 상태, 는 식 (10)에서 정의된 에이전트 제외 시의 기준선 가치이다.
+
+식 (11)는 팀 보상  중 에이전트 의 고유한 기여분만을 분리하여 귀속하는 효과를 가진다. 각 에이전트의 정책 는 이 상대적 이득을 기반으로 PPO의 Clipped Surrogate Objective를 최대화하는 방향으로 갱신되며, 해당 계산은 식 (12)과 같다 [18].
+
+ (12)
+
+는 정책 파라미터 에 대한 PPO 목적 함수, 는 시점 에 대한 경험적 기댓값, 는 식 (11)에서 정의된 에이전트 의 상대적 이득, 은 를  범위로 제한하는 클리핑 함수이며, 은 클리핑 범위로 과도한 정책 변화를 억제한다. 는 정책 갱신 비율로 식 (13)와 같이 정의된다.
+
+                             (13)
+
+여기서 는 시점 에서 에이전트 가 선택한 행동, 는 해당 시점의 관측값, 는 현재 정책, 는 갱신 이전 정책을 나타낸다. 
+
+실행 시에는 각 에이전트가 자신의 관측 만을 이용하여 정책 에 따라 독립적으로 행동을 결정하므로, 중앙 통신 없이도 분산 실행이 가능하다. 이러한 CTDE 구조는 학습 시에는 팀 전체 관측 을 활용하여 협동 전략을 효과적으로 학습하면서도, 실제 운용 시에는 개별 관측 만으로 분산 실행이 가능하기 때문에 다중 에이전트 제어에 적합하다 [17]. 또한 Attention 기반의 가치 함수 구조는 에이전트 수 이 달라지더라도 동일하게 적용 가능하여, 가변적인 에이전트 구성을 갖는 다수의 시나리오에 대해서도 동일한 모델 구조 및 학습 방식의 적용이 용이하다.
+
+앞서 기술한 MA-POCA의 CTDE 구조가 팀 전체의 학습 프레임워크를 정의한다면, 각 아군 선박의 개별 정책 네트워크는 Fig. 6과 같은 구조를 따른다. 개별 에이전트는 파트너 선박의 상대 위치 및 차단망 전개 길이, 적군 선박의 상대 거리·방위각·헤딩, 모선과의 거리 정보를 관측 로 입력받으며, 관측 는 2개의 완전연결층(FC Encoder)을 통해 인코딩된 후 이를 LSTM 기반 순환 신경망을 통해 처리한다 [16].
+
+
+
+Fig. 6.  개별 에이전트 정책 네트워크 구조
+
+Fig. 6.  Individual Agent Policy Network Architecture
+
+적군 선박의 포획이 단일 시점의 관측만으로는 달성하기 어려운 시계열적 판단을 요구하기 때문에 LSTM을 적용하였다. LSTM은 식 (14)–(19)과 같이 망각 게이트 , 입력 게이트  셀 상태 , 출력 게이트 로 구성된다 [16].
+
+      (14)
+
+는 이전 셀 상태에서 불필요한 정보를 제거하는 망각 게이트로써 는 시점 에서 에이전트 의 관측 입력 벡터, 은 이전 시점의 은닉 상태(hidden state), 는 망각 게이트에서의 편향 벡터이다. 망각 게이트를 통해 시점 관측을 바탕으로, 더 이상 적군 포획에 중요하지 않은 과거의 정보를 제거한다 [16].
+
+             (15)
+
+는 새로운 정보의 반영 정도를 조절하는 입력 게이트이며 는 입력 게이트에서의 편향 벡터이다. 입력 게이트는 현재 관측된 선박의 급격한 경로 변경이나 가속도 변화 등, 향후 경로 예측에 결정적인 영향을 미칠 새로운 정보를 선별하여 반영한다. 이를 통해 선박 움직임의 의도를 파악할 수 있다 [16].
+
+           (16)
+
+ 는 새로운 셀 후보값이고 는 편향벡터이다. 갱신된 셀 상태는 선박의 접근 속도 및 방향 변화 추세 등, 단일 시점에서는 파악할 수 없는 시계열적 흐름을 장기적으로 누적하여 기억한다.
+
+                    (17)
+
+ 는 갱신된 셀 상태이다.
+
+               (18)
+
+ 는 출력 게이트이다. 마지막으로 출력 게이트는 최종 행동을 결정하기 전  내용 중 어떤 부분을 얼마나 출력에 반영할지 결정한다.
+
+                     (19)
+
+ 는 현재 시점의 은닉 상태 출력이다. 해당 은닉 상태는 결국 추력과 조타의 2차원 연속 행동 으로 이루어진 최종 행동을 결정하게 된다. 이러한 과정을 통해 에이전트는 각 선박들의 한 시점에서의 상황이 아닌 경로 예측 및 속도 가속도 추정과 같은 정보들은 추론하여 과거의 궤적을 고려한 지능적인 차단 기동을 학습할 수 있도록 유도한다. 관측 는 2개의 완전연결층(FC Encoder)을 통해 인코딩된 후 LSTM에 입력되며, LSTM의 출력 가 최종적으로  학습에 사용된 주요 하이퍼파라미터는 Table 1과 같다.
+
+표.      1. 개별 에이전트 정책 네트워크 구성
+
+Table. 1.   Individual agent policy network configuration
+
+
+
+Parameter
+
+Value
+
+Hidden units
+
+256
+
+Num layers
+
+2
+
+Memory size
+
+128
+
+Sequence length
+
+64
+
+V. 관측값 구성
+
+각 에이전트는 NED(North-East-Down) 좌표계를 기준으로 자기 중심(ego-centric) 극좌표계(거리, 방위각) 기반으로 환경을 관측한다. 절대 좌표를 사용할 경우 동일한 상대적 상황이더라도 위치에 따라 관측값이 달라져 학습의 일반화 성능이 저하되므로, 모든 관측값은 자기 선박의 위치와 헤딩을 기준으로 한 상대 극좌표로 변환된다. 이를 통해 거리와 방향이 직관적으로 분리되며 회전 불변성이 확보된다. 관측 대상은 적군 선박, 파트너 선박, 모선의 세 가지로 구성되며, 해당 관측 구조는 Fig. 7.과 같다.
+
+Fig. 7. 에이전트 중심 극좌표 관측 구조
+
+Fig. 7. Agent-Centric Polar Coordinate Observation
+
+ Framework
+
+각 관측값의 상세 구성은 Table 2와 같다.
+
+표.      2.  에이전트 관측 공간 구성
+
+Table. 2.  Agent observation space configuration
+
+
+
+Target
+
+Observation
+
+Raw Range
+
+Partner ship
+
+Partner Distance
+
+1–50 m
+
+Relative bearing
+
+-180°–180°
+
+Relative heading
+
+-180°–180°
+
+Enemy ship
+
+Enemy Distance
+
+0– 5000 m
+
+Relative bearing
+
+-180°–180°
+
+Relative heading
+
+-180°–180°
+
+Table 2에서 확인할 수 있듯이, 원시 관측값은 파트너 선박과의 거리가 최대 50m인 반면 적군 선박과의 거리는 최대 5,000m에 달하는 등 범위의 차이가 크며, 각도 관측값은 ±180° 경계에서 불연속이 발생한다. 여기서 상대 방위각(Relative Bearing)은 에이전트의 전방을 기준으로 대상이 좌우 어느 방향에 위치하는지를 나타내며, 상대 헤딩(Relative Heading)은 에이전트와 대상 선박의 진행 방향 차이를 의미한다. 특히 거리 범위의 불균형은 신경망이 절댓값이 큰 적군 거리에 편향되어, 실제로는 동등하게 중요한 파트너 선박과의 근접 기동 정보가 상대적으로 경시되는 문제를 야기할 수 있다. 이를 해결하기 위해 모든 관측값에 유계 정규화 함수를 적용하여 [-1, +1] 범위로 변환하였다. 거리값에는 식 (20)을 적용하여 근거리에서의 변화율이 크게 나타나도록 비선형 압축을 수행함으로써, 포획 기동에서 중요한 근접 거리 정보의 민감도를 높였다.
+
+                  (20) 
+
+해당 식에서 는 관측하고자 하는 대상과 자신과의 거리이고, 는 파라미터로 조정하는 상수로써, 이때 를 포획 선박과 협력 선박을 관측할 때를 다르게 설정한다. 이를 통해 포획 선박을 관측할 시에는 먼 거리도 민감하게 볼 수 있게, 협력 선박을 관측할 시에는 가까운 거리를 더 민감하게 보도록 설정한다. Fig. 8.에서 를 다르게 설정함으로써 관측 민감도가 적군과 아군을 관측할 때 각각 다르게 적용되는 것을 확인할 수 있다.
+
+
+
+Fig. 8. 관측 대상별 거리 감도 조정
+
+Fig. 8. Distance Sensitivity Tuning by Observation Target
+
+ 각도 관측값에는 삼각함수 기반 정규화를 적용하였다. 원시 각도값은 ±180° 경계에서 -180°와 +180°가 불연속적으로 전환되어, 물리적으로 유사한 방향임에도 관측값이 급격히 변화하는 문제가 존재한다. 이를 해결하기 위해 식 (18)와 같이 사인 함수를 적용하여 각도 차이를 [-1, +1] 범위의 연속적인 값으로 변환하였고, 해당 식은 식 (21)과 같다.
+
+                               (21) 
+
+해당 식에서 은 관측 대상이 될 각도이고 가 0에 가까울수록 미세한 각도 변화에 대한 관측 해상도가 높아진다. 이는 포획 기동 시 적군 선박과의 정밀한 각도 정렬이 요구되는 상황에서 유리하게 작용한다. 특히 적군과의 상대 각도가 거의 정렬된 상태에서의 미세한 편차를 민감하게 감지할 수 있어, 에이전트가 최종 차단 위치로의 정밀 기동을 수행하는 데 기여하고 이러한 특성은 Fig. 9에서 확인할 수 있다.
+
+
+
+Fig. 9. 각도 관측값의 삼각함수 정규화 전·후 비교
+
+Fig. 9. Comparison of angular observation before and after trigonometric normalization
+
+최종적으로 USV가 관측하는 상태 공간 아군 에이전트의 관측정보를 담은 와 적군을 관측 정보를 담은 을 합친 이다. 해당 관측정보의 구성요소는 식 (22)과 Table 3와 같다.
+
+
+
+
+
+  (22)
+
+표.      2.  에이전트 관측 공간 구성
+
+Table. 2.  Agent observation space configuration
+
+
+
+Variable
+
+Definition
+
+Unit / Range
+
+
+
+아군과의 상대 거리
+
+1~50 (m)
+
+
+
+아군에 대한 상대 방위각
+
+
+
+
+
+아군의 상대 선수각
+
+
+
+
+
+적군과의 상대 거리
+
+1~5000 (m)
+
+
+
+적군에 대한 상대 방위각
+
+
+
+
+
+적군의 상대 선수각
+
+
+
+VI. 보상값 구성
+
+보상 함수의 설계는 에이전트의 학습 방향을 결정짓는 핵심 요소이다. 보상체계는 기하학적 관계에 기반한 연속 보상과 임무 결과에 기반한 순간 보상을 계층적으로 결합하였다. 우선 연속 보상의 구성 요소는 아래 네 가지 요소와 같고, 각 보상체계에서는 보상체계의 비중을 조정하기 위한 파라미터 가 각 보상들에 맞게 적용된다.
+
+1. 대형 유지 보상
+
+대형 유지 보상은 식 (23)와 같다.
+
+            (23)
+
+파트너 선박과의 거리 가 기준 거리 에 근접할수록 높은 값을 가지며, 허용 오차 은 그물의 길이를 고려하여 50m로 설정한다. 내에서 선형적으로 감소하는 구조로 설계되었고, 을 벗어나는 순간 패널티와 함께 해당 아군 선박들은 비활성화된다. 
+
+2. 적 접근 보상
+
+적 접근 보상은 식 (24)와 같다.
+
+        (24) 
+
+이전 스텝의 적군 거리 에서 현재 스텝의 거리 를 뺀 값, 즉 거리 감소량이 양수인 경우에만 보상을 부여한다. 이를 통해 에이전트가 적군을 향해 실질적으로 근접하는 행동을 지속적으로 유도한다.
+
+3. 선수 정렬 보상
+
+헤딩 정렬 보상은 식 (25)과 같다.
+
+                (25) 
+
+에이전트의 진행 방향과 적군 방향 간의 각도 에 대한 코사인값이 양수인 경우에만 보상을 부여한다. 두 방향이 일치할수록 코사인값은 1에 수렴하고 직교할 때 0이 되는 특성에 의해, 에이전트가 적군을 정면으로 바라보려는 행동이 강화된다.
+
+4. 시간 벌점
+
+매 스텝 벌점을 부과하여, 신속한 포획을 유도한다. 시간 벌점 은 매 스텝 –0.0001만큼 주어진다.   
+
+특정한 사건이 발생할 때만 부여되는 순간 보상에 대해서는 아래의 Table 3과 같다. 포획 성공 시의 보상과 모선 피격 시에는 각각 벌점의 부과와 함께 에피소드는 조기 중단되게 된다. 에이전트간 충돌이 일어날 경우에는 벌점과 함께 해당 에이전트들은 비활성화되게 된다. 는 모든 순간 보상을 더한 총 순간 보상을 의미한다.
+
+표.      3.  이벤트  보상  구성 ()
+
+Table. 3.  Event Reward Configuration ()
+
+
+
+Event
+
+Reward
+
+Capture success
+
++1.0
+
+Enemy breach
+
+-1.0
+
+Inter-agent Collision
+
+-1.0
+
+이러한 계층적 보상 구조는 보상 성형 이론에 기반하여, 최종 목표인 선박 포획이라는 희소한 순간 보상에 도달하기까지의 탐색 공간을 연속 보상을 통해 점진적으로 축소한다 [18, 19]. 대형 유지·적 접근·선수 정렬의 연속 보상이 매 스텝 학습 경사를 제공하고 총 보상은 식 (27)과 같다.
+
+  (27)
+
+에이전트는 이벤트 보상이 부재한 초기 학습 단계에서도 연속 보상을 통해 포획에 유리한 전술적 상태로 수렴할 수 있다.
+
+VII. 학습 결과
+
+1. 학습 과정
+
+본 연구에서는 학습 효율을 극대화하기 위해 Fig. 10.과 같이 GPU의 병렬 연산 능력을 활용하여 다수의 환경 인스턴스를 동시에 구동하는 병렬 학습 방식을 적용하였다. 각 환경이 독립적으로 에피소드를 진행하면서 경험 데이터를 공유 정책 네트워크에 공급함으로써 단일 환경 대비 경험 수집 속도를 환경 수에 비례하여 증가시킨다.
+
+
+
+Fig.  10.  다중 환경 인스턴스를 활용한 병렬 학습 구조
+
+Fig. 10. Parallel Training Architecture with Multiple    Environment Instances
+
+학습에 사용된 MA-POCA 알고리즘의 주요 하이퍼파라미터는 Table 4의 값으로 사용한다. 
+
+표.      4.  MA-POCA 학습 하이퍼파라미터
+
+Table. 4.  MA-POCA training hyperparameters
+
+
+
+Parameter
+
+Value
+
+Batch size
+
+1024
+
+Buffer size
+
+20480
+
+Learning rate
+
+0.0003
+
+Beta (entropy)
+
+0.005
+
+Epsilon (clip)
+
+0.2
+
+Lambda (GAE [20])
+
+0.95
+
+Num epoch
+
+3
+
+LR schedule
+
+Linear
+
+Gamma
+
+0.995
+
+Strength
+
+1
+
+학습률은 선형 감소 스케줄을 적용하여 학습 초기에는 빠른 탐색을, 후기에는 안정적인 수렴을 유도하였다. 정책 네트워크는 256개 은닉 유닛의 2층 완전연결 구조로 구성하였으며, 관측값 정규화를 활성화하여 서로 다른 스케일의 입력 특성을 균일하게 처리하도록 하였다. 학습 결과는 Fig. 11~14와 같다.
+
+
+
+Fig. 11. 보상 수렴 그래프
+
+Fig. 11. Reward Convergence graph
+
+
+
+Fig. 12. 엔트로피 그래프
+
+Fig. 12. Entropy graph
+
+Fig. 11은 학습이 진행됨에 따라 누적 보상이 점진적으로 증가하여 약 1.1M 스텝 이후 수렴하는 양상을 보인다. 이는 방어 에이전트들이 협력적 행동을 효과적으로 학습하였음을 나타낸다. Fig. 12의 엔트로피는 학습 초기 높은 탐색 수준에서 시작하여 점차 감소하는 경향을 보이며, 이는 정책이 무작위 탐색에서 벗어나 결정론적인 행동 패턴으로 수렴하고 있음을 의미한다.
+
+
+
+Fig. 13. 정책 손실 수렴 그래프
+
+Fig. 13. Policy Loss Convergence graph
+
+
+
+Fig. 14. 가치 손실 수렴 그래프
+
+Fig. 14. Value Loss Convergence graph
+
+Fig. 13의 정책 손실은 학습 초기 비교적 큰 변동을 보이다가 학습이 진행될수록 안정적으로 감소하며, 이는 정책 네트워크가 최적 행동 분포로 수렴하고 있음을 나타낸다. Fig. 14의 가치 손실 또한 감소하며 수정한다. 이는 가치 네트워크가 누적 보상을 점점 정확하게 추정하게 됨을 보여준다. 두 손실의 동반 감소는 MA-POCA 알고리즘이 안정적으로 수렴하였음을 뒷받침한다.
+
+2. 학습 결과
+
+학습된 모델의 성능을 정량적으로 평가하기 위해, 강화학습 기반 정책과 LOS(Line-of-Sight) Guidance 기반 정책을 동일한 시뮬레이션 환경에서 비교 실험하였다 [21]. 실험 상황은 비교의 용이성의 위하여 한 대의 공격선이 존재한다고 가정한다. 일반적인 LOS Guidance는 사전에 정의된 복수의 경유점을 순차적으로 추종하는 규칙 기반 조향 알고리즘이나, 본 시나리오에서는 포획 대상이 모선을 향해 지속적으로 이동하는 동적 환경 특성상 고정된 경유점 기반 접근이 적합하지 않다. 이에 본 연구에서는 방어 대상인 모선과 포획 대상 간의 실시간 상대 좌표를 직접 활용하여 가상 경로를 동적으로 생성하는 수정된 LOS Guidance를 비교군으로 적용하였다. 이를 통해 목표 위치가 매 스텝 변화하는 환경에서도 포획 대상에 대한 효율적인 접근 경로를 실시간으로 산출할 수 있도록 구현하였다. 선박 포획을 위해 수정된 LOS Guidance는 Fig. 15.과 같다.
+
+
+
+Fig. 15. 포획을 위한 적응형 LOS Guidance
+
+Fig. 15. Modified LOS Guidance for Target Capture
+
+이때 비교군이 되는 LOS Guidance는 아래와 같은 방식으로 진행된다. 
+
+                                    (28) 
+
+식 (28)은 모선 위치 에서 적군 위치 를 향하는 단위 방향벡터 를 정의한다. 두 위치의 차를 정규화함으로써 순수한 방향 정보만을 추출한다.
+
+                                (29)
+
+식 (29)는 진행 방향벡터 와 수직 단위벡터 의 외적을 통해 수평면 상의 법선벡터 을 산출하여 아군 선박 쌍의 좌우 전개 방향을 결정하는 기준축으로 활용된다.
+
+              
+
+                                   (30) 
+
+ 식 (30)은 각 에이전트의 목표 위치 을 산출한다. 적군 위치 로부터 진행 방향 으로 선행 거리 만큼 앞선 지점을 기준으로, 법선 방향 으로 전개 거리 만큼 횡방향 오프셋을 적용한다. 은 두 에이전트가 적군 양측으로 각각 분리 전개되도록 좌우 방향을 구분하는 부호 계수이다.
+
+    (31) 
+
+식 (31)는 PD 제어 기반의 Steering 명령 를 정의한다. 현재 방위각 오차 에 비례 계수 를 적용한 항과 이전 스텝의 방위각 오차 대비 변화량에 미분 계수 를 적용한 항을 합산하여 조향 명령을 산출하며, 해당 Steering 명령의 범위는 [-, ]이다. 은 3, 은 0.5로 적용한다.
+
+    (32)
+
+식 (32)는 적군과의 거리 에 따른 Throttle 를 정의한다. 거리 이 접근 임계 거리 이내인 경우, 최소 추력 과 최대 Throttle 안에서 값이 생성되고, 단위는 N이다. 목표 지점에 근접할수록 선형적으로 감속하도록 설계한다.
+
+두 정책 모두 동일한 조건하에 각각 40회의 에피소드를 수행하였으며, 각 정책에 따른 방어 궤적과 포획 여부는 아래의 Fig. 16와 Fig. 17과 같다. 해당 그림에서 중앙의 검은 선박은 방어 대상인 모선이고 빨간 삼각형은 적군, 빨간 선은 적군의 궤적, 파란선은 아군 선박의 궤적이다. 또한 포획에 성공하였을 경우 빨간 십자가를 통해 표시하였으며 40회의 시도를 한 번에 시각화하였다.
+
+
+
+Fig. 16. Modified LOS 가이던스 기반 방어 궤적 및 포획 결과
+
+Fig. 16. Defense Trajectories and Capture Results Based on  Modified LOS Guidance
+
+
+
+Fig. 17. 강화학습 모델 기반 방어 궤적 및 포획 결과
+
+Fig. 17. Defense Trajectories and Capture Results Based on  RL Model Inference
+
+각각의 성능에 대한 평가를 위하여 몇 가지 기준으로의 비교를 한다. 성능 대한 평가지표는 Table 5에서의 지표로 진행하고, 해당 지표들로의 성능은 Table 6, Fig 19과 같다.
+
+표.      5.  성능  평가 지표
+
+Table. 5.  Performance Evaluation Metrics
+
+
+
+Evaluation Metric
+
+Evaluation Element
+
+Capture rate
+
+적군 선박이 포획된 비율
+
+Penetrate Rate
+
+적군 선박이 방어선을 돌파하여 공격에 성공한 비율
+
+Formation Collapse Rate
+
+아군 선박끼리의 충돌이나 아군 선박 간의 거리가 그물의 길이를 초과한 비율
+
+표.      6.  제어 방식별 방어 성능 비교
+
+Table. 6.  Defense Performance Comparison by Control Method
+
+
+
+Evaluation Metric
+
+Modified 
+
+LOS Guidance 
+
+RL Mode
+
+(proposed)
+
+Capture rate
+
+6/40 (15.0%)
+
+26/40 (65.0%)
+
+Penetrate Rate
+
+25/40 (62.5%)
+
+11/40 (27.5%)
+
+Formation Collapse Rate
+
+9/40 (22.5%)
+
+3/40 (7.5%)
+
+Fig. 18. 강화학습 모델 기반 방어 궤적 및 포획 결과
+
+Fig. 18. Defense Trajectories and Capture Results Based on RL Model Inference
+
+Table 6의 결과와 Fig. 18에서 확인할 수 있듯이, 강화학습 기반 정책은 수정된 LOS 유도 방식 대비 모든 평가 지표에서 유의미한 성능 향상을 보였다. 포획률의 경우, LOS 유도 방식이 15.0%에 그친 반면, 강화학습 정책은 65.0%를 달성하여 약 4.3배의 성능 개선을 나타냈다. 공격 허용률 또한 LOS 유도 방식의 62.5%에서 27.5%로 대폭 감소하여, 적군 선박의 방어선 돌파를 효과적으로 억제함을 확인하였다. 특히 대형 붕괴율은 22.5%에서 7.5%로 약 3배 감소하였는데, 이는 강화학습 정책이 단순히 포획 성공률을 높이는 것에 그치지 않고, 아군 선박 간의 협조적 기동을 통해 대형을 안정적으로 유지하면서도 효과적인 방어 임무를 수행할 수 있음을 의미한다. 이러한 결과는 수정된 LOS 유도 방식과 같은 사전 정의된 경로 추종 기반 제어가 동적으로 변화하는 적군의 기동에 능동적으로 대응하기 어려운 반면, 강화학습 기반 정책은 실시간으로 상황에 맞는 최적의 행동을 선택함으로써 복합적인 방어 목표를 동시에 달성할 수 있음을 확인하였다.
+
+VIII. 결론
+
+본 연구는 해양 환경에서 두 척의 아군 선박이 그물을 공유하여 불법선박을 협력적으로 포획하는 문제에 대해, MA-POCA기반의 다중 에이전트 강화학습 접근법을 제안하였다. 외란이 작용하는 해양 시뮬레이션 환경을 구축하고, 극좌표 관측 체계와 정규화 함수를 도입하여 에이전트의 관측 공간을 설계하였다. 보상체계는 대형 유지·적 접근·선수 정렬의 연속 보상과 포획 성공·방어 실패의 순간 보상을 계층적으로 결합함으로써, 희소한 최종 목표까지의 탐색 공간을 점진적으로 축소하는 밀집 보상 형태를 구현하였다.
+
+학습 결과 MA-POCA의 사후 크레딧 할당 메커니즘이 각 에이전트의 개별 기여와 협력적 기여를 효과적으로 분리하여 학습할 수 있음을 실증적으로 확인하였다. 또한, 학습된 강화학습 정책을 수정된 LOS Guidance 기반 유도 방식과 동일한 시뮬레이션 환경에서 비교 평가한 결과, 포획 성공률과 대형 붕괴율을 대폭 개선하면서 실시간 상황 인식에 기반한 대형 유지와 포획이라는 복합 목표를 동시에 달성할 수 있음을 입증하였다. 특히, 외란이 존재하는 환경에서도 협력적 정책이 강건성을 유지하며 강화학습 기반 제어 방식이 환경 변화에 대해서도 강건함이 증명되었다. 향후 연구에서는 다수의 적군 선박과 복수의 아군 쌍이 동시에 작전하는 가변적 상황으로 확장하여, 동적으로 변화하는 다중 위협에 대응하는 분산 군집 제어 문제로 확장을 할 것이다. 나아가 침입 선박에도 독립적인 회피 정책을 학습시킴으로써, 아군과 적군의 정책이 상호 경쟁적으로 진화하는 학습 환경을 구현하고자 한다. 이를 통해 사전에 정의된 적군 행동에 의존하지 않는, 다양한 공격 전략에도 대응 가능한 포획 전략의 학습이 가능할 것으로 기대되며, 궁극적으로는 실해역 운용 조건에서의 포획 시스템 구현까지 가능할 것으로 기대된다.
+
+REFERENCES 
+
+[1] A. Boretti, "Unmanned surface vehicles for naval warfare and maritime security," Journal of Defense Modeling and Simulation, 2024.
+
+    doi: https://doi.org/10.1177/15485129241283056
+
+[2] National Research Council, Integration of Hard-Kill and Soft-Kill Systems for More Effective Fleet Air Defense. Washington, DC, USA: The National Academies Press, 1992.
+
+    Available: https://nap.nationalacademies.org/catalog/20963
+
+[3] S. Tashakori, M. Ranjbar, S. Balochian, J. Sharif-Razavian, and M. Peymankar, "Dynamic soft-kill weapon-target assignment in naval environments," Computers & Industrial Engineering, vol. 197, p. 110606, Nov. 2024.
+
+    doi: https://doi.org/10.1016/j.cie.2024.110606
+
+[4] H. Bang, D. Choi, J. Lee, E.-T. Kim, and W. Youn, "Development and Experimental Validation of an Autonomous USV Berthing System with Transition Logic for Multiple Berthing Maneuver Strategies," Ocean Engineering, 2025.
+
+    doi: https://doi.org/10.1016/j.oceaneng.2025.121333
+
+[5] R. S. Sutton and A. G. Barto, Reinforcement Learning: An Introduction, 2nd ed. Cambridge, MA, USA: MIT Press, 2018.
+
+    Available: http://incompleteideas.net/book/the-book-2nd.html
+
+[6] J. Woo and N. Kim, "Collision avoidance for an unmanned surface vehicle using deep reinforcement learning," Ocean Engineering, vol. 199, p. 107001, Mar. 2020.
+
+    doi: https://doi.org/10.1016/j.oceaneng.2020.107001
+
+[7] C. Yu, A. Velu, E. Vinitsky, J. Gao, Y. Wang, A. Bayen, and Y. Wu, "The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games," in Proc. Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track, New Orleans, LA, USA, 2022.
+
+    Available: https://arxiv.org/abs/2103.01955
+
+[8] Y. Zhao, Y. Ma, and S. Hu, "USV formation and path-following control via deep reinforcement learning with random braking," IEEE Transactions on Neural Networks and Learning Systems, vol. 32, no. 12, pp. 5468–5478, Dec. 2021.
+
+    doi: https://doi.org/10.1109/TNNLS.2021.3068762
+
+[9] F. A. Oliehoek and C. Amato, A Concise Introduction to Decentralized POMDPs. Cham, Switzerland: Springer, 2016.
+
+    doi: https://doi.org/10.1007/978-3-319-28929-8
+
+[10] A. Lindell, "Boat Attack," GitHub repository, Unity Technologies, 2020.
+
+     Available: https://github.com/Unity-Technologies/BoatAttack
+
+[11] J. Tessendorf, "Simulating Ocean Water," in SIGGRAPH 2001 Course Notes: Simulating Nature: Realistic and Interactive Techniques, ACM, 2001, pp. 1–26.
+
+     Available: https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2002.pdf
+
+[12] J. Tobin, R. Fong, A. Ray, J. Schneider, W. Zaremba, and P. Abbeel, "Domain Randomization for Transferring Deep Neural Networks from Simulation to the Real World," in Proc. IEEE/RSJ Int. Conf. Intelligent Robots and Systems (IROS), Vancouver, Canada, pp. 23–30, 2017.
+
+     doi: https://doi.org/10.1109/IROS.2017.8202133
+
+[13] A. Cohen, E. Teng, V.-P. Berges, R.-P. Dong, H. Henry, M. Mattar, A. Zook, and S. Ganguly, "On the Use and Misuse of Absorbing States in Multi-Agent Reinforcement Learning," arXiv:2111.05992, 2021.
+
+     Available: https://arxiv.org/abs/2111.05992
+
+[14] R. Lowe, Y. Wu, A. Tamar, J. Harb, P. Abbeel, and I. Mordatch, "Multi-Agent Actor-Critic for Mixed Cooperative-Competitive Environments," in Proc. Advances in Neural Information Processing Systems (NeurIPS), Long Beach, CA, USA, pp. 6382–6393, 2017.
+
+     Available: https://arxiv.org/abs/1706.02275
+
+[15] T. Rashid, M. Samvelyan, C. S. de Witt, G. Farquhar, J. Foerster, and S. Whiteson, "QMIX: Monotonic Value Function Factorisation for Deep Multi-Agent Reinforcement Learning," in Proc. 35th Int. Conf. Machine Learning (ICML), Stockholm, Sweden, pp. 4295–4304, 2018.
+
+     Available: https://arxiv.org/abs/1803.11485
+
+[16] S. Hochreiter and J. Schmidhuber, "Long Short-Term Memory," Neural Computation, vol. 9, no. 8, pp. 1735–1780, Nov. 1997.
+
+     doi: https://doi.org/10.1162/neco.1997.9.8.1735
+
+[17] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin, "Attention Is All You Need," in Proc. Advances in Neural Information Processing Systems (NeurIPS), Long Beach, CA, USA, pp. 5998–6008, 2017.
+
+     Available: https://arxiv.org/abs/1706.03762
+
+[18] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, "Proximal Policy Optimization Algorithms," arXiv:1707.06347, 2017.
+
+     Available: https://arxiv.org/abs/1707.06347
+
+[19] A. Y. Ng, D. Harada, and S. Russell, "Policy Invariance Under Reward Transformations: Theory and Application to Reward Shaping," in Proc. 16th Int. Conf. Machine Learning (ICML), Bled, Slovenia, pp. 278–287, 1999.
+
+Available: https://dl.acm.org/doi/10.5555/645528.657613
+
+[20] J. Schulman, P. Moritz, S. Levine, M. I. Jordan, and P. Abbeel, "High-Dimensional Continuous Control Using Generalized Advantage Estimation," in Proc. Int. Conf. Learning Representations (ICLR), San Juan, Puerto Rico, 2016.
+
+     Available: https://arxiv.org/abs/1506.02438
+
+[21] T. I. Fossen, M. Breivik, and R. Skjetne, "Line-of-sight path following of underactuated marine craft," IFAC Proceedings Volumes, vol. 36, no. 21, pp. 211–216, 2003.
+
+     doi: https://doi.org/10.1016/S1474-6670(17)37809-6
+
+윤 영 준
+
+2025년 충남대 자율운항시스템공학과 학사 졸업. 2026년 3월 ~ 현재 충남대학교 자율운항시스템공학과 대학원 석사 과정. 관심분야는 강화학습 기반 경로 생성 및 무인 수상정 군집 제어
+
+방 현 태
+
+2019년 한밭대학교 건설환경공학과 학
+
+사 졸업. 2021년 한밭대학교 토목공학과 석사 졸업. 2022년 ~ 현재 충남대학교 자율운항시스템공학과 대학원 박사과정. 관심분야는 무인 이동체 제어  시스템 및 검증 시뮬레이션.
+
+
+
+하 지 웅
+
+2024년 한남대학교 전자공학과 학사 졸업. 2025년 ~ 현재 충남대학교 자율운항시스템공학과 대학원 석사과정 관심분야는 무인 이동체 제어 시스템 및     HILS 시스템 구축
+
+전 유 라
+
+2021년 아리조나 대학교 기계공학과 석사 졸업. 2025년 9월~ 현재 한국과학기술원(KAIST) 기계공학과 대학원 박사 과정. 관심분야는 유한요소 해석 기반 구조 해석 및 최적화
+
+신 헌 용
+
+2007년부산대 전자전기통신공학과 학사 졸업. 2009년광주과학기술원 정보통신공학과 석사 졸업. 2012년∼2021년:국방기술품질원 선임연구원. 2021년∼현재국방과학연구소 선임연구원. 관심분야는 전투체계, 심층 강화학습, 무인수상정 경로계획
+
+윤 원 근
+
+2021년 KAIST 전기및전자공학부(로봇
+
+학제전공) 박사 졸업. 2021년 3월 ~ 현재 충남대학교 자율운항시스템공학과 조교수. 관심분야는 무인이동체 유도, 제어, 항법 및 응용, HILS 시스템 개발 및 검증.

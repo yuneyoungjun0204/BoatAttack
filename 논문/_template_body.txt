@@ -1,0 +1,263 @@
+I. 서론
+
+제어 ․ 로봇 ․ 시스템학회 논문지
+
+스타일 목록 - (국)큰제목
+
+발간을 위한 두 단 형식의 논문 작성 요령
+
+
+
+스타일 목록 - (영)큰제목
+
+Preparation of Papers in Two-column Format
+
+for Journal of Institute of Control, Robotics and Systems
+
+
+
+스타일 목록 - (국)저자이름
+
+김 갑 동 , 홍 병 동
+
+스타일 목록 - (영)저자저자이름
+
+*Corresponding Author
+
+Manuscript received 20xx.xx.xx; revised 20xx.xx.xx; accepted 20xx.xx.xx
+
+모든 저자 직위, orcid 필수
+
+김갑동: 서울대학교 제어계측공학과 대학원생(icros@icros.org, 0000-0000-0000-0000) 
+
+홍병동: 서울대학교 제어계측공학과 교수(kjournal@icros.org, 0000-0000-0000-0000)
+
+※ 본 논문은 ***에서 지원하여 연구하였음.
+
+Copyright© ICROS 2026
+
+(Kap-Dong Kim1 and Byung Dong Hong1,*)
+
+스타일 목록 - 소속 
+
+(영문소속(학과명 필수)기입요망)
+
+1Department of Electronics Engineering Chungbuk National University
+
+
+
+
+
+Journal of Institute of Control, Robotics and Systems (20XX) XX(XX):XXX-XXX
+
+DOI:10.5302/J.ICROS.20XX.XX.X.XXX  ISSN:1976-5622
+
+
+
+
+
+이현미
+
+Abstract: These instructions give you basic guidelines for preparing camera-ready papers for the J. of ICROS You must use hwp word processor.
+
+스타일 목록 - 전단본문
+
+
+
+스타일 목록 – 키워드 소문자
+
+(고유명사, 약자 제외)
+
+Keywords: title, abstract, keywords, introduction, heading 
+
+
+
+
+
+Journal of Institute of Control, Robotics and Systems (202X) 3X(1):000-000
+
+https://doi.org/10.5302/J.ICROS.202X.2X.0XXX  ISSN:1976-5622  eISSN:2233-4335
+
+
+
+
+
+김 갑 동, 홍 병 동
+
+저자가 제출한 논문은 수정없이 원본 자체가 사진으로 찍혀 출판되도록 저자는 논문 작성 시 투고 요령을 참고하고 다음의 지침 사항을 반드시 지켜야 한다. 워드프로세서 글(HWP)을 사용하여 작성한다.
+
+스타일 목록 - 본론
+
+II. 논문 용지와 여백
+
+논문 용지로서는 A4 크기(21.0cm×28.0cm)의 백색 용지를 사용한다. 논문 작성 시 각종 여백의 크기는 다음과 같다.
+
+위쪽 여백:13mm
+
+아래쪽 여백:13mm
+
+왼쪽 여백:20mm
+
+오른쪽 여백:20mm
+
+머리말:10mm
+
+이 안내문은 위에서 제시한 사항을 기준으로 작성한 것으로서 두 단 사이의 여백은 10mm로 하고 들여쓰기는 4mm 정도(HWP에서는 2글자)로 한다. 모든 문장은 휴먼명조(국문), Times New Roman(영문) 9포인트 크기로 작성하는 것을 원칙으로 한다. 다만 논문 제목, 저자 이름, 참고문헌, 표제 작성 시에는 예외로 한다. 줄 간격은 (HWP에서 국문, 영문 : 150%)로 한다.
+
+III. 단위
+
+SI 단위를 기본 단위로 사용하고 필요하다면 CGS 단위나 다른 단위를 사용할 수도 있다. 하지만 SI 단위와 다른 단위를 혼용해서는 안 된다. 예를 들어 전류는 암페어 단위로 자기장은 oersted 단위로 하는 것은 허용되지 않는다.
+
+표제는 돋움체 9포인트 크기로 진하게 하여 중앙에 배치하고 위로 한 줄의 여백을 둔다.
+
+1. 작은 표제
+
+작은 표제는 들여쓰기 없이 중고딕으로 작성하고 9포인트 크기로 한다.
+
+
+
+스타일 목록 - I.II 본문제목
+
+V. 논문 형식
+
+
+
+스타일 목록 - 1. 제목자
+
+1. 첫째 면
+
+논문 제목의 국문은 돋움체로 진하게 16포인트, 영문은 Times New Roman으로 15.5포인트 크기로 작성하며 저자 이름은 국문을 돋움체 10포인트 영문을 Times New Roman 9포인트로 작성한다. 그리고 요약문과 주요어는 Times New Roman 9포인트 크기로 작성한다. 요약문의 단어 수는 100-200개 이내로 하고 주요어 개수는 8개 이내로 한다. 또한 국문제목, 영문제목, 저자는 한 줄 정도의 여백을 설정하고 주요어와 본문 사이에는 한 줄의 여백을 둔다.(이때 줄간격은 130%로 지정)
+
+스타일 목록 - 1.1 소제목자
+
+1.1 소제목자
+
+2. 그림과 표
+
+
+
+그림1.그림 설명문은 그림 밑에 위치시킨다.
+
+스타일 목록 - 그림캡션
+
+Fig.1.The caption comes after the figure.
+
+표1.표 설명문은 표 위에 위치시킨다.
+
+스타일 목록 - 표캡션
+
+Table1.The caption comes before the table.
+
+
+
+A
+
+B
+
+C
+
+(1)
+
+15.0 %
+
+16.3 %
+
+18.2 %
+
+(2)
+
+31.1 %
+
+33.8 %
+
+29.8 %
+
+(3)
+
+13.3 %
+
+12.1 %
+
+11.1 %
+
+
+
+
+
+제어 ․ 로봇 ․ 시스템학회 논문지 발간을 위한 두 단 형식의 논문 작성 요령
+
+
+
+그림의 선은 백색 바탕에 흑색으로 한다. 논문집이 흑백으로 출판되기 때문에 색이 있는 선이나 사진은 해상도가 떨어질 수 있음에 유의해야 한다. 그림이나 표는 처음 언급되는 문장에 되도록 가까운 곳 문단의 상단이나 하단에 위치시킨다. 그림 번호와 설명문은 국문과 영문으로 각각 작성하여 그림 밑에 배치하고 한다. 표 번호와 설명문은 국문과 영문으로 작성하여 표 위에 배치한다. 사진, 그림이나 표가 파일로 작성하지 못할 경우는 이들의 원본을 원고와 같이 보낸다.
+
+3. 수식
+
+수식 번호는 논문 전체에 걸쳐 순차적으로 부여한다. 그리고 괄호 안에 수식 번호를 넣어 우측 끝에 위치시킨다. 강조하고 싶은 단어(정리, 증명, 예제 등)는 돋움체 9포인트를 사용한다.
+
+정리 1: 다음과 같이 주어진 시스템을 생각하자.
+
+ (1)
+
+스타일 목록 - 수식
+
+만약 행렬 A가 안정하면 행렬 {A,B}는 안정화 가능하다.
+
+증명: 증명이 간단하므로 생략한다.    ■
+
+4. 참고문헌
+
+논문에 직접적으로 인용한 문헌만을 참고문헌 목록에 포함시켜야하고 신명조체의 크기 9를 사용하며 글자의 간격은 150%로 한다.
+
+☞ 주요스타일은 지정되어 있으므로 논문을 정석에 맞게 적용해주세요. 
+
+☞ 스타일 적용 후에도 다소 자간이나 줄 간격에 차이가 있을 수 있습니다.
+
+참고문헌에는 저자 이름의 알파벳 첫 자와 성, 공동 저자의 이름의 알파벳 첫 자와 성, 논문제목, 저널 명, 권 수, 호수, 페이지, 월 년 순서로 반드시 기입한다.
+
+그리고 논문의 저널 명은 이탤릭자로 한다. 단행본인 경우에는 논문 제목, 저널 명, 권 수, 페이지 수 대신에 책 제목, 출판사, 출판장소를 기입하고 책 제목은 이탤릭자로 한다.
+
+VI. 결론
+
+저자가 제출한 논문은 수정없이 출판될 수 있도록 저자는 반드시 오자 탈자를 철저히 확인한다.
+
+
+
+REFERENCES 전문 
+
+필수 영문 기재
+
+REFERENCES 
+
+[1]Y.-J. Choi and J.-Y. Ryu, "Design of low-power variable gain amplifier," Journal of Institute of Control, Robotics and Systems (in Korean), vol. 28, no. 1, pp. 1-5, Jan. 2022.
+
+참고문헌 doi 주소 기재
+
+     doi: https://doi.org/10.5302/J.ICROS.2022.21.0138
+
+[2]S. Zhao, J. Wang, H. Xu, and H. Wang, “Finite horizon robust pptimal tracking control based on approximate dynamic programming for switched systems with uncertainties,” International Journal of Control, Automation and Systems, vol. 20, no. 4, pp.1051-1062, 2022.
+
+     doi: http://dx.doi.org/10.1007/s12555-020-0982-8
+
+[3]G. S. Choi and C. S. Kim, “Linear stable systems,” IEEE Transactions on Automatic Control, vol. 38, no. 3, pp. 1234-1245, Dec. 1993.
+
+     doi: http://dx.doi.org/10.1109/9.210138
+
+[4]M. Young, The Technical Writer's Handbook, 3rd Ed., Mill Valley, Seoul, 1989.
+
+[5]Z. Shiler and S. Dubowski, “Time optimal paths and acceleration lines of robotic manipulators,” Proc. of the 26th Conference Decision and Control, pp. 98-99, 1987.
+
+     https://ieeexplore.ieee.org/abstract/document/4049251
+
+[6]C. Han, C. Oh, and B. Choi, “The study on recognition of fighting motion by using HMM,” Proc. of ICROS Annual Conference 2010, Chuncheon, Korea, pp. 78-79, May 2010. 
+
+     https://www.dbpia.co.kr/journal/articleDetail?nodeId=NODE02040372
+
+김 갑 동
+
+너비 : 25mm
+
+높이 : 30mm
+
+여백/오른쪽 3mm
+
+19XX년 XX대 XXX과 졸업. 19XX년 동 대학원 석사. 19XX년 동 대학 박사. 19XX년~현재 서울대학교 제어계측 공학과 교수. 관심분야는 프랜트제어 및 응용, 모델링.
