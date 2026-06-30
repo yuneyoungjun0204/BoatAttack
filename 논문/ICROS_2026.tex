@@ -59,6 +59,17 @@
 
 \providecommand{\doi}[1]{doi:~\url{#1}}
 
+% --- 저자 약력: 사진 25x30mm + 이름 + 약력 + ORCID ---
+\newcommand{\biophoto}[1]{%
+  \IfFileExists{figures/#1}{\includegraphics[width=25mm,height=30mm]{#1}}%
+  {\fbox{\parbox[c][30mm][c]{23mm}{\centering\scriptsize 사진}}}}
+\newcommand{\authorbio}[4]{%
+  \par\smallskip\noindent
+  \begin{minipage}[t]{25mm}\vspace{0pt}\biophoto{#1}\end{minipage}\hspace{2mm}%
+  \begin{minipage}[t]{\dimexpr\linewidth-27mm\relax}\vspace{0pt}%
+    \footnotesize\textbf{#2}\par #3\par\smallskip \textit{ORCID:}~\texttt{#4}\end{minipage}%
+  \par\medskip}
+
 \begin{document}
 
 % ===================== 제목 / 저자 / 초록 (전단) =====================
@@ -81,7 +92,7 @@ $^{2}$Department of Mechanical Engineering, KAIST;\quad $^{3}$Agency for Defense
 \end{center}
 \vspace{2mm}
 
-{\fontsize{9}{13.5}\selectfont
+{\fontsize{9}{13.5}\selectfont \leftskip=7mm \rightskip=7mm
 \noindent\textbf{Abstract:} This paper proposes a cooperative capture system in which two allied
 Unmanned Surface Vehicles (USVs) jointly deploy a capture net to intercept non-cooperative vessels in
 naval environments. To overcome the limitations of traditional rule-based methods under environmental
@@ -369,7 +380,7 @@ h_t &=o_t\odot\tanh(c_t) \label{eq:lstm6}
 Parameter & Value\\ \hline
 Hidden units & 256\\ \hline
 Num layers & 2\\ \hline
-Memory size & 128\\ \hline
+Memory size & 256\\ \hline
 Sequence length & 64\\ \hline
 \end{tabular}
 \end{table}
@@ -442,8 +453,10 @@ g(\theta)=\big(\sin\theta,\;\cos\theta\big)
 \subsection{학습 과정}
 학습 효율을 위해 한 실행 내 다수의 환경 인스턴스를 동시 구동하는 병렬 방식을 적용하였다(그림~\ref{fig:parallel}).
 MA-POCA 학습 하이퍼파라미터는 표~\ref{tab:hyp}과 같다. 학습 결과(그림~\ref{fig:reward}--\ref{fig:vloss})
-누적 보상은 약 1.1M 스텝 이후 수렴하며, 엔트로피는 점차 감소해 결정론적 정책으로 수렴한다. 정책·가치 손실의
-동반 감소는 MA-POCA의 안정적 수렴을 뒷받침한다.
+팀 보상은 약 1.1M 스텝 이후 수렴하며, 엔트로피는 점차 감소해 결정론적 정책으로 수렴한다. 정책·가치 손실의
+동반 감소는 MA-POCA의 안정적 수렴을 뒷받침한다. 여기서 그림~\ref{fig:reward}의 보상은 \emph{팀(그룹) 누적 보상}
+(Group Cumulative Reward)이다. MA-POCA는 협력 성과를 그룹 단위로 부여하므로 개별 에이전트의 누적 보상은
+$\approx 0$이 되고, 팀 전체의 그룹 보상이 실질 학습 신호가 된다.
 
 \begin{figure}[t]\centering
 \figph{fig10_parallel.png}
@@ -458,21 +471,23 @@ MA-POCA 학습 하이퍼파라미터는 표~\ref{tab:hyp}과 같다. 학습 결�
 \begin{tabular}{|l|c|}
 \hline
 Parameter & Value\\ \hline
-Batch size & 1024\\ \hline
-Buffer size & 10240\\ \hline
-Learning rate & 0.0003 (linear)\\ \hline
-Beta (entropy) & 0.005\\ \hline
+Batch size & 2048\\ \hline
+Buffer size & 20480\\ \hline
+Learning rate & $1.13\times10^{-4}$ (linear)\\ \hline
+Beta (entropy) & $1.15\times10^{-3}$\\ \hline
 Epsilon (clip) & 0.2\\ \hline
 Lambda (GAE~\cite{ref20}) & 0.95\\ \hline
 Num epoch & 3\\ \hline
 Gamma & 0.99\\ \hline
+Time horizon & 128\\ \hline
 Time scale & 10\\ \hline
-Max steps & $5\times10^{6}$\\ \hline
 \end{tabular}
+\par\smallskip
+{\footnotesize 학습 모델은 약 $1.7\times10^{6}$ 스텝 체크포인트(수렴 $\approx1.1\times10^{6}$ 스텝)를 사용. 학습률·beta는 실제 실행값.}
 \end{table}
 
 \begin{figure}[t]\centering\figph{fig11_reward.png}
-\figcap{보상 수렴 그래프}{Reward Convergence graph}\label{fig:reward}\end{figure}
+\figcap{팀(그룹) 누적 보상 수렴 그래프}{Group Cumulative Reward Convergence graph}\label{fig:reward}\end{figure}
 \begin{figure}[t]\centering\figph{fig12_entropy.png}
 \figcap{엔트로피 그래프}{Entropy graph}\label{fig:entropy}\end{figure}
 \begin{figure}[t]\centering\figph{fig13_ploss.png}
@@ -562,5 +577,14 @@ Formation collapse rate & 9/40 (22.5\%)  & \textbf{3/40 (7.5\%)}\\ \hline
 \bibitem{ref21} T. I. Fossen, M. Breivik, and R. Skjetne, ``Line-of-sight path following of underactuated marine craft,'' \textit{IFAC Proc. Volumes}, vol.~36, no.~21, pp.~211--216, 2003. \doi{https://doi.org/10.1016/S1474-6670(17)37809-6}
 \end{thebibliography}
 }
+
+% ===================== 저자 약력 =====================
+\section*{저 자 소 개}
+\authorbio{bio_youngjun.png}{윤 영 준}{2025년 충남대학교 자율운항시스템공학과 학사 졸업. 2026년 3월$\sim$현재 충남대학교 자율운항시스템공학과 대학원 석사과정. 관심분야는 강화학습 기반 경로 생성 및 무인 수상정 군집 제어.}{0009-0005-8321-0461}
+\authorbio{bio_hyuntae.png}{방 현 태}{2019년 한밭대학교 건설환경공학과 학사 졸업. 2021년 한밭대학교 토목공학과 석사 졸업. 2022년$\sim$현재 충남대학교 자율운항시스템공학과 대학원 박사과정. 관심분야는 무인 이동체 제어 시스템 및 검증 시뮬레이션.}{0000-0002-2846-6334}
+\authorbio{bio_jiwoong.png}{하 지 웅}{2024년 한남대학교 전자공학과 학사 졸업. 2025년$\sim$현재 충남대학교 자율운항시스템공학과 대학원 석사과정. 관심분야는 무인 이동체 제어 시스템 및 HILS 시스템 구축.}{0009-0005-2980-5413}
+\authorbio{bio_youra.png}{전 유 라}{2021년 아리조나대학교 기계공학과 석사 졸업. 2025년 9월$\sim$현재 한국과학기술원(KAIST) 기계공학과 대학원 박사과정. 관심분야는 유한요소 해석 기반 구조 해석 및 최적화.}{0000-0002-9591-2533}
+\authorbio{bio_hunyong.png}{신 헌 용}{2007년 부산대학교 전자전기통신공학과 학사 졸업. 2009년 광주과학기술원 정보통신공학과 석사 졸업. 2012년$\sim$2021년 국방기술품질원 선임연구원. 2021년$\sim$현재 국방과학연구소 선임연구원. 관심분야는 전투체계, 심층강화학습, 무인수상정 경로계획.}{0009-0006-7247-4215}
+\authorbio{bio_wonkeun.png}{윤 원 근}{2021년 KAIST 전기및전자공학부(로봇 학제전공) 박사 졸업. 2021년 3월$\sim$현재 충남대학교 자율운항시스템공학과 조교수. 관심분야는 무인이동체 유도$\cdot$제어$\cdot$항법 및 응용, HILS 시스템 개발 및 검증.}{0000-0001-6954-9059}
 
 \end{document}

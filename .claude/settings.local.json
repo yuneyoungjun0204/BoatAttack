@@ -44,7 +44,9 @@
       "Bash(start \"\" \"C:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\paper\\\\presentation\\\\USV_TRAP_Presentation.pptx\")",
       "WebSearch",
       "Bash(git log:*)",
-      "Bash(ls -d c:/Users/ANSL/Desktop/BoatAttack/results/*/)"
+      "Bash(ls -d c:/Users/ANSL/Desktop/BoatAttack/results/*/)",
+      "Read(//c/Program Files \\(x86\\)/Hnc/Office 2022/HOffice130/Bin/**)",
+      "Bash(py --version)"
     ]
   }
 }

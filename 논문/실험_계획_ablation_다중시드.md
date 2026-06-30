@@ -43,10 +43,12 @@
 
 ---
 
-## 3. (연계) Fig.11 보상 스케일 점검 (리뷰 B-1)
-- 누적보상 y축이 ≈2.4×10⁻⁵로 비정상 → 원인 후보: ① 연속보상 가중치(α_f 0.002·α_a 0.001·α_h 0.0003)가 작아 스텝당 미미 ② TensorBoard `Environment/Cumulative Reward` 축 라벨/스케일 ③ 지표 정의.
-- 조치: 학습 로그(`results/<run>/`) TensorBoard 스칼라 재추출 → 누적보상 실제 범위 확인. 이벤트(±1) 포함 시 0.1~수 범위가 맞으면 **축 라벨 오류 정정**; 연속보상만 집계된 그래프면 지표 재정의.
-- (도구) `EventAccumulator`로 `Environment/Cumulative Reward` 덤프 → 재플롯.
+## 3. (연계) Fig.11 보상 스케일 점검 (리뷰 K) — ✅ 완료
+- **결과**: `results/0422_two/Defence` TensorBoard 덤프 → `Environment/Cumulative Reward`는 **3 → 12~15 수렴(raw 2.5~25)** 의 정상 범위. **2.4×10⁻⁵ 아님.**
+- 2.4×10⁻⁵에 근접한 건 후반부 **Policy/Learning Rate**(2.99e-4→1.78e-4, 선형감쇠로 후반 ~2.4e-5대). → 원본 Fig.11은 **학습률을 누적보상으로 잘못 라벨/축 스케일 오류**로 결론.
+- **산출**: 올바른 곡선 재생성 → `논문/figures/fig11_reward_corrected.png` (run=0422_two). 논문 Fig.11 교체 + 본문 "~1.1M 수렴" 유지(데이터상 0.5~1M부터 plateau).
+- ⚠ 확인필요: `0422_two`가 논문 최종 run인지(65% 결과 산출 run) 사용자 확인 후 확정 교체.
+- 다른 후보 run: `0421_two`(2.2~17), `0421_two_2`(0.25~15.6), `0418_two`(Group 6.25). 모두 O(1~25)로 스케일 결론 동일.
 
 ---
 

@@ -82,7 +82,40 @@
       "PowerShell($content = [System.IO.File]::ReadAllText\\('c:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\Assets\\\\Scripts\\\\MLAgents\\\\DefenseAgent.cs', [System.Text.Encoding]::UTF8\\); $idx = $content.IndexOf\\('private void CollectAllyPairBufferObs'\\); Write-Output $content.Substring\\($idx, 2000\\))",
       "PowerShell($content = [System.IO.File]::ReadAllText\\('c:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\Assets\\\\Scripts\\\\MLAgents\\\\DefenseAgent.cs', [System.Text.Encoding]::UTF8\\); $idx = $content.IndexOf\\('private void AppendAllyPairObs'\\); Write-Output $content.Substring\\($idx, 1000\\))",
       "PowerShell($content = [System.IO.File]::ReadAllText\\('c:\\\\Users\\\\ANSL\\\\Desktop\\\\BoatAttack\\\\Assets\\\\Scripts\\\\MLAgents\\\\DefenseAgent.cs', [System.Text.Encoding]::UTF8\\); $found = [System.Text.RegularExpressions.Regex]::Matches\\($content, 'private float NormalizePosition|private float NormalizeAngle|private float ComputeSignedBearing|private float NormalizeHeadingDiff'\\); foreach \\($m in $found\\) { $lb = [System.Text.RegularExpressions.Regex]::Matches\\($content.Substring\\(0, $m.Index\\), \"`n\"\\); Write-Output \"Line $\\($lb.Count + 1\\): $\\($content.Substring\\($m.Index, 60\\)\\)\" })",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(py -3.13 -c \"import mlagents; print\\('3.13', mlagents.__version__\\)\")",
+      "Bash(py -3.14 -c \"import mlagents; print\\('3.14', mlagents.__version__\\)\")",
+      "Bash(py -3.8 --version)",
+      "Bash(py -3.10 --version)",
+      "Bash(\"C:/Users/ANSL/Desktop/CamearTest/ml-agents-release_20/venv/Scripts/python.exe\" -c \"import torch; print\\('torch', torch.__version__, 'cuda', torch.cuda.is_available\\(\\)\\)\")",
+      "Bash(cat)",
+      "Bash(bash /tmp/finish_mlagents_setup.sh)",
+      "Read(//c/Program Files/Unity/Hub/Editor/**)",
+      "Read(//c/Program Files/Unity/**)",
+      "Bash(bash /tmp/build_roonshoot.sh)",
+      "Bash(bash /tmp/smoke_mlagents.sh)",
+      "Bash(bash /tmp/smoke2.sh)",
+      "Bash(taskkill //F //IM ROONSHOOT.exe //T)",
+      "Bash(bash /tmp/standalone.sh)",
+      "Bash(bash /tmp/standalone2.sh)",
+      "Bash(echo \"남은 Unity.exe: $\\(tasklist)",
+      "Bash(bash /tmp/rebuild_smoke.sh)",
+      "Bash(bash /tmp/smoke5.sh)",
+      "Bash(sed -i 's#</linker>#       <assembly fullname=\"Grpc.Core\" preserve=\"all\"/>\\\\n       <assembly fullname=\"Google.Protobuf\" preserve=\"all\"/>\\\\n</linker>#' Assets/link.xml)",
+      "Bash(sed -i 's/^  managedStrippingLevel:/  managedStrippingLevel:\\\\n    Standalone: 0/' ProjectSettings/ProjectSettings.asset)",
+      "Bash(bash /tmp/train_poca_s1.sh)",
+      "Bash(C:/Users/ANSL/Desktop/CamearTest/ml-agents-release_20/venv/Scripts/python.exe -m pip install -q onnx==1.12.0)",
+      "Bash(cat > *)",
+      "Bash(bash /tmp/healthcheck.sh)",
+      "Bash(C:/Users/ANSL/Desktop/CamearTest/ml-agents-release_20/venv/Scripts/python.exe -c ' *)",
+      "Bash(bash /tmp/healthcheck2.sh)",
+      "Bash(pandoc --version)",
+      "Read(//c/Program Files/LibreOffice/program/**)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\ANSL\\Desktop\\BoatAttack_twoUSV\\Assets\\Editor",
+      "c:\\Users\\ANSL\\Desktop\\BoatAttack_twoUSV\\Assets",
+      "\\tmp"
     ]
   }
 }

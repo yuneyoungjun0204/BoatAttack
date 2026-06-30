@@ -121,3 +121,15 @@ LOSDefense*
 *.mov
 *.mp4
 Assets/Resources/video/
+
+# 논문 내보내기/대용량 아티팩트 (git 불필요)
+논문/*.rtf
+논문/*.hwp
+논문/*.htm
+논문/*.synctex.gz
+논문/ICROS_2026.files/
+논문/*.aux
+논문/*.log
+논문/*.fls
+논문/*.fdb_latexmk
+논문/*.out
